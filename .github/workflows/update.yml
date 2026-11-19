@@ -119,7 +119,7 @@ jobs:
       # (with each new T3 Code on the latest channel, and at least weekly): `nix flake
       # update` and the cache check's evaluation. Nothing is built here.
       - if: steps.gate.outputs.current == 'true'
-        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - name: Resolve upstream versions
         id: resolve
         if: steps.gate.outputs.current == 'true'
