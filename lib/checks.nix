@@ -5502,15 +5502,28 @@ let
               || { echo "cursor-agent: with a read-only home it didn't start"; exit 1; }
           )
         ''
-        # With the wrapper's settings, cursor's own updater (the command and
-        # its menu's /update) fails at its update check and installs nothing.
+        # With the wrapper's settings, cursor's own `update` command fails at
+        # its update check (exiting non-zero, not by the time limit) and
+        # installs nothing: older releases can't fetch from the closed port;
+        # newer ones refuse the URL (it must be https on cursor.com or
+        # downloads.cursor.com) before fetching, and that refusal must be the
+        # last thing they print (a warning followed by a try elsewhere would
+        # fail offline here too, and mustn't pass). The menu's /update shares
+        # that check (read in cursor's code; no test drives the TUI).
         + lib.optionalString (u != null) ''
           (
             eval "$(grep -E "^export [A-Z_]+='[^']*'$" ${u}/bin/cursor-agent)"
             export PATH=${pkgs.coreutils}/bin
             h=$(mktemp -d)
-            out=$(cd $h && HOME=$h timeout 60 ${u}/libexec/cursor-agent/cursor-agent update 2>&1 < /dev/null || true)
-            case "$out" in *"Failed to fetch update info from http://127.0.0.1:9/"*) ;; *) echo "cursor-agent: with its wrapper's settings, its updater didn't stop at the update check: $out"; exit 1 ;; esac
+            status=0
+            out=$(cd $h && HOME=$h timeout 60 ${u}/libexec/cursor-agent/cursor-agent update 2>&1 < /dev/null) || status=$?
+            [ $status != 0 ] && [ $status != 124 ] || { echo "cursor-agent: its update command exited $status (0: it didn't fail; 124: it hung): $out"; exit 1; }
+            last=''${out##*$'\n'}
+            case "$out" in
+              *"Failed to fetch update info from http://127.0.0.1:9/"*) ;;
+              *) [ "$last" = "Error: Update failed: Refusing the update check URL: it has to be an https URL." ] \
+                   || { echo "cursor-agent: with its wrapper's settings, its updater didn't stop at the update check: $out"; exit 1; } ;;
+            esac
             [ ! -e $h/.local ] || { echo "cursor-agent: update wrote ~/.local"; exit 1; }
           )
         ''

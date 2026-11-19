@@ -25,12 +25,16 @@ let
   # Cursor fetches its update information from this URL when it is set; a
   # closed port on the loopback address makes every update fail ("Failed to
   # fetch update info") and install nothing, including the interactive
-  # menu's `/update`, which no command-line guard sees.
+  # menu's `/update`, which no command-line guard sees. Releases since at
+  # least 2026.11.19 accept only https URLs on cursor.com or
+  # downloads.cursor.com, without a port, and refuse this one ("Refusing the
+  # update check URL") before fetching, which stops the update just the same.
   updateCheckUrl = "http://127.0.0.1:9/cursor-agent-is-installed-by-nix";
   # Without its opt-out marker, cursor's interactive update can switch the
-  # user to a "Grok agent host" it downloads. The wrapper writes it, when
-  # missing, into every config folder cursor could use: $CURSOR_CONFIG_DIR,
-  # $XDG_CONFIG_HOME/cursor and $HOME/.cursor. It never stops cursor starting.
+  # user to a "Grok CLI" (its `agent-host`) it downloads. The wrapper writes
+  # it, when missing, into every config folder cursor could use:
+  # $CURSOR_CONFIG_DIR, $XDG_CONFIG_HOME/cursor and $HOME/.cursor. It never
+  # stops cursor starting.
   optOut = ''
     (
       # $1: the config folder.
