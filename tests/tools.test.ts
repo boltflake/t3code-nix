@@ -98,19 +98,20 @@ test("cache: Google Chrome in the closure pushes nothing, from any nixpkgs (matc
 
 /** Run test.ts with fake nix and nix-store: check `a` passes, `b` passes only
  * when built a second time, `c` never passes; of the desktop apps, `t3code`
- * builds (as a fake path, so its smoke fails) and `t3code-nightly` doesn't. */
-function runTest(desktop = false): { result: any; manifest: any; builds: string[]; evals: number } {
+ * and `t3code-electron-bundled` build (as fake paths, so their smokes fail)
+ * and `t3code-nightly` doesn't. */
+function runTest(desktop = false, part?: string, extra: string[] = []): { result: any; manifest: any; builds: string[]; evals: number } {
   const bin = join(tmp, "bin");
   const state = join(tmp, "state");
   mkdirSync(bin);
   mkdirSync(state);
-  const names = ["a", "b", "c", "codex", "fx", "pi", "t3code", "t3code-nightly"];
+  const names = ["a", "b", "c", "codex", "fx", "pi", "t3code", "t3code-electron-bundled", "t3code-nightly", "t3code-unwrapped"];
   const evaled = JSON.stringify(Object.fromEntries(names.map((n) => [n, { out: `/nix/store/${n}`, drv: `/nix/store/${n}.drv` }])));
   writeFileSync(join(bin, "nix"), `#!/bin/sh
 state=${state}
 case "$1" in
   # The stable part of default-nix-no-flakes (both sides unevaluable: nothing to compare).
-  eval) case " $* " in *" --raw "*) [ ! -e "${join(tmp, "out")}/candidate-${SYS}.json" ] || touch "$state/raw-after-result"; exit 1 ;; esac
+  eval) case " $* " in *" --raw "*) ls "${join(tmp, "out")}"/candidate-${SYS}*.json >/dev/null 2>&1 && touch "$state/raw-after-result"; exit 1 ;; esac
     echo x >> "$state/evals"; echo '${evaled}' ;;
   build)
     shift
@@ -120,7 +121,7 @@ case "$1" in
         -*) ;;
         /nix/store/*.drv^\*) name=\$(basename "\${arg%.drv^\*}")
           case "$name" in
-            a|codex|fx|t3code) touch "$state/$name" ;;
+            a|codex|fx|t3code|t3code-electron-bundled|t3code-unwrapped) touch "$state/$name" ;;
             b) if [ -e "$state/b-tried" ]; then touch "$state/b"; else touch "$state/b-tried"; fi ;;
           esac ;;
         *) echo "unexpected build argument $arg" >&2; exit 2 ;;
@@ -151,11 +152,11 @@ esac
   writeFileSync(join(repo, "default.nix"), "{ }\n");
   const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
   for (const args of [["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "x"]]) execFileSync("git", args, { cwd: repo, env: gitEnv });
-  execFileSync(process.execPath, [join(import.meta.dirname, "..", "scripts", "ci", "test.ts"), "candidate", SYS, out, ...(desktop ? ["--desktop"] : [])],
+  execFileSync(process.execPath, [join(import.meta.dirname, "..", "scripts", "ci", "test.ts"), "candidate", SYS, out, ...(desktop ? ["--desktop"] : []), ...(part ? [`--part=${part}`] : []), ...extra],
     { cwd: repo, env: { ...gitEnv, PATH: `${bin}:${process.env.PATH}` }, stdio: ["ignore", "pipe", "pipe"] });
   return {
-    result: JSON.parse(readFileSync(join(out, `candidate-${SYS}.json`), "utf8")),
-    manifest: JSON.parse(readFileSync(join(out, `manifest-candidate-${SYS}.json`), "utf8")),
+    result: JSON.parse(readFileSync(join(out, `candidate-${SYS}${part ? `-${part}` : ""}.json`), "utf8")),
+    manifest: JSON.parse(readFileSync(join(out, `manifest-candidate-${SYS}${part ? `-${part}` : ""}.json`), "utf8")),
     builds: readFileSync(join(state, "builds"), "utf8").trim().split("\n"),
     evals: readFileSync(join(state, "evals"), "utf8").trim().split("\n").length,
   };
@@ -164,7 +165,7 @@ esac
 test("test.ts: failures are built once more, and only they are", () => {
   const { result, manifest, builds, evals } = runTest();
   // One path-info for the built allowlisted packages (pi failed to build).
-  assert.deepEqual(readFileSync(join(tmp, "state", "path-info"), "utf8").trim(), "path-info --json /nix/store/codex /nix/store/fx");
+  assert.deepEqual(readFileSync(join(tmp, "state", "path-info"), "utf8").trim(), "path-info --json /nix/store/t3code-unwrapped /nix/store/codex /nix/store/fx");
   assert.deepEqual(manifest, { codex: { path: "/nix/store/codex", narHash: "sha256-c" }, fx: { path: "/nix/store/fx", narHash: "sha256-f" } });
   const { electron, nixCalls, ...rest } = result;
   assert.deepEqual(rest, { set: "candidate", system: SYS, passed: false, failed: ["c", "pi", "t3code-nightly"], checked: [], notes: [] });
@@ -195,13 +196,75 @@ test("test.ts: failures are built once more, and only they are", () => {
   assert.match(readFileSync(join(tmp, "state", "nix-env"), "utf8"), /^--option experimental-features {2}-qa -f \/.*\/default\.nix --argstr system x86_64-linux\n$/);
 });
 
+test("test.ts: a part builds only its own checks and runs only its own smokes and evaluations, into its own files", async () => {
+  const built = (builds: string[]) => [...builds[0].matchAll(/\/nix\/store\/([^.]+)\.drv/g)].map((m) => m[1]);
+  // desktop: the apps and their smokes; no evaluation without flakes.
+  let { result, builds, manifest } = runTest(true, "desktop");
+  assert.deepEqual(built(builds), ["t3code", "t3code-electron-bundled", "t3code-nightly", "t3code-unwrapped"]);
+  assert.deepEqual(result.failed, ["t3code-nightly", "desktop-smoke", "desktop-smoke-electron-bundled", "desktop-smoke-nightly"]);
+  assert.deepEqual(result.electron.channels.t3code.passed, ["t3code-electron-bundled"], "the desktop part vouches for the bundled app it built");
+  assert.ok(!existsSync(join(tmp, "state", "nix-env")), "the lazy evaluation is rest2's");
+  assert.ok(!existsSync(join(tmp, "state", "raw-after-result")), "the stable evaluation is rest2's");
+  rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true });
+  // rest2: its share of the others, no desktop or agent-browser smoke, the
+  // evaluations. (The shares, by the name's hash, written out here.)
+  ({ result, builds, manifest } = runTest(true, "rest2", ["--agent-browser"]));
+  assert.deepEqual(built(builds), ["codex", "fx", "pi"]);
+  assert.deepEqual(Object.keys(manifest), ["codex", "fx"], "the cache manifest holds the part's own built packages");
+  assert.ok(!result.failed.some((f: string) => /smoke/.test(f)), "no smoke in rest2");
+  assert.ok(existsSync(join(tmp, "state", "nix-env")) && existsSync(join(tmp, "state", "raw-after-result")));
+  rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true });
+  // rest1: the other share and the agent-browser smoke (its checks aren't
+  // in this fake set, so both smokes fail without starting).
+  ({ result, builds, manifest } = runTest(true, "rest1", ["--agent-browser"]));
+  assert.deepEqual(built(builds), ["a", "b", "c"]);
+  assert.deepEqual(manifest, {}, "none of rest2's packages");
+  // The desktop apps aren't rest1's: it vouches for none of them.
+  assert.deepEqual(Object.values(result.electron.channels).flatMap((c: any) => c.passed), []);
+  assert.deepEqual(result.failed.filter((f: string) => /smoke/.test(f)), ["agent-browser-smoke", "agent-browser-smoke-stable"]);
+  assert.ok(!existsSync(join(tmp, "state", "nix-env")), "the lazy evaluation is rest2's");
+  // An unknown part is refused, for that reason.
+  rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true });
+  assert.throws(() => runTest(false, "rest3"), (e: any) => /--part must be one of desktop, rest1, rest2/.test(String(e.stderr)));
+});
+
+test("parts: every check has exactly one part, by the rules in scripts/lib/parts.ts", async () => {
+  const { testPart, stablePart, partArg, TEST_PARTS, STABLE_PARTS } = await import("../scripts/lib/parts.ts");
+  assert.equal(testPart("t3code"), "desktop");
+  assert.equal(testPart("t3code-nightly-electron-bundled"), "desktop");
+  assert.equal(testPart("agent-browser"), "rest1");
+  assert.equal(testPart("agent-browser-stable-chromium"), "rest1");
+  for (const n of ["codex", "fx", "unit", "provider-wrappers"]) {
+    assert.ok(["rest1", "rest2"].includes(testPart(n)));
+    assert.equal(testPart(n), testPart(n), "the same every time");
+  }
+  assert.equal(stablePart("stable-t3code"), "a");
+  assert.equal(stablePart("stable-next-agent-browser"), "a");
+  assert.equal(stablePart("stable-unit"), "b");
+  // Each smoke runs in the part that builds its package.
+  const { ROLES } = await import("../scripts/lib/electron-fallback.ts");
+  const { smokesOfGroup } = await import("../scripts/ci/stable.ts");
+  const apps = Object.values(ROLES).flatMap((r) => Object.keys(r.smokes));
+  assert.ok(apps.length > 0 && apps.every((app) => testPart(app) === "desktop"), apps.join(" "));
+  assert.deepEqual(["agent-browser", "agent-browser-stable-chromium"].map(testPart), ["rest1", "rest1"]);
+  for (const prefix of ["stable-", "stable-next-"] as const) {
+    const pkgs = Object.values(smokesOfGroup(prefix)).map((s) => s.pkg);
+    assert.ok(pkgs.length > 0 && pkgs.every((pkg) => stablePart(pkg) === "a"), pkgs.join(" "));
+  }
+  assert.equal(partArg([], TEST_PARTS), undefined);
+  assert.equal(partArg(["--next", "--part=b"], STABLE_PARTS), "b");
+  assert.throws(() => partArg(["--part=c"], STABLE_PARTS), /--part must be one of a, b/);
+  assert.throws(() => partArg(["--part"], STABLE_PARTS), /--part must be one of a, b/, "a bare --part");
+  assert.throws(() => partArg(["--part=a", "--part=b"], STABLE_PARTS), /more than once/);
+});
+
 test("test.ts: the desktop smoke uses the built checks, with no build or evaluation of its own", () => {
   const { result, builds, evals } = runTest(true);
   assert.equal(evals, 1);
   assert.equal(builds.length, 2);
-  // t3code built but isn't a real app; t3code-nightly didn't build: both
-  // smokes fail, each after its one retry.
-  assert.deepEqual(result.failed, ["c", "pi", "t3code-nightly", "desktop-smoke", "desktop-smoke-nightly"]);
+  // t3code and t3code-electron-bundled built but aren't real apps;
+  // t3code-nightly didn't build: their smokes fail, each after its one retry.
+  assert.deepEqual(result.failed, ["c", "pi", "t3code-nightly", "desktop-smoke", "desktop-smoke-electron-bundled", "desktop-smoke-nightly"]);
 });
 
 test("test.ts: each channel's smoke gets its own app's output, and one retry", async () => {

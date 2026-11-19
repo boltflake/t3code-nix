@@ -131,7 +131,7 @@ Tools the agents use themselves; never in T3 Code's closure.
 
 **grok** is the only one. It's the only package that can ever need a
 manual re-pin: `node scripts/pin.ts vendor grok` on a branch, after checking
-the new file (see the README's maintainer notes).
+the new file (see [MAINTAINING.md](../MAINTAINING.md)).
 
 ## Notes per package
 

@@ -161,6 +161,10 @@ test("the evidence: per-system runtime lists, what passed, provisional failures,
   assert.deepEqual(e.channels.t3code!.pair, pairFor("0.1.9", REV));
   assert.equal(e.channels.t3code!.active, false);
   assert.equal(e.smokeRan, true);
+  // A part of the suite (branch CI) vouches only for what it ran: here none
+  // of the apps, so none passed, whatever the failures say.
+  const rest = electronEvidence(checks, [], {}, tmp, () => [], new Set(["codex", "preview-browser-pin"]));
+  assert.deepEqual(rest.channels.t3code!.passed, []);
 });
 
 test("branch CI: a runtime failure under an active entry is reported unless the branch changed it and the parent passes", async () => {

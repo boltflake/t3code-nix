@@ -1,4 +1,4 @@
-// The release watcher's logic (README, Maintainer notes, "The release
+// The release watcher's logic (MAINTAINING.md, "The release
 // watcher"). Two cron triggers, both every minute, each poll their own sources
 // and keep their own state in one KV key. A new version starts the update
 // workflow (workflow_dispatch); what gets pinned is decided there, so

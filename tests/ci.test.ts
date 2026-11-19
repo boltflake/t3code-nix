@@ -2482,15 +2482,22 @@ test("workflow: agent-browser's variants run after publish on the published tree
   assert.match(resolve, /held\.ts "\$RUNNER_TEMP\/held\.json" "\$RUNNER_TEMP\/retest\.json"/);
 });
 
-test("workflow: branch CI runs NixOS stable in a job of its own, and `tested` needs both jobs", () => {
+test("workflow: branch CI runs the suite and NixOS stable in parts, and `tested` needs every part", async () => {
   const ci = readFileSync(join(import.meta.dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
   // A job's text, up to the blank line before the next job (or its comment).
   const jobOf = (name: string) => ci.slice(ci.indexOf(`\n  ${name}:\n`) + 1).split(/\n\n  (?=[#a-z])/)[0];
   const test = jobOf("test"), stable = jobOf("stable"), tested = jobOf("tested");
   const matrix = (body: string) => /\n    strategy:\n[\s\S]*?\n    runs-on: .*\n/.exec(body)?.[0];
   assert.ok(matrix(stable), "stable has a matrix");
-  assert.equal(matrix(stable), matrix(test), "the same matrix, runners and fail-fast: false");
-  assert.match(stable, /\n      fail-fast: false\n/);
+  // Each job's legs: both systems on their runners, times its script's parts
+  // (scripts/lib/parts.ts), and fail-fast off.
+  const { TEST_PARTS, STABLE_PARTS } = await import("../scripts/lib/parts.ts");
+  const legs = (body: string) => [...(matrix(body) ?? "").matchAll(/- \{ system: (\S+), runner: (\S+), part: (\S+) \}/g)].map((m) => m.slice(1).join(" ")).sort();
+  const expected = (parts: readonly string[]) => [["x86_64-linux", "ubuntu-24.04"], ["aarch64-linux", "ubuntu-24.04-arm"]]
+    .flatMap(([s, r]) => parts.map((p) => `${s} ${r} ${p}`)).sort();
+  assert.deepEqual(legs(test), expected(TEST_PARTS));
+  assert.deepEqual(legs(stable), expected(STABLE_PARTS));
+  for (const job of [test, stable]) assert.match(matrix(job) ?? "", /\n      fail-fast: false\n/);
   assert.match(stable, /\n    needs: one-commit\n/);
   // Both jobs need main under the branch's commit (HEAD~1).
   for (const job of [test, stable]) assert.match(job, /uses: actions\/checkout@[0-9a-f]{40} # .*\n\s+with:\n\s+fetch-depth: 2\n\s+persist-credentials: false\n/);
@@ -2508,16 +2515,16 @@ test("workflow: branch CI runs NixOS stable in a job of its own, and `tested` ne
   // The step as it was, with its limit; the job leaves 20 minutes over it.
   const step = stable.slice(at("- name: NixOS stable")).split(/\n      - /)[0];
   assert.match(step, /^- name: NixOS stable\n\s+timeout-minutes: 45\n\s+run: \|\n/);
-  assert.match(step, /\n\s+node scripts\/ci\/stable\.ts branch \$\{\{ matrix\.system \}\} results --next --branch --parent=HEAD~1\n/);
+  assert.match(step, /\n\s+node scripts\/ci\/stable\.ts branch \$\{\{ matrix\.system \}\} results --next --branch --parent=HEAD~1 --part=\$\{\{ matrix\.part \}\}\n/);
   const jobLimit = Number(/\n    timeout-minutes: (\d+)/.exec(stable)?.[1]);
   const steps = [...stable.matchAll(/\n {8}timeout-minutes: (\d+)/g)].map((m) => Number(m[1]));
   assert.ok(steps.length >= 1 && jobLimit - steps.reduce((a, b) => a + b, 0) >= 20, `stable: steps ${steps.join("+")}, job ${jobLimit}`);
   // A successful job has written and uploaded its own result: the check
   // runs after stable.ts and before the upload, on every success.
   const guard = stable.slice(at("- name: The result was written")).split(/\n      - /)[0];
-  assert.equal(guard, "- name: The result was written\n        run: test -s results/stable-branch-${{ matrix.system }}.json", "no condition or continue-on-error");
+  assert.equal(guard, "- name: The result was written\n        run: test -s results/stable-branch-${{ matrix.system }}-${{ matrix.part }}.json", "no condition or continue-on-error");
   assert.ok(at("node scripts/ci/stable.ts") < at("- name: The result was written") && at("- name: The result was written") < at("upload-artifact@"));
-  for (const [job, name] of [[test, "results-${{ matrix.system }}"], [stable, "results-${{ matrix.system }}-stable"]]) {
+  for (const [job, name] of [[test, "results-${{ matrix.system }}-${{ matrix.part }}"], [stable, "results-${{ matrix.system }}-stable-${{ matrix.part }}"]]) {
     const upload = job.slice(job.indexOf("upload-artifact@")).split(/\n      - /)[0];
     assert.match(upload, new RegExp(`\\n\\s+name: ${name.replace(/[$.{}]/g, "\\$&")}\\n`));
     assert.match(upload, /if-no-files-found: error\n/);
@@ -2531,7 +2538,7 @@ test("workflow: branch CI runs NixOS stable in a job of its own, and `tested` ne
   // which ends it with the job.
   for (const [name, job] of [["test", test], ["stable", stable]] as const) {
     const sampler = job.slice(job.indexOf("- name: The runner, and a sampler for the job's length")).split(/\n      - /)[0];
-    assert.equal(sampler, '- name: The runner, and a sampler for the job\'s length\n        run: scripts/ci/sample.sh "results/sampler-$GITHUB_JOB-${{ matrix.system }}.txt"', name);
+    assert.equal(sampler, '- name: The runner, and a sampler for the job\'s length\n        run: scripts/ci/sample.sh "results/sampler-$GITHUB_JOB-${{ matrix.system }}-${{ matrix.part }}.txt"', name);
     assert.ok(job.indexOf("actions/checkout@") < job.indexOf("- name: The runner, and a sampler") && job.indexOf("- name: The runner, and a sampler") < job.indexOf("actions/setup"), name);
   }
   const sample = readFileSync(join(import.meta.dirname, "..", "scripts", "ci", "sample.sh"), "utf8").split("\n").filter((l) => l && (!l.startsWith("#") || l.startsWith("#!"))).join("\n");
@@ -2553,7 +2560,7 @@ test("workflow: branch CI runs NixOS stable in a job of its own, and `tested` ne
   ].join("\n"), "the sampler script, exactly (it runs on every branch CI job)");
   // `test` checks its own result was written before the upload, as `stable` does.
   const written = test.slice(test.indexOf("- name: The result was written")).split(/\n      - /)[0];
-  assert.equal(written, "- name: The result was written\n        run: test -s results/branch-${{ matrix.system }}.json");
+  assert.equal(written, "- name: The result was written\n        run: test -s results/branch-${{ matrix.system }}-${{ matrix.part }}.json");
   assert.ok(test.indexOf("node scripts/ci/test.ts") < test.indexOf("- name: The result was written") && test.indexOf("- name: The result was written") < test.indexOf("upload-artifact@"));
   // `tested` needs both and checks each job's own result as well as the files.
   assert.match(tested, /\n    needs: \[one-commit, test, stable\]\n/);
@@ -2575,7 +2582,7 @@ test("workflow: branch CI runs NixOS stable in a job of its own, and `tested` ne
     const dir = mkdtempSync(join(tmpdir(), "tested-"));
     try {
       mkdirSync(join(dir, "results")); mkdirSync(join(dir, "bin"));
-      for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, "results", name), JSON.stringify(body));
+      for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, "results", name), typeof body === "string" ? body : JSON.stringify(body));
       // Run in the fixture folder, so nothing in the shell code names its path.
       writeFileSync(join(dir, "bin", "gh"), `#!/bin/sh\nprintf '%s\\n' "$@" > posted\n`);
       chmodSync(join(dir, "bin", "gh"), 0o755);
@@ -2596,16 +2603,24 @@ test("workflow: branch CI runs NixOS stable in a job of its own, and `tested` ne
   };
   const good: Record<string, unknown> = {};
   for (const system of SYSTEMS) {
-    good[`branch-${system}.json`] = { passed: true, failed: [] };
-    good[`stable-branch-${system}.json`] = { branch: [] };
+    for (const part of TEST_PARTS) good[`branch-${system}-${part}.json`] = { passed: true, failed: [] };
+    for (const part of STABLE_PARTS) good[`stable-branch-${system}-${part}.json`] = { branch: [] };
   }
   const without = (name: string) => Object.fromEntries(Object.entries(good).filter(([k]) => k !== name));
   assert.deepEqual(posted({}, good), { code: 0, state: "success" });
   const failing: Record<string, string>[] = [{ STABLE: "failure" }, { STABLE: "cancelled" }, { TEST: "failure" }, { ONE_COMMIT: "failure" }, { DOWNLOAD: "failure" }];
   for (const env of failing)
     assert.deepEqual(posted(env, good), { code: 1, state: "failure" }, JSON.stringify(env));
-  for (const files of [without("stable-branch-aarch64-linux.json"), without("branch-x86_64-linux.json"),
-    { ...good, "stable-branch-x86_64-linux.json": { branch: ["stable-t3"] } }, { ...good, "branch-aarch64-linux.json": { passed: false, failed: ["t3"] } }])
+  // The script names every part's file, with the parts of scripts/lib/parts.ts.
+  assert.match(script, new RegExp(`for part in ${TEST_PARTS.join(" ")}; do files\\+=`));
+  assert.match(script, new RegExp(`for part in ${STABLE_PARTS.join(" ")}; do stable\\+=`));
+  const stray = { ...without("branch-x86_64-linux-rest2.json"), "branch-x86_64-linux-rest3.json": { passed: true, failed: [] } };
+  for (const files of [stray, without("stable-branch-aarch64-linux-b.json"), without("branch-x86_64-linux-rest2.json"),
+    { ...good, "stable-branch-x86_64-linux-a.json": { branch: ["stable-t3"] } }, { ...good, "branch-x86_64-linux-rest2.json": "" },
+    { ...good, "stable-branch-x86_64-linux-b.json": "" },
+    // An empty file beside one holding two results: still a file short.
+    { ...good, "branch-x86_64-linux-rest2.json": "", "branch-x86_64-linux-rest1.json": '{"passed":true}\n{"passed":true}\n' },
+    { ...good, "stable-branch-x86_64-linux-b.json": "", "stable-branch-x86_64-linux-a.json": '{"branch":[]}\n{"branch":[]}\n' }, { ...good, "branch-aarch64-linux-desktop.json": { passed: false, failed: ["t3"] } }])
     assert.deepEqual(posted({}, files), { code: 1, state: "failure" }, Object.keys(files).join(" "));
 });
 
@@ -2613,6 +2628,8 @@ test("workflow: branch CI runs the variants only when what they're built or run 
   const ci = readFileSync(join(import.meta.dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
   const step = ci.slice(ci.indexOf("- name: agent-browser's optional browsers")).split(/\n      - /)[0];
   assert.match(step, /git diff --quiet HEAD~1 HEAD -- flake\.nix flake\.lock pkgs lib versions\/agent-browser\.json \\\n\s+'versions\/browser-\*\.json' scripts\/agent-browser-smoke\.ts scripts\/ci\/variants\.ts;/);
+  // Only in the suite's part rest2 (scripts/lib/parts.ts), before the check.
+  assert.match(step, /run: \|\n\s+if \[ "\$\{\{ matrix\.part \}\}" != rest2 \]; then\n\s+echo .*\n\s+exit 0\n\s+fi\n\s+if git diff --quiet/);
   assert.match(step, /variants\.ts branch \$\{\{ matrix\.system \}\} .* --parent=HEAD~1/);
   // variants.ts's helpers from elsewhere in scripts/ aren't on the list (they
   // change often, and their own tests cover them); a new import is a

@@ -207,6 +207,29 @@ test("a group's failures: builds that fail twice, checks that don't evaluate, an
   assert.deepEqual(n.group.failed, []);
 });
 
+test("a part builds only its own checks, and only part a runs the smokes", async () => {
+  commit(base);
+  fakeNix();
+  const d = stable.evaluate(tmp, "legacyPackages.x86_64-linux.stableChecks").drvs;
+  fakeNix(new Set([d["stable-unit"].drv, d["stable-t3code"].drv]));
+  const built: string[][] = [];
+  const build = stable.nix.build;
+  stable.nix.build = (checks, names) => (built.push(names), build(checks, names));
+  let smoked = 0;
+  stable.smokes.desktop = async () => (smoked++, true);
+  stable.smokes.agentBrowser = async () => (smoked++, true);
+  const a = await stable.runGroup(tmp, "x86_64-linux", "stable-", true, "a");
+  assert.deepEqual(built[0], ["stable-agent-browser", "stable-t3code"]);
+  assert.ok(smoked > 0, "part a runs the smokes");
+  assert.deepEqual(a.group.failed, ["stable-desktop-smoke", "stable-t3code"], "its own failures (the app didn't build, so its smoke fails)");
+  assert.deepEqual(Object.keys(a.drvs).sort(), Object.keys(d).sort(), "every check is still evaluated");
+  built.length = 0; smoked = 0;
+  const b = await stable.runGroup(tmp, "x86_64-linux", "stable-", true, "b");
+  assert.deepEqual(built[0], ["stable-noread", "stable-unit"]);
+  assert.equal(smoked, 0, "no smokes in part b");
+  assert.deepEqual(b.group.failed, ["stable-unit"]);
+});
+
 test("a smoke whose package didn't build fails without starting", async () => {
   commit(base);
   fakeNix();
@@ -323,6 +346,26 @@ test("main: a candidate records main's stable derivations; stable-next's smokes 
   assert.equal(behind.behind, true);
   assert.deepEqual(behind.stableNext.failed, ["stable-next-unit"]);
   assert.equal(behind.move, undefined);
+  // Behind and passing: a set that can publish tries the equivalence step
+  // (as far as its cache comparison, which runs the nix program: here one
+  // that always fails, the same with or without a real one on PATH);
+  // branch CI, in either part, never starts it.
+  fakeNix();
+  const bin = mkdtempSync(join(tmpdir(), "failing-nix-"));
+  const path = process.env.PATH;
+  try {
+    writeFileSync(join(bin, "nix"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    process.env.PATH = `${bin}:${path}`;
+    await assert.rejects(result(["main", "--next"]), /Command failed: nix derivation show/);
+  } finally {
+    process.env.PATH = path;
+    rmSync(bin, { recursive: true, force: true });
+  }
+  for (const p of ["a", "b"]) {
+    rmSync("out", { recursive: true, force: true });
+    await stable.main(["branch", "x86_64-linux", "out", "--next", "--branch", "--parent=HEAD~1", `--part=${p}`]);
+    assert.equal(JSON.parse(readFileSync(`out/stable-branch-x86_64-linux-${p}.json`, "utf8")).move, undefined, p);
+  }
 });
 
 test("main: a default check that reads the snapshot fails the branch", async () => {
@@ -337,6 +380,14 @@ test("main: a default check that reads the snapshot fails the branch", async () 
   } finally { leaky = false; }
   const branch = JSON.parse(readFileSync("out/stable-branch-x86_64-linux.json", "utf8")).branch;
   assert.deepEqual(branch, ["equivalence (moving the snapshot changes agent-browser, t3code, unit)"]);
+  // In parts, part a reports it, and b doesn't again.
+  leaky = true;
+  try {
+    for (const [p, want] of [["a", branch], ["b", []]] as const) {
+      await stable.main(["branch", "x86_64-linux", "out", "--branch", "--parent=HEAD~1", `--part=${p}`]);
+      assert.deepEqual(JSON.parse(readFileSync(`out/stable-branch-x86_64-linux-${p}.json`, "utf8")).branch, want, p);
+    }
+  } finally { leaky = false; }
 });
 
 test("noFlakesDisagree: nothing on both sides is a disagreement", () => {
@@ -387,6 +438,12 @@ test("branch CI: a check main can't evaluate doesn't make every failure the bran
   const written = JSON.parse(readFileSync("out/stable-branch-x86_64-linux.json", "utf8"));
   assert.deepEqual(written.branch, ["stable-unit"]);
   assert.ok(Array.isArray(written.nixCalls), "the record of Nix calls (util.ts) is written with the result");
+  // In parts (branch CI), each writes its own file and blames only its own
+  // checks: stable-unit is part b's.
+  for (const [part, branch] of [["a", []], ["b", ["stable-unit"]]] as const) {
+    await stable.main(["branch", "x86_64-linux", "out", "--next", "--branch", "--parent=HEAD~1", `--part=${part}`]);
+    assert.deepEqual(JSON.parse(readFileSync(`out/stable-branch-x86_64-linux-${part}.json`, "utf8")).branch, branch, part);
+  }
 });
 
 test("branch CI: the same in stable-next, as branch CI runs it (--next, the snapshot behind on both)", async () => {
@@ -407,6 +464,22 @@ test("branch CI: the same in stable-next, as branch CI runs it (--next, the snap
   assert.equal(r.behind, true);
   assert.ok(r.stableNext.failed.includes("stable-next-agent-browser") && r.stableNext.failed.includes("stable-next-unit"), JSON.stringify(r.stableNext));
   assert.deepEqual(r.branch, []);
+  // In parts, each builds and blames only its own share of stable-next, and
+  // only part a runs its smokes.
+  let smoked = 0;
+  stable.smokes.desktop = async () => (smoked++, true);
+  stable.smokes.agentBrowser = async () => (smoked++, true);
+  for (const p of ["a", "b"]) {
+    smoked = 0;
+    rmSync("out", { recursive: true, force: true });
+    await stable.main(["branch", "x86_64-linux", "out", "--next", "--branch", "--parent=HEAD~1", `--part=${p}`]);
+    const r = JSON.parse(readFileSync(`out/stable-branch-x86_64-linux-${p}.json`, "utf8"));
+    const own = r.stableNext.failed.filter((f: string) => !f.endsWith("smoke"));
+    assert.deepEqual(own, p === "a" ? ["stable-next-agent-browser"] : ["stable-next-unit"], p);
+    assert.deepEqual(r.branch, [], p);
+    if (p === "b") assert.equal(smoked, 0, "no smokes in part b");
+    else assert.ok(smoked > 0, "part a runs stable-next's smokes");
+  }
   // Only the branch failing to evaluate it: counted.
   fakeNix();
   const [drvs, one] = [stable.nix.drvs, stable.nix.one];
@@ -678,4 +751,7 @@ test("a \"not applicable\" twin keeps its marker on the one-at-a-time path, and 
   assert.equal(e.drvs["stable-noread"].na, true);
   const r = await stable.runGroup(tmp, "x86_64-linux", "stable-", false);
   assert.deepEqual(r.group.notApplicable, ["stable-noread"]);
+  // In parts, only the part it belongs to (b) records it.
+  assert.equal((await stable.runGroup(tmp, "x86_64-linux", "stable-", false, "a")).group.notApplicable, undefined);
+  assert.deepEqual((await stable.runGroup(tmp, "x86_64-linux", "stable-", false, "b")).group.notApplicable, ["stable-noread"]);
 });

@@ -307,7 +307,7 @@ What each package is built from is in
 | `agentTools.agent-browser.browserChannel` | `null` (the package's own) | `"unstable"` or `"stable"`: which of this flake's browser pins its browser comes from |
 | `agentTools.agent-browser.browser` | `null` (the package's own: `"ungoogled-chromium"`) | `"ungoogled-chromium"`, `"chromium"` or `"google-chrome"`: which browser it drives (see [Agent tools](#agent-tools)) |
 | `cli.enable` | `false` | installs the headless `t3` too (`t3-nightly` on the nightly channel), bundling what the app bundles, with its shell completions |
-| `cli.allowUpstreamService` | `false` | lets this flake's `t3` run `t3 update`, `t3 service install`, `t3 up` and plain `t3 connect`, which it refuses (see [Running the server](#running-the-server)) |
+| `cli.allowUpstreamService` | `false` | lets this flake's `t3` run the commands for [upstream's own service](#upstreams-own-service), which it refuses |
 | `server.*` | off | a T3 Code server as a systemd user service: see [Running the server](#running-the-server) |
 | `package` | this flake's `t3code` (`t3code-nightly` on the nightly channel) | what to install: `t3code-free`, `t3`, an `.override { … }` of one, or `pkgs.t3code` from the overlay |
 | `binaryCache` | `true` | adds the [binary cache](#binary-cache) and its key to `nix.settings` |
@@ -399,11 +399,9 @@ one of these ways first:
 - `server.tailscaleServe.enable = true`: over HTTPS on your tailnet
 - T3 Connect (below): from anywhere, through T3's relay, with no port open
 
-Until then, `t3 pair` and `t3 status` suggest `t3 up` (and with no server
-running, `t3 pair` suggests plain `t3 connect`). Don't follow either here:
-both install upstream's own service instead of this one (see
-[Upstream's own service](#upstreams-own-service)), so this flake's `t3`
-refuses them.
+Until then, `t3 pair` and `t3 status` suggest `t3 up` or `t3 connect`;
+this flake's `t3` refuses those (see
+[Upstream's own service](#upstreams-own-service)).
 
 **T3 Connect** reaches the server through T3's relay with your T3 account,
 from anywhere, with no port open. Once per T3 home:
@@ -418,11 +416,8 @@ With `server.home` set, add `--base-dir` with that home to both `t3`
 commands, with `%h` written as your home folder (for example
 `--base-dir ~/.t3-server`).
 
-Its relay client, cloudflared, comes with this flake's `t3`
-(`T3CODE_CLOUDFLARED_PATH`), so nothing downloads one, and one that
-upstream's own install downloaded into `~/.t3/tools` goes unused. Through
-the overlay, cloudflared is your nixpkgs' own, and t3 needs 2025.6.1 or
-newer (`t3 connect status` names the version it found).
+Through the overlay, T3 Connect uses your nixpkgs' cloudflared, which must be
+2025.6.1 or newer.
 
 `t3 connect unlink` turns it off (then restart the server to close the
 tunnel), and `t3 connect logout` signs out.
@@ -479,62 +474,27 @@ either:
 ### Upstream's own service
 
 T3 Code can also install a server of its own: `t3 service install`, `t3 up`
-and plain `t3 connect` (short for `t3 up --connect`) set up
-`t3code.service` in `~/.config/systemd/user`. That service runs T3 Code's
-own download from `~/.t3/runtime`, not this flake's build:
+and plain `t3 connect` set up `t3code.service` in `~/.config/systemd/user`.
+That service runs T3 Code's own download from `~/.t3/runtime`, not this
+flake's build: it has none of the bundled providers, updates itself outside
+Nix, and on NixOS starts only with
+[`runtimeCompat`](#t3-code-over-ssh-runtimecompat). So this flake's `t3`
+refuses those commands, and `t3 update`. The rest of `t3 connect` (`link`,
+`login`, `status`, `unlink`, `logout`, `publish`) works for `t3code-server`.
 
-- it has none of the bundled providers
-- it updates itself, outside Nix
-- on NixOS it starts only with
-  [`runtimeCompat`](#t3-code-over-ssh-runtimecompat)
-
-So this flake's `t3` refuses those commands, and `t3 update`, which updates
-that download. The rest of `t3 connect` works: `link`, `login`, `status`,
-`unlink`, `logout` and `publish` manage T3 Connect for `t3code-server`.
-
-If upstream's service is already installed, from before you used this
-flake:
-
-- `t3 service status` shows it, and `t3 service uninstall` removes it.
-  The other `t3 service` commands (`restart`, `protect`) also act on
-  upstream's service, never on `t3code-server`; `protect` also tries to
-  change system-wide settings, which fails on NixOS (below).
-- Remove it before turning on `t3code-server`: only one server can run on
-  a T3 home (see [One server per T3 home](#one-server-per-t3-home)), and if
-  `t3code-server` starts second, it exits and stays stopped. On different
-  homes, the two may clash on the port (change `server.port`).
-
-Compared with upstream's service, `t3code-server` doesn't have:
-
-- in-place updates, from the desktop app or `t3 update`: a new version
-  comes with a flake update and a rebuild
-- upstream's automatic database backup and rollback when a new version
-  fails to start: here there's the [copy above](#database-copies), put back
-  by hand
-- `t3 service protect`, which doesn't work on NixOS. As root (with sudo),
-  it tries to write drop-ins under `/etc/systemd/system`: `MemoryLow=2G`
-  on the user slices and `user@<uid>.service`, `OOMScoreAdjust=-900` on
-  `user@<uid>.service`, and, if you agree, protection for `system.slice`,
-  sshd and tailscaled. NixOS keeps that folder read-only, so it fails there
-  and makes none of its other changes (as you: the user manager's
-  `DefaultOOMScoreAdjust=200`, `MemoryLow` for `app.slice` and
-  `init.scope`, and `OOMScoreAdjust=-900` for upstream's `t3code.service`).
-  `t3code-server` has upstream's base unit settings (`MemoryLow=1536M`,
-  `OOMScoreAdjust=100`, raised CPU and IO weights). For protection like
-  `protect`'s, set it in NixOS: `systemd.slices`,
-  `systemd.services."user@"`, `systemd.user.extraConfig` and
-  `systemd.user.services.t3code-server.serviceConfig`.
+If upstream's service is already installed, remove it with
+`t3 service uninstall` before turning on `t3code-server`: only one server
+can run on a T3 home (see [One server per T3 home](#one-server-per-t3-home)).
+`t3 service protect` doesn't work on NixOS (`/etc/systemd` is read-only);
+set that kind of protection in NixOS instead, with `systemd.slices`,
+`systemd.services."user@"` and
+`systemd.user.services.t3code-server.serviceConfig`.
 
 **Using upstream's service on purpose.** Set `enable`, `cli.enable`,
-`cli.allowUpstreamService` and
-[`runtimeCompat`](#t3-code-over-ssh-runtimecompat). Without the module,
-use `t3.override { allowUpstreamService = true; }` and turn on
-`programs.nix-ld` with the libraries `runtimeCompat` lists in
-`nixos/module.nix`. Leave `server.enable` off, or give the two servers
-different homes and ports. `t3 up` then works, but the network choice it
-asks for goes into `~/.t3/service.env`, which only upstream's service
-reads: `t3code-server` takes its network settings from
-[the server options](#running-the-server).
+`cli.allowUpstreamService` and `runtimeCompat` (without the module:
+`t3.override { allowUpstreamService = true; }` and `programs.nix-ld` with
+the libraries `runtimeCompat` lists in `nixos/module.nix`). Leave
+`server.enable` off, or give the two servers different homes and ports.
 
 ## Binary cache
 
@@ -634,9 +594,7 @@ choosing it is the opt-in.
 
 Through the overlay, your own nixpkgs config decides, Google Chrome
 included. For an all-free install, use `t3code-free` or `t3-free` (see
-[T3 Code](#t3-code)). They're on the latest channel only;
-for an all-free nightly, use
-`t3code-nightly.override { excludeProviders = [ "claude" "cursor" "grok" "antigravity" "kiro" "muse" ]; withPreviewBrowser = false; }`.
+[T3 Code](#t3-code)). They're on the latest channel only.
 
 ## NixOS stable
 
@@ -694,20 +652,12 @@ same revision, you still get a second copy of the libraries.
   still wins. `nixpkgs` then still picks the CLI, the server and the
   doctor, and the providers follow the app.
 
-Because the set can lag, it's more likely to pin files a vendor has since
-deleted, which breaks reinstalling them; that's reported when it happens.
-Google Chrome for agent-browser is one such file on every set: it's always
-downloaded from Google, which has kept old builds for about eight months,
-so after that an old flake revision can't install it (update the flake, or
-pick another browser).
-
 **What it isn't.**
 
 - A rollback: to stay on an older T3 Code, pin a tag (see
   [Channels, pinning and rolling back](#channels-pinning-and-rolling-back)).
-- Your own nixpkgs: making the flake follow it
-  (`inputs.nixpkgs.follows`), or using the overlay, builds the packages on
-  your nixpkgs instead, uncached and untested.
+- Your own nixpkgs: for that, see the overlay (and
+  [why not `follows`](#binary-cache)).
 
 ## When something isn't working: `t3code-nix doctor`
 
@@ -740,33 +690,6 @@ This system:
            → `t3 service uninstall`, or `systemctl --user disable --now t3code.service` and delete …
   …
 ```
-
-It looks at:
-
-- which providers T3 Code will find, and which version: the bundled one,
-  or one of yours on `PATH` (T3 Code prefers those), including providers
-  this build doesn't bundle. It looks them up on the terminal's `PATH`;
-  T3 Code reads your login shell's, so a `PATH` set only in that terminal
-  can make the two differ (see
-  [How T3 Code finds its providers](#how-t3-code-finds-its-providers))
-- whether T3 Code uses an Antigravity runtime it downloaded into
-  `~/.t3/tools/antigravity-acp` instead of the bundled one
-- whether `~/.codex/packages/app-server-daemon` (or the one in
-  `$CODEX_HOME`) is there for codex's `/daemon` menu to install into, and
-  whether its background server or update loop is running (see
-  [Provider updates](#provider-updates))
-- whether a machine policy keeps claude's updates off (see
-  [Provider updates](#provider-updates))
-- the channel, and whether it's the [NixOS stable](#nixos-stable) set
-- which Electron the desktop app runs on, and why (see
-  [The desktop app's Electron](#the-desktop-apps-electron))
-- whether the binary cache is set up, or else whether you're a trusted user
-  (so the flake's own cache settings work for you)
-- whether `runtimeCompat` (nix-ld) is on
-- whether `programs.t3code.server` is enabled, whether it runs for you
-  (`server.users`), and its unit's state
-- whether upstream's own `~/.config/systemd/user/t3code.service` exists
-- whether `t3` on `PATH` is t3code-nix's
 
 Each line is `OK`, `WARN` or `PROBLEM`; `WARN` and `PROBLEM` lines say
 what to do under them (`→`). It exits with 1 if there's a problem.
@@ -805,18 +728,10 @@ the newest nightly, nightly gets that release until the next nightly.
 These are T3 Code's own release channels; the libraries underneath are a
 separate choice (see [NixOS stable](#nixos-stable)).
 
-Both apps can be installed together, each with its own launcher and icon:
-`programs.t3code` installs one channel, so add the other package yourself
-(for example
-`environment.systemPackages = [ t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.t3code-nightly ];`).
-They share `~/.t3` and the `t3code://` link handler, and upstream gives them
-the same window class, so a dock may group both apps' windows under one
-launcher. Sharing `~/.t3` means sharing its database: nightly can
-migrate it ahead of latest, and the latest app then starts anyway, skipping
-the migrations it doesn't know (upstream's own updater lets you go back
-from nightly only after checking the database). To keep them apart, start
-one app with its own `T3CODE_HOME`. The app makes itself the link handler with `xdg-mime` when that
-is installed (`xdg-utils`); without it, the launchers still declare it.
+Both apps can be installed together (`programs.t3code` installs one; add
+the other package yourself). They share `~/.t3`, so nightly can migrate the
+database ahead of latest; start one with its own `T3CODE_HOME` to keep them
+apart.
 
 **Pinning.** `main` moves with every release. To stay on one set of
 versions, point the input at a tag or a commit instead:
@@ -850,14 +765,9 @@ that first published it, with every package as it was there. Its
 - **Without flakes:** import an older tag's or commit's tarball
   (`…/archive/t3code-v<version>.tar.gz` or `…/archive/<commit>.tar.gz`)
   instead of `main`'s, then rebuild.
-- **The server:** a rebuild doesn't restart a running `t3code-server`, so
-  after `switch --rollback` or a re-lock it keeps running the newer
-  version until `systemctl --user restart t3code-server` (booting an older
-  generation starts the old one anyway).
-- **The server's database:** a new version may have migrated it so that
-  the older one won't open it. Put back the copy made before the upgrade
-  (see [Database copies](#database-copies)). Only `t3code-server` makes
-  these copies; the desktop app makes none.
+- **The server:** restart it after rolling back (see
+  [Running the server](#running-the-server)), and if it then fails, put
+  back its [database copy](#database-copies).
 
 **An older set may not download any more.** Every package is the vendor's
 own file, and a pin stays fetchable only as long as the vendor keeps that
@@ -908,15 +818,8 @@ about how T3 Code uses them:
   (Cursor, Grok, fx, OpenCode, Antigravity, Kiro, Muse, pi) are installed,
   but you switch each one on once in T3 Code's settings.
 
-**`~/.t3/bin/t3`.** The desktop app also writes a `t3` command there. That
-one runs the app's own copy of the CLI from the Nix store.
-
-- It doesn't see the bundled providers, only your own.
-- After an upgrade and garbage collection it stops with "Open the app once
-  to update this command" until the app runs again.
-- It isn't on your `PATH` unless you add it.
-
-Use the `t3` from this flake instead, which keeps working across upgrades.
+**`~/.t3/bin/t3`**, which the desktop app writes, doesn't see the bundled
+providers and breaks after garbage collection; use this flake's `t3` instead.
 
 ### Provider updates
 
@@ -1041,16 +944,6 @@ t3code-nix.packages.${system}.t3code.override { electron = "bundled"; }
   T3 Code release or a nixpkgs update gives nixpkgs' another try; an issue
   says so, and the status page and the release notes show it. `"nixpkgs"`
   still builds on it if you ask, with a warning.
-- **NixOS stable** uses the same rule with nixpkgs-stable's Electron but has
-  no such fallback: if nixpkgs-stable takes an Electron patch that breaks the
-  app, NixOS stable stays on the last set that passed until nixpkgs fixes it
-  (the `stable-behind` issue shows it).
-- **The overlay** uses your own nixpkgs' Electron the same way (bundled when
-  yours is missing, unusable or older), but never the fallback above: that
-  comes from tests on this flake's pinned nixpkgs, not yours.
-- **With `inputs.t3code-nix.inputs.nixpkgs.follows`**, the flake's packages
-  still use that fallback, so you may get the bundled Electron even where
-  your nixpkgs' would have passed. That's harmless.
 - **The `t3` CLI** is unaffected: its Node is built into the program.
 
 ### The preview browser
@@ -1100,14 +993,9 @@ environment.systemPackages = [
 **boat** runs [<img src="docs/logos/boat.svg" height="14" alt=""> boat.dev](https://boat.dev) cloud sandboxes (`boat run`,
 `boat new`, `boat exec`). Its update check is off and `boat self-update`
 says it's installed by Nix. Sign-in is boat's own (`boat login`), kept in
-`~/.config/ascii/boat/config.json`, which this flake never touches. A copy
-installed with boat's own installer (`curl -fsSL https://boat.dev/install |
-sh`) lives in `~/.ascii/bin`. That installer also adds a `boat` shell
-function and a `PATH` line to your shell's startup files (bash and zsh,
-between `# ASCII BOAT SHELL INTEGRATION` markers), so `boat` runs that copy
-instead of this one, and links it from `~/.local/bin` (and from
-`/usr/local/bin` where it can write there). To use this one, remove those
-blocks, the links and `~/.ascii/bin/boat`, then start a new shell.
+`~/.config/ascii/boat/config.json`, which this flake never touches. If
+boat's own installer put a copy in `~/.ascii/bin`, remove it and its shell
+startup lines so this one runs.
 
 **agent-browser** drives a headless browser for agents (`open`,
 `snapshot`, `click`, `fill`, `screenshot`), with its dashboard, MCP
@@ -1147,9 +1035,9 @@ status page shows each browser's version. The
   reads Google's Chrome release feed (`chromereleases.googleblog.com`) and
   warns if the browser is behind a release with security fixes, so a pin
   that falls behind says so. `AGENT_BROWSER_NO_VERSION_CHECK=1` turns that
-  off. Beyond that, the browsers fetch what the agent opens, plus what
-  they try on their own (below). Choosing Chrome also downloads it from
-  Google.
+  off. Beyond that, the browsers fetch what the agent opens; Chromium and
+  Chrome also contact Google services on their own, ungoogled-chromium
+  doesn't. Choosing Chrome also downloads it from Google.
 - **User namespaces:** Chromium's sandbox needs unprivileged user
   namespaces. Where they're restricted (Ubuntu 23.10 and later), the
   wrapper says so when you run it. Turn the restriction off with
@@ -1157,15 +1045,6 @@ status page shows each browser's version. The
   it, put the line `kernel.apparmor_restrict_unprivileged_userns = 0` in a
   file in `/etc/sysctl.d/`; or allow `userns` for this Chromium's path
   in an AppArmor profile. The wrapper never turns the sandbox off.
-
-What each browser tried to reach on its own, in a 90-second headless run
-on a local page with every outside connection refused:
-
-| Browser | Tried to reach |
-| --- | --- |
-| `ungoogled-chromium` | nothing |
-| `chromium` | www.google.com, accounts.google.com, clients2.google.com, optimizationguide-pa.googleapis.com |
-| `google-chrome` | the same, and www.gstatic.com |
 
 ### Dictation
 
@@ -1219,11 +1098,6 @@ t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.t3code.override { acpRunt
   (a downloaded Python can't start on NixOS without nix-ld).
 - An npm agent whose install downloads a program of its own may still need
   `runtimeCompat`.
-- Some agents offer both a program and npm. T3 Code's default picks the
-  program, which needs `runtimeCompat`. To have them use npm instead, set
-  `"distribution": "npx"` in the agent's `config` under `providerInstances`
-  in `~/.t3/userdata/settings.json` (under your own T3 home instead of
-  `~/.t3` if you set one); T3 Code's settings screen doesn't show it.
 - With the module, `acpRuntimes` applies to the app and to the CLI and
   server it installs.
 
@@ -1256,292 +1130,7 @@ doesn't package it. Other systems have no packages.
 
 ## Maintainer notes
 
-### Setting up, once
-
-**The release watcher.** It runs on Cloudflare (`watcher/`), and
-`deploy-watcher.yml` deploys it on every change to `watcher/` or `shared/`
-on `main`. When a deploy never reports healthy, that workflow rolls back to
-the previous version, but only if the live version is still the one it
-deployed; otherwise it leaves the check to you. So the first deploy is by
-hand, from a checkout of `main`. The workflow's API token can edit only this
-Worker and so can't create it: the first deploy signs in with
-`wrangler login` (in a browser) instead. Create the Worker's KV namespace
-first (in the Cloudflare dashboard, or with `wrangler kv namespace create`),
-and put its ID and your account ID in place of the placeholders:
-
-```sh
-cd watcher
-sed -i "s/KV_NAMESPACE_ID/your-kv-namespace-id/" wrangler.jsonc  # don't commit this
-export CLOUDFLARE_ACCOUNT_ID=your-account-id
-nix shell --inputs-from .. nixpkgs#wrangler -c sh -c '
-  wrangler login
-  wrangler deploy
-  wrangler secret put GITHUB_TOKEN
-  wrangler secret put HEALTH_TOKEN'
-git checkout wrangler.jsonc
-```
-
-`GITHUB_TOKEN` is a fine-grained token for this repository only, with
-Actions read and write (for `workflow_dispatch`) and a one-year expiry;
-`HEALTH_TOKEN` is any long random string. Then set, in the repository:
-
-- the secret `WATCHER_HEALTH_TOKEN` to the same `HEALTH_TOKEN`;
-- the variable `WATCHER_URL` to the `workers.dev` address `wrangler deploy`
-  printed;
-- the variables `CLOUDFLARE_ACCOUNT_ID` and `WATCHER_KV_ID` (the KV
-  namespace ID), and the secret `CLOUDFLARE_API_TOKEN`, a token that can
-  edit only this Worker.
-
-Check it with
-`curl -H "Authorization: Bearer <HEALTH_TOKEN>" <WATCHER_URL>/health`. From
-then on the workflow deploys; it skips until all three variables are set.
-
-**Turning updates on.** Update runs are real only once the repository
-variable `UPDATES` is `true`; until then the hourly backstop dispatches
-nothing and opens no issues, and a dispatched run (the watcher's, say) stops
-before reading upstream. A dry run (`dry_run`) works either way. The status
-page deploys only once the variable `PAGES` is `true`, with the repository's
-Pages source set to "GitHub Actions".
-
-**The binary cache.** The update run's cache job runs only once the
-variable `CACHIX_CACHE` (the cache's name) is set, and needs the secret
-`CACHIX_AUTH_TOKEN` to push.
-
-### When an issue opens
-
-The update runs and the hourly health check open issues and close them by
-themselves; every kind is listed in `PROBLEMS` in `scripts/ci/issues.ts`.
-These five need explaining:
-
-| Issue | What it means | What to do | It closes when |
-| --- | --- | --- | --- |
-| `bump-waiting` | nixpkgs, the NixOS stable pin or a browser pin hasn't moved on `main` for 14 days | Read what it names | The pin moves on `main` |
-| `downgrade` | Upstream pulled a release, and `main` followed it back | Nothing; it blocks no update | That pin is back at the pulled version or higher |
-| `integrity` | A pin's file changed without a new version | Nothing when the vendor's checksum vouches for the new file, which is then pinned; for grok, which publishes none, check the file, then re-pin it | `main` pins the new file |
-| `guard-review` | A release's help doesn't match the lists in `lib/guard.nix` | Update the lists | A later published run matches |
-| `watcher-auth` | The watcher's GitHub token stopped working (opened by the hourly health check) | Rotate the token | The watcher reads GitHub again |
-
-**`bump-waiting`.** The nixpkgs bump, the NixOS stable pin
-(`versions/nixpkgs-stable.json`) and the browser pins each wait while
-cache.nixos.org doesn't have their builds yet. The nixpkgs bump also waits
-while the packages don't evaluate at the new revision. The nixpkgs and
-browser-pin issues name the builds that aren't on cache.nixos.org yet (held
-up by a Hydra failure, say, or an aarch64 build that's behind), or say the
-cache couldn't be checked; the NixOS stable pin's gives only the first line
-of its reason (that the move waits for the cache, or why it couldn't look).
-Each run's summary has the details.
-
-**`downgrade`.** When upstream pulls a release (deletes it, or marks it a
-draft or prerelease again), `main` follows its pointer back to the earlier
-version, after the usual tests. Each pin that moved back gets its own
-issue, titled with the pulled version, so a T3 Code pull that moves its four
-pins opens four. A move between two versions with the same numbers and
-different suffixes (two nightlies of one version, say) can't be ordered, so
-it opens no issue.
-
-**`integrity`.** grok publishes no checksum, so when its file changes
-without a new version, the updater keeps the old pin. After checking the
-new file, re-pin it on a branch with `node scripts/pin.ts vendor grok` and
-land it like any change.
-
-**`guard-review`.** See [A new command or option in a
-provider](#a-new-command-or-option-in-a-provider) below.
-
-**`watcher-auth`.** Make a new GitHub token the same way as the first one.
-Then, in `watcher/` with `CLOUDFLARE_ACCOUNT_ID` set, run
-`nix shell --inputs-from .. nixpkgs#wrangler -c wrangler secret put GITHUB_TOKEN`
-(after `wrangler login`, or with `CLOUDFLARE_API_TOKEN` set to the
-workflow's token).
-
-**GitHub's Latest marker on the wrong release.** A release made by hand on
-a tag that isn't `t3code-v*` takes GitHub's Latest marker unless "Set as
-the latest release" is unticked, and the update runs leave it there. To
-hand the marker back, tick "Set as the latest release" on any `t3code-v*`
-release; the next update run moves it to the version `main` pins.
-Unticking it on the wrong release doesn't work: GitHub keeps the marker
-there.
-
-### Making changes
-
-#### Rules for providers
-
-Every provider is packaged the same way. A new one follows these rules, so
-the checks, the updater and the docs treat it like the others.
-
-1. **Only T3 Code's own providers.** A provider is added when a T3 Code
-   release adds a built-in driver for it, never otherwise.
-   `pkgs/t3code/providers.nix` lists exactly those drivers, and the t3
-   smoke test fails when T3 Code has one that isn't there. The package is
-   named after the vendor's program (`claude-code`, `kiro-cli`), and
-   `providers.nix` maps T3 Code's driver name to it.
-2. **The vendor's prebuilt release, as shipped.** No package is built
-   from source or from npm (the one build tool compiled is wrap-buddy, for
-   opencode). The package installs the vendor's own Linux build
-   for x86_64 and aarch64. A system the vendor doesn't ship is left out of
-   `meta.platforms`, never built some other way. `meta.sourceProvenance`
-   is `binaryNativeCode`.
-3. **One pin, written by the updater.** The version, URLs and hashes live
-   in `versions/<name>.json` and nowhere else, and nobody edits that file by
-   hand: the updater writes it, and `node scripts/pin.ts` writes the first
-   one. Every URL names its version, so an old pin keeps pointing at the
-   same file (fetching it still needs the vendor to keep it). Each
-   hash comes from a checksum the vendor publishes (a GitHub asset digest,
-   a manifest, a `.sha256` file), and the pin records it (the asset's
-   `digest`, or where it came from in `checksumSource`). grok is the only
-   exception, because its vendor publishes no checksum.
-4. **One source, shared by the watcher and the updater.** Where releases
-   come from is defined once, in `shared/sources.ts`: an entry in `GITHUB`
-   for a GitHub release, or a URL in `VENDOR_URLS` for anything else.
-5. **Changed for NixOS only where it has to be.** With a wrapper, the
-   vendor's files go in `$out/libexec/<name>/` as shipped, and `$out/bin/`
-   holds the wrapper. A
-   static binary is installed byte for byte (`dontStrip`,
-   `dontPatchELF`); a dynamic one is patched with `autoPatchelfHook`
-   against nixpkgs' libraries (opencode with wrap-buddy instead, which
-   aarch64 needs; see `docs/acceptance-matrix.md`). Programs the provider runs come from nixpkgs,
-   on the wrapper's `PATH` (claude's bubblewrap and socat, codex's
-   bubblewrap) or in place of a bundled copy (codex's ripgrep). The package's opening comment says what it is and every
-   change made for NixOS.
-6. **It never updates itself.** If it can update or reinstall itself,
-   the wrapper's first arguments are `guard.refuse` (or the provider's own
-   guard in `lib/guard.nix`), followed by the vendor's own switch that turns
-   its auto-updater off. `updater-switches` checks that switch. A provider
-   with no self-update (muse) needs no wrapper, and is installed as the
-   command itself.
-7. **The shared helpers, not copies of them.** `versions.load`,
-   `versions.asset` and `versions.platforms` read the pin;
-   `versions.installCheck { }` checks that `<command> --version` reports
-   the pinned version; `versions.installLicenses` installs the vendor's
-   licence files. Shell completions are generated only when the build
-   machine can run the program (`stdenv.buildPlatform.canExecute`).
-8. **`meta` in full.** `description`, `homepage`, `license`,
-   `sourceProvenance`, `platforms` (from the pin) and `mainProgram`. An
-   unfree provider is also listed in `pkgs/unfree.nix` and in `UNFREE` in
-   `scripts/lib/packages.ts`.
-9. **Documented like the others.** It gets an entry in
-   `docs/acceptance-matrix.md` in the same form (version source, asset,
-   checksum, version probe) and a row in the README's provider table. The
-   README's provider counts change too: "all ten", "the other eight" and
-   the free and unfree counts, also in `templates/default/flake.nix` and
-   `nixos/module.nix`.
-
-#### Adding a provider
-
-A version bump needs no code: the updater writes the pin, and a package
-changes only when the vendor's archive or runtime does. The t3code pins
-(`t3code`, `t3`, and their `-nightly` twins) are only ever written by the
-updater (`node scripts/update.ts --write --only <name>`). A new provider
-touches these places (the ones marked "fails" stop the build until they are
-done):
-
-1. Its pin. For a GitHub release, an entry in `GITHUB` in
-   `shared/sources.ts`, which the watcher also reads, and the first pin
-   from `node scripts/pin.ts github`. For any other vendor, its URL in
-   `VENDOR_URLS` in `shared/sources.ts`, a resolver in
-   `scripts/lib/vendors.ts`, a watcher source in `CRONS` in
-   `watcher/src/watcher.ts`, and the first pin from
-   `node scripts/pin.ts vendor <name>`. If T3 Code's update notice checks an
-   npm package for it, also its entry in `NPM` in `scripts/update.ts`.
-2. `pkgs/<name>/package.nix`, modelled on a provider of the same kind
-   (grok: one static binary; claude-code: one patched binary; pi: a whole
-   tree; muse: one static binary with no wrapper): `versions.asset` and
-   `versions.platforms` for the pin, `versions.installCheck` for the
-   install check, `versions.installLicenses`, and, if it can update itself,
-   a wrapper with `guard.refuse { name = "<name>"; }` first, then its
-   updater switches. Its update commands, help forms and reviewed commands
-   go in `lib/guard.nix` (`providerRefused`, `providerHelp`,
-   `providerCommands`; a wrapper using `guard.refuse` fails without the
-   first two).
-3. `pkgs/default.nix`, `pkgs/unfree.nix` if it's unfree, and its T3 Code
-   driver in `pkgs/t3code/providers.nix`.
-4. In `lib/checks.nix`: `provider-wrappers`' `bins` (fails without it),
-   its switch in `updater-switches`, its help anchors in
-   `provider-commands`, `licences`, and `as-shipped` or `completions` when
-   they apply.
-5. The command T3 Code looks for, in `commands` in
-   `pkgs/doctor/package.nix`, and its name in `lib/overlay.nix`
-   (`candidates`, or `notTopLevel`) and `lib/stable-suite.nix` (all three
-   fail until they list it).
-6. Its name on the status page (`scripts/lib/packages.ts`), in
-   `nixos/module.nix`'s provider option, the README's provider list and
-   `docs/acceptance-matrix.md`.
-
-#### A new command or option in a provider
-
-The update guards depend on lists in `lib/guard.nix`, and three checks
-compare those lists with each release's help. None of them holds a
-release: a mismatch opens a `guard-review` issue for that package once the
-release is published. Branch CI fails on a mismatch only when the commit
-changes `lib/guard.nix`. That way a wrong edit to the lists can't land, and
-an issue already open on `main` doesn't block other changes. (A change to
-the checks themselves in `lib/checks.nix` is covered by their self-tests.)
-
-If the two t3 channels disagree about an option (one has turned a value
-option into a flag, say), the list can't be right for both. Leave the
-issue open until they agree.
-
-- `t3-guard-flags`: every command `t3` lists at any depth
-  (`auth pairing create`), the options that take a value, and the words a
-  boolean option takes (a name only one channel lists is fine). For a new
-  command, read what it does in the bundle: if it installs upstream's own
-  `t3` or service, refuse it in `refuseT3` (a `connect` one: list it in
-  `t3ConnectRefused`); then add it to `t3Commands`.
-- `codex-guard-flags`: codex's top-level commands, its hidden ones, and the
-  options that take one value or several, at the top level and under
-  `app-server`, `app-server daemon` and `remote-control`, and its short
-  flags there and on every installer command (`codexShortFlags`). A new
-  command under `app-server daemon` or `remote-control` is refused until it
-  is reviewed: list it in `codexAllowed` if it's safe, or in
-  `codexInstallers` if it installs codex (it stays refused).
-- `provider-commands`: the other providers' top-level commands
-  (`providerCommands`). The guard lets a line that starts with a listed
-  command through whatever follows (`claude plugin install x`), so read
-  what a new one does first: if it installs or updates the provider,
-  refuse it in its package; otherwise add it.
-
-Commands left out of a help aren't compared; read the bundle for those.
-
-**codex's daemon records.** The doctor's check for codex's background
-server and update loop follows how codex records them
-(`app-server-daemon/*.pid`, upstream's `pid.rs`) and the arguments they run
-with. `doctor-scenarios` feeds it records it writes itself, so no check
-notices if codex changes that format. On a codex update whose release
-touches `pid.rs` or the daemon's arguments, recheck the doctor by hand
-against a real codex daemon started outside Nix.
-
-**agent-browser's browser pins.** `versions/browser-unstable.json` and
-`versions/browser-stable.json` don't move with the flake's nixpkgs bump.
-A pin moves when its channel's version of any of the three browsers
-changes, and at least weekly, but only once ungoogled-chromium's builds for
-both systems are on cache.nixos.org. The stable pin moves to the next NixOS
-release once that release is out of beta.
-
-Only ungoogled-chromium's tests can hold a pin back. If Chromium or Chrome
-isn't available yet, the pin waits for it at most three days, then moves
-without it. A problem with either opens an issue of its own.
-
-**The Electron record.** `ci/electron-runtime.json` says which Electron
-`"auto"` picks for the flake's own Desktop app packages on each system,
-before the test fallback (nixpkgs' or the bundled one, and its version).
-The status page and the release notes show it, and say when the fallback
-applies.
-Each update run that changes a Desktop app pin or `flake.lock` tries to
-write it again. After a hand commit that changes `flake.lock`, a Desktop
-app pin's `electron`, `flake.nix` or the Electron code, run
-`node scripts/ci/electron-runtime.ts write` (it needs Nix) and commit the
-result. An entry left behind by a new bundled Electron version or nixpkgs
-revision is ignored, and the page and the notes say a general sentence
-until a later run writes it again. An entry that still matches its bundled
-version and revision but is wrong after a code change fails the
-`electron-runtime` check.
-
-**The server's VM test.** `programs.t3code.server` is checked in the
-sandbox by `module-eval` and `server-unit`. Booting it in a NixOS VM needs
-KVM, so it isn't among the checks:
-`nix build .#legacyPackages.x86_64-linux.vmTests.server -L`. First check
-that `/dev/kvm` exists and that `nix config show system-features` lists
-`kvm` (on a script-installed Nix, the build users must be able to open
-`/dev/kvm`). Without it the test falls back to emulated QEMU.
+Setting up the watcher and cache, the issues the update runs open, and the rules for changing providers are in [MAINTAINING.md](MAINTAINING.md).
 
 ## License
 

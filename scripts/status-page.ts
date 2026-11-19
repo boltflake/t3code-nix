@@ -245,7 +245,7 @@ function bar(d: { gap: number | null; released: Released | null }, x: number): s
 }
 
 function deliveryCell(r: Row): string {
-  if (r.counted !== true) return `<span class="none-text" aria-hidden="true">—</span> ${REASON[r.counted]}`;
+  if (r.counted !== true) return `<span class="reason">${REASON[r.counted]}</span>`;
   if (r.gap === null || !r.released) return `<span class="none-text" aria-hidden="true">—</span><span class="sr">not known</span>`;
   if (KIND[r.released.kind].why) return `~${escape(roughly(r.gap))}<span class="sr"> (approximately)</span>`;
   return `<svg class="band-mark" viewBox="0 0 6 16" aria-hidden="true">${bar(r, 0)}</svg>${escape(duration(r.gap))}`;
@@ -319,7 +319,7 @@ function row(r: Row, repo: string, live: Live | null, level: 3 | 4): string {
     const linked = s.link && LINK_WORDS[s.state] ? `<a class="hit" href="${escape(s.link)}">${words}<span class="sr"> for ${escape(who)}</span></a>` : words;
     const extra = s.state === "held" && s.version ? ` <span class="v">${version(s.version)}</span>` : "";
     const when = [since(s), s.state === "found" && s.wait ? escape(s.wait) : ""].filter(Boolean).join(" · ");
-    stateCell = `<div class="cell state ${CLASS[s.state]}"><span class="lbl">State </span>${icon(CLASS[s.state])}<span><span class="state-words">${linked}${extra}</span>${when ? `<span class="sub">${when}</span>` : ""}</span></div>`;
+    stateCell = `<div class="cell state ${CLASS[s.state]}"><span class="lbl">State </span><span><span class="state-words">${icon(CLASS[s.state])}<span>${linked}${extra}</span></span>${when ? `<span class="sub">${when}</span>` : ""}</span></div>`;
   }
   return `<li class="pkg" id="pkg-${escape(r.name)}">
 <div class="cell who">${heading} <code class="attr">${escape(r.name)}</code>${unfree}${desc ? `<p class="desc">${text(desc)}</p>` : ""}</div>
@@ -565,7 +565,7 @@ h1 { font-size: 1.25rem; line-height: 1.75rem; font-weight: 500; color: var(--mu
 .parent-head { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; padding: .75rem 1rem 0; }
 .parent-title { font-size: 1rem; line-height: 1.5rem; font-weight: 600; }
 .parent-ver { font-size: .875rem; line-height: 1.25rem; color: var(--muted); overflow-wrap: anywhere; }
-.parent-state { display: inline-flex; align-items: center; gap: .375rem; font-size: .875rem; line-height: 1.25rem; font-weight: 500; }
+.parent-state { font-size: .875rem; line-height: 1.25rem; }
 /* Children: a line down the left joins them to their parent. It sits in the
    rows' own padding, with their content indented past it: the whole row on
    narrow screens, and on wide ones the name and the details only, so the
@@ -596,24 +596,39 @@ h1 { font-size: 1.25rem; line-height: 1.75rem; font-weight: 500; color: var(--mu
 .attr { color: var(--muted); font-size: .8125rem; margin-left: .25rem; overflow-wrap: anywhere; }
 .tag { display: inline-block; margin-left: .375rem; font-size: .75rem; line-height: 1rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 .375rem; vertical-align: 1px; }
 .desc { color: var(--muted); font-size: .875rem; line-height: 1.25rem; }
-.state { display: flex; gap: .375rem; align-items: flex-start; }
-.state > span, .notice li > span, .more-body dd { min-width: 0; overflow-wrap: anywhere; }
+.state { display: flex; align-items: flex-start; }
+.state > span, .state-words > span, .notice li > span, .more-body dd { min-width: 0; overflow-wrap: anywhere; }
 /* Links in rows and cards: a target at least 24px tall, 4px taller than its
    line, without moving the text. They don't overlap the next line's only
    because rows, the meta line and the notice lists keep at least 8px
    between lines (WCAG 2.5.8): keep that gap wherever two of them can sit on
    adjacent lines. */
 a.hit { display: inline-block; padding-block: .125rem; margin-block: -.125rem; }
-.state .st { margin-top: .125rem; }
-.state-words { font-weight: 500; }
-.state.ok .state-words { color: var(--muted); font-weight: 400; }
-.state.found .state-words, .state.testing .state-words { color: var(--move); }
-.state.held .state-words { color: var(--held); }
+/* The state as a tinted pill, its icon inside, in the state's own colour;
+   the versions on main no longer share it. The edge, a faint mix of the
+   pill's colour, keeps the pill's shape on a hovered row (whose background
+   is as light as the tints) and becomes an outline in forced colours. */
+.state-words, .parent-state, .reason { display: inline-flex; align-items: flex-start; gap: .375rem; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: .75rem; padding: 0 .5rem; font-weight: 500; }
+.state-words .st, .parent-state .st { margin-top: .125rem; }
+.state.ok .state-words, .parent-state.ok { color: var(--ok); background: var(--ok-bg); }
+.state.found .state-words, .state.testing .state-words, .parent-state.found, .parent-state.testing { color: var(--move); background: var(--move-bg); }
+.state.held .state-words, .parent-state.held { color: var(--held); background: var(--held-bg); }
+.state.none .state-words, .parent-state.none, .reason { color: var(--muted); background: var(--none-bg); }
+.reason { font-size: .8125rem; }
 .state a { color: inherit; }
 .sub { display: block; color: var(--muted); font-size: .8125rem; }
 .v { font-variant-numeric: tabular-nums; }
+/* Versions on main read as text, not as a state: their link shows by a
+   full-strength underline in --muted (3:1 on the row in both schemes). A
+   state's link, in its pill, underlines in the pill's own colour. */
+.ver a { color: var(--text); text-decoration-color: var(--muted); }
+.ver a:hover { text-decoration-color: currentColor; }
+.state-words a { text-decoration-color: currentColor; }
+.state-words a:hover { text-decoration-thickness: 2px; }
 .ver, .dlv { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .dlv { display: flex; align-items: center; gap: .375rem; white-space: nowrap; }
+/* A chip may wrap rather than spill into the next column. */
+.dlv .reason { white-space: normal; }
 .none-text { color: var(--muted); }
 .band-mark { width: 6px; height: 16px; flex: none; }
 .strip { display: block; overflow: visible; }

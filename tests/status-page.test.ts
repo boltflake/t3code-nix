@@ -170,11 +170,11 @@ test("page: each state's words, time and link in its row", () => {
     fx: { state: "found", version: "3.1" },
     boat: { state: "up-to-date" },
   }), "x");
-  assert.ok(rowOf(page, "codex").includes('<span class="state-words"><a class="hit" href="https://github.com/o/r/actions/runs/9">Testing 1.<wbr>1<span class="sr"> for Codex</span></a></span><span class="sub">since <time class="rel"'));
-  assert.ok(rowOf(page, "grok").includes('<span class="state-words">Held: tests failed <span class="v">1.<wbr>0.<wbr>78</span></span><span class="sub">found <time class="rel"'));
-  assert.ok(rowOf(page, "fx").includes('<span class="state-words">New version 3.<wbr>1</span></span></div>'), "no link, no time");
-  assert.ok(rowOf(page, "pi").includes('<div class="cell state none">') && rowOf(page, "pi").includes("Not checked"));
-  assert.ok(rowOf(page, "boat").includes('<div class="cell state ok">') && rowOf(page, "boat").includes(">Up to date<"));
+  assert.match(rowOf(page, "codex"), /<span class="state-words"><svg class="st testing" viewBox="0 0 16 16" aria-hidden="true">[^]*?<\/svg><span><a class="hit" href="https:\/\/github\.com\/o\/r\/actions\/runs\/9">Testing 1\.<wbr>1<span class="sr"> for Codex<\/span><\/a><\/span><\/span><span class="sub">since <time class="rel"/);
+  assert.match(rowOf(page, "grok"), /<span class="state-words"><svg class="st held" viewBox="0 0 16 16" aria-hidden="true">[^]*?<\/svg><span>Held: tests failed <span class="v">1\.<wbr>0\.<wbr>78<\/span><\/span><\/span><span class="sub">found <time class="rel"/);
+  assert.match(rowOf(page, "fx"), /<span class="state-words"><svg class="st found" viewBox="0 0 16 16" aria-hidden="true">[^]*?<\/svg><span>New version 3\.<wbr>1<\/span><\/span><\/span><\/div>/, "no link, no time");
+  assert.match(rowOf(page, "pi"), /<div class="cell state none"><span class="lbl">State <\/span><span><span class="state-words"><svg class="st none" viewBox="0 0 16 16" aria-hidden="true">[^]*?<\/svg><span>Not checked<\/span><\/span><\/span><\/div>/);
+  assert.match(rowOf(page, "boat"), /<div class="cell state ok"><span class="lbl">State <\/span><span><span class="state-words"><svg class="st ok" viewBox="0 0 16 16" aria-hidden="true">[^]*?<\/svg><span>Up to date<\/span><\/span><\/span><\/div>/);
   // The details carry the state's exact time.
   assert.ok(rowOf(page, "codex").includes("<dt>State</dt><dd>Testing 1.1, since <time datetime=\"2026-11-13T11:56:00.000Z\">13 Nov 2026, 11:56 UTC</time></dd>"));
 });
@@ -199,7 +199,7 @@ test("page: the delivery column, the strip and the details", () => {
   assert.equal(cell("grok"), '<span class="lbl">Delivery </span>~3 h<span class="sr"> (approximately)</span>', "approximate: no band mark");
   assert.equal(cell("fx"), '<span class="lbl">Delivery </span><span class="none-text" aria-hidden="true">—</span><span class="sr">not known</span>');
   for (const [n, w] of [["pi", "Added"], ["kiro-cli", "Returned"], ["muse", "Older"], ["opencode", "Re-added"]]) {
-    assert.equal(cell(n), `<span class="lbl">Delivery </span><span class="none-text" aria-hidden="true">—</span> ${w}`, n);
+    assert.equal(cell(n), `<span class="lbl">Delivery </span><span class="reason">${w}</span>`, n);
   }
   // The strip: one bar per delivery, oldest on the left, heights by band.
   const strip = rowOf(page, "codex").match(/<svg class="strip"[^>]*>[\s\S]*?<\/svg>/)![0];
@@ -281,6 +281,27 @@ test("styles: tabular figures survive the font shorthand", () => {
   assert.ok(body.indexOf("font-variant-numeric: tabular-nums") > body.indexOf("font: "), "after `font:`, which would reset it");
 });
 
+test("styles: each state's pill in its own colours, and versions on main in text colour", () => {
+  // The declarations of the one rule whose selector list names sel.
+  const rule = (sel: string) => {
+    const hits = [...STYLE.matchAll(/\n([^\n{]+) \{([^}]*)\}/g)].filter((m) => m[1].split(", ").includes(sel));
+    assert.equal(hits.length, 1, sel);
+    return hits[0][2].trim();
+  };
+  for (const [cls, c, bg] of [["ok", "ok", "ok-bg"], ["found", "move", "move-bg"], ["testing", "move", "move-bg"], ["held", "held", "held-bg"], ["none", "muted", "none-bg"]]) {
+    for (const sel of [`.state.${cls} .state-words`, `.parent-state.${cls}`]) assert.equal(rule(sel), `color: var(--${c}); background: var(--${bg});`, sel);
+  }
+  // The grey colours are the delivery chip's too, and the chip may wrap.
+  assert.ok(STYLE.includes("\n.state.none .state-words, .parent-state.none, .reason { color: var(--muted); background: var(--none-bg); }"), "the chip");
+  assert.equal(rule(".dlv .reason"), "white-space: normal;");
+  assert.match(STYLE, /\n\.state-words, \.parent-state, \.reason \{ display: inline-flex;[^}]*border: 1px solid color-mix\(in srgb, currentColor 25%, transparent\);/, "one pill shape, with an edge");
+  assert.match(STYLE, /\n\.ver a \{ color: var\(--text\); text-decoration-color: var\(--muted\); \}/);
+  assert.match(STYLE, /\n\.state-words a \{ text-decoration-color: currentColor; \}/);
+  // Both still answer a hover, as every other link does.
+  assert.equal(rule(".ver a:hover"), "text-decoration-color: currentColor;");
+  assert.equal(rule(".state-words a:hover"), "text-decoration-thickness: 2px;");
+});
+
 test("styles: contrast of every text pair, icon and bar, in both schemes", () => {
   const tokens = (block: string) => Object.fromEntries([...block.matchAll(/--([\w-]+): (#[0-9A-Fa-f]{6})/g)].map((m) => [m[1], m[2]]));
   const light = tokens(STYLE.slice(0, STYLE.indexOf("@media (prefers-color-scheme: dark)")));
@@ -293,7 +314,11 @@ test("styles: contrast of every text pair, icon and bar, in both schemes", () =>
   const text = [["text", "surface"], ["text", "hover"], ["text", "page"], ["muted", "surface"], ["muted", "hover"], ["muted", "page"], ["muted", "none-bg"],
     ["link", "surface"], ["link", "hover"], ["link", "page"], ["ok", "ok-bg"], ["move", "move-bg"], ["held", "held-bg"], ["none", "none-bg"],
     ["ok", "surface"], ["move", "surface"], ["held", "surface"], ["move", "hover"], ["held", "hover"]];
-  const graphic = [["ok", "surface"], ["held", "surface"], ["slow", "surface"], ["move", "surface"], ["none", "surface"], ["approx", "surface"], ["focus", "surface"], ["focus", "page"]];
+  const graphic = [["ok", "surface"], ["held", "surface"], ["slow", "surface"], ["move", "surface"], ["none", "surface"], ["approx", "surface"], ["focus", "surface"], ["focus", "page"],
+    // The focus ring on a hovered row and over a pill's tint.
+    ["focus", "hover"], ["focus", "ok-bg"], ["focus", "move-bg"], ["focus", "held-bg"], ["focus", "none-bg"],
+    // The underlines: versions on main, in --muted; a state's link, in its pill's colour.
+    ["muted", "surface"], ["muted", "hover"], ["ok", "ok-bg"], ["move", "move-bg"], ["held", "held-bg"]];
   for (const [name, t] of [["light", light], ["dark", dark]] as const) {
     for (const [a, b] of text) assert.ok(ratio(t[a], t[b]) >= 4.5, `${name} ${a} on ${b}: ${ratio(t[a], t[b]).toFixed(2)}`);
     for (const [a, b] of graphic) assert.ok(ratio(t[a], t[b]) >= 3, `${name} ${a} on ${b}: ${ratio(t[a], t[b]).toFixed(2)}`);

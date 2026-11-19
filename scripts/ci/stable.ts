@@ -2,10 +2,14 @@
 // checks: their own evaluation, their own workflow step and time limit (a step
 // that runs out leaves no result file, which narrowing reads as incomplete).
 // The update runs run them after the default checks, in the same job; branch
-// CI, in a job of its own beside them.
+// CI, in jobs of their own (its parts) beside them.
 //
-//   node stable.ts SET SYSTEM OUT_DIR [--next] [--branch] [--tree=HASH] [--parent=REV]
+//   node stable.ts SET SYSTEM OUT_DIR [--next] [--branch] [--tree=HASH] [--parent=REV] [--part=PART]
 //
+// With --part (branch CI), only that part's checks (scripts/lib/parts.ts: a,
+// with the runner smokes and the check on the default checks, or b) are
+// built, in both groups, and its result is OUT_DIR/stable-SET-SYSTEM-PART.json;
+// `branch` then covers that part's checks.
 // The tested tree is HASH (the update workflow's candidate tree, exactly what
 // publish would commit), or else HEAD plus the working tree's changes.
 //
@@ -19,13 +23,13 @@
 //   drvs, base  a digest of the stable group's derivations, and of the base
 //               commit's (so a set whose stable derivations are main's is
 //               evidence about main's stable set)
-//   move        with --next, when the snapshot would move and stable-next
-//               passed: the equivalence step (every default check the same
-//               on the moved tree, each stable-<check> equal to the tested
-//               stable-next-<check>, default.nix without flakes giving the
-//               flake's stable t3 on the moved tree, and nothing the
-//               stable-next set needs from nixpkgs missing from
-//               cache.nixos.org): {ok, tree, reason}
+//   move        with --next and without --branch, when the snapshot would
+//               move and stable-next passed: the equivalence step (every
+//               default check the same on the moved tree, each
+//               stable-<check> equal to the tested stable-next-<check>,
+//               default.nix without flakes giving the flake's stable t3 on
+//               the moved tree, and nothing the stable-next set needs from
+//               nixpkgs missing from cache.nixos.org): {ok, tree, reason}
 //   branch      with --branch: the failures the branch made (fail branch CI):
 //               a failing stable check whose derivation differs from the
 //               parent's (REV or HEAD~1) and whose parent build doesn't
@@ -49,6 +53,7 @@ import { desktopSmoke } from "../desktop-smoke.ts";
 import { compare } from "../lib/nixcache.ts";
 import { current, moved, pinHashes } from "../lib/snapshot.ts";
 import { nixCalls, run, tryRun, writeJson } from "../lib/util.ts";
+import { partArg, STABLE_PARTS, stablePart, type StablePart } from "../lib/parts.ts";
 
 /** `notApplicable`: forced Electron twins (and their smokes) with no usable
  * nixpkgs Electron, which built a placeholder or weren't started: neither
@@ -196,22 +201,25 @@ export function evaluate(src: string, attr: string): { drvs: Drvs; failed: strin
 const groupAttr = (system: string, prefix: Prefix) => `legacyPackages.${system}.${prefix === "stable-" ? "stableChecks" : "stableNextChecks"}`;
 
 /** Evaluate, build (failures once more) and smoke-test a group. */
-export async function runGroup(src: string, system: string, prefix: Prefix, withSmokes: boolean): Promise<{ group: Group; drvs: Drvs }> {
+export async function runGroup(src: string, system: string, prefix: Prefix, withSmokes: boolean, part?: StablePart): Promise<{ group: Group; drvs: Drvs }> {
   const e = evaluate(src, groupAttr(system, prefix));
   if (!e.complete) return { group: { complete: false, failed: [] }, drvs: {} };
-  const names = Object.keys(e.drvs).sort();
+  // A part builds its own checks (all of them evaluated: `drvs` stays whole);
+  // the smokes are part a's.
+  const names = Object.keys(e.drvs).sort().filter((n) => part === undefined || stablePart(n) === part);
+  if (part === "b") withSmokes = false;
   // Failures once more; what's still missing must be a proven failure, or
   // the group has no complete result (nothing held, no evidence).
   const second = nix.build(e.drvs, nix.build(e.drvs, names).missing);
   if (!second.proven) return { group: { complete: false, failed: [] }, drvs: e.drvs };
-  const failed = [...e.failed, ...second.missing];
+  const failed = [...e.failed.filter((n) => part === undefined || stablePart(n) === part), ...second.missing];
   if (withSmokes) {
     const s = await smokeFailures(src, system, prefix, e.drvs, smokes);
     if (s === null) return { group: { complete: false, failed: [] }, drvs: e.drvs };
     failed.push(...s);
   }
   const all = smokesOfGroup(prefix);
-  const notApplicable = Object.keys(e.drvs).filter((n) => e.drvs[n].na)
+  const notApplicable = Object.keys(e.drvs).filter((n) => e.drvs[n].na && (part === undefined || stablePart(n) === part))
     .flatMap((n) => [n, ...Object.keys(all).filter((sm) => all[sm].pkg === n)]).sort();
   return { group: { complete: true, failed: [...new Set(failed)].sort(), ...(notApplicable.length ? { notApplicable } : {}) }, drvs: e.drvs };
 }
@@ -339,15 +347,16 @@ export function parentOutcomes(parentSrc: string, system: string, prefix: Prefix
 export async function main(argv: string[]): Promise<void> {
   const [set, system, outDir] = argv.filter((a) => !a.startsWith("--"));
   if (!set || !system || !outDir) {
-    console.error("usage: stable.ts SET SYSTEM OUT_DIR [--next] [--branch] [--tree=HASH] [--parent=REV]");
+    console.error("usage: stable.ts SET SYSTEM OUT_DIR [--next] [--branch] [--tree=HASH] [--parent=REV] [--part=PART]");
     process.exit(2);
   }
   mkdirSync(outDir, { recursive: true });
+  const part = partArg(argv, STABLE_PARTS);
   const tested = argv.find((a) => a.startsWith("--tree="))?.slice(7) || workingTree();
   const src = unpack(tested);
   const result: Record<string, unknown> = { set, system, tree: tested };
   try {
-    const stable = await runGroup(src, system, "stable-", true);
+    const stable = await runGroup(src, system, "stable-", true, part);
     result.stable = stable.group;
     result.drvs = digest(stable.drvs);
     if (set !== "main") {
@@ -363,9 +372,11 @@ export async function main(argv: string[]): Promise<void> {
     const behind = !current(tested);
     result.behind = behind;
     if (argv.includes("--next")) {
-      next = await runGroup(src, system, "stable-next-", behind);
+      next = await runGroup(src, system, "stable-next-", behind, part);
       result.stableNext = next.group;
-      if (behind && next.group.complete && !next.group.failed.length) result.move = await equivalence(tested, src, system, next.drvs);
+      // Only for a set that can publish: nothing reads branch CI's move, and
+      // its own check on the default checks is below.
+      if (behind && !argv.includes("--branch") && next.group.complete && !next.group.failed.length) result.move = await equivalence(tested, src, system, next.drvs);
     }
     if (argv.includes("--branch")) {
       const parentSrc = unpack(run("git", ["rev-parse", `${argv.find((a) => a.startsWith("--parent="))?.slice(9) || "HEAD~1"}^{tree}`]));
@@ -378,7 +389,7 @@ export async function main(argv: string[]): Promise<void> {
         // A default check that reads the snapshot shows up here, whatever
         // stable-next's result (the move's own step only runs after a pass).
         let changed: string[] = [];
-        if (behind) {
+        if (behind && part !== "b") {
           const m = unpack(moved(tested));
           try { changed = defaultsChanged(src, m, system); } finally { rmSync(m, { recursive: true, force: true }); }
         }
@@ -394,7 +405,7 @@ export async function main(argv: string[]): Promise<void> {
   } finally {
     rmSync(src, { recursive: true, force: true });
   }
-  writeJson(join(outDir, `stable-${set}-${system}.json`), { ...result, nixCalls });
+  writeJson(join(outDir, `stable-${set}-${system}${part === undefined ? "" : `-${part}`}.json`), { ...result, nixCalls });
   console.log(`stable on ${system} (${set}): ${JSON.stringify(result.stable)}${result.stableNext ? ` next ${JSON.stringify(result.stableNext)}` : ""}`);
   if (result.branch) console.log(`branch: ${JSON.stringify(result.branch)}`);
 }

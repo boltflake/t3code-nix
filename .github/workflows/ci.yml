@@ -4,10 +4,11 @@
 #   2. this workflow runs the full suite on both systems and posts `tested`
 #   3. fast-forward main to that commit
 # A branch more than one commit ahead of main is refused, so no untested
-# commit in the middle reaches main. NixOS stable runs in a job of its own
-# beside the default suite, so a push waits for the longer of the two. The
-# update bot publishes through update.yml instead (its pushes start no
-# workflows).
+# commit in the middle reaches main. The default suite runs in three parts
+# and NixOS stable in two, each on a runner of its own (scripts/lib/parts.ts),
+# so a push waits for the slowest part, not the whole. The update bot
+# publishes through update.yml instead (its pushes start no workflows),
+# which runs each suite whole.
 name: ci
 
 on:
@@ -43,8 +44,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { system: x86_64-linux, runner: ubuntu-24.04 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+          # The suite in three parts (scripts/lib/parts.ts), each on a runner
+          # of its own, so a push waits for the slowest part.
+          - { system: x86_64-linux, runner: ubuntu-24.04, part: desktop }
+          - { system: x86_64-linux, runner: ubuntu-24.04, part: rest1 }
+          - { system: x86_64-linux, runner: ubuntu-24.04, part: rest2 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, part: desktop }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, part: rest1 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, part: rest2 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     steps:
@@ -58,7 +65,7 @@ jobs:
       # ends, into the uploaded results. Before setup, whose own Nix build
       # counts too. Nothing in CI reads them.
       - name: The runner, and a sampler for the job's length
-        run: scripts/ci/sample.sh "results/sampler-$GITHUB_JOB-${{ matrix.system }}.txt"
+        run: scripts/ci/sample.sh "results/sampler-$GITHUB_JOB-${{ matrix.system }}-${{ matrix.part }}.txt"
       - uses: ./.github/actions/setup
         with:
           userns: true
@@ -82,7 +89,7 @@ jobs:
       - run: |
           strict=()
           git diff --quiet HEAD~1 HEAD -- lib/guard.nix || strict=(--strict-guards)
-          PATH="$DESKTOP_TOOLS_PATH:$PATH" node scripts/ci/test.ts branch ${{ matrix.system }} results --desktop --agent-browser "${strict[@]}"
+          PATH="$DESKTOP_TOOLS_PATH:$PATH" node scripts/ci/test.ts branch ${{ matrix.system }} results --desktop --agent-browser --part=${{ matrix.part }} "${strict[@]}"
       # agent-browser's optional browsers (scripts/ci/variants.ts), only when
       # this commit changes what they're built or run from (the globs below,
       # like the store cache's key). A failure fails the branch only when the
@@ -91,6 +98,10 @@ jobs:
       - name: agent-browser's optional browsers
         timeout-minutes: 60
         run: |
+          if [ "${{ matrix.part }}" != rest2 ]; then
+            echo "agent-browser's optional browsers run in part rest2"
+            exit 0
+          fi
           if git diff --quiet HEAD~1 HEAD -- flake.nix flake.lock pkgs lib versions/agent-browser.json \
             'versions/browser-*.json' scripts/agent-browser-smoke.ts scripts/ci/variants.ts; then
             echo "nothing the variants are built or run from changed"
@@ -102,22 +113,22 @@ jobs:
       # in for it (the upload alone wouldn't notice: the sampler's file is
       # always there).
       - name: The result was written
-        run: test -s results/branch-${{ matrix.system }}.json
+        run: test -s results/branch-${{ matrix.system }}-${{ matrix.part }}.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
-          name: results-${{ matrix.system }}
+          name: results-${{ matrix.system }}-${{ matrix.part }}
           path: results
           if-no-files-found: error
           retention-days: 7
 
-  # NixOS stable, beside the default suite: both stable groups and, when the
-  # snapshot is behind, the equivalence step on the moved tree. A stable
-  # failure fails the branch only when the branch made it fail (its
-  # derivation differs from main's, and main's passes or has no result); an
-  # incomplete result fails it, so does a default check that moving the
-  # snapshot would change, and so does a step that runs out of time (no
-  # result file).
+  # NixOS stable, in parts beside the default suite's: both stable groups
+  # and, when the snapshot is behind, a check that moving it leaves the
+  # default checks alone. A stable failure fails the branch only when the
+  # branch made it fail (its derivation differs from main's, and main's
+  # passes or has no result); an incomplete result fails it, so does a
+  # default check that moving the snapshot would change, and so does a step
+  # that runs out of time (no result file).
   # Its smokes' tools come from nixpkgs-stable (stable.ts builds them), so
   # setup's desktop tools aren't needed; user namespaces are.
   stable:
@@ -126,8 +137,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { system: x86_64-linux, runner: ubuntu-24.04 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+          # Both groups in two parts (scripts/lib/parts.ts): a with the runner
+          # smokes and the check on the default checks, b the other checks.
+          - { system: x86_64-linux, runner: ubuntu-24.04, part: a }
+          - { system: x86_64-linux, runner: ubuntu-24.04, part: b }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, part: a }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, part: b }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 65
     steps:
@@ -141,7 +156,7 @@ jobs:
       # ends, into the uploaded results. Before setup, whose own Nix build
       # counts too. Nothing in CI reads them.
       - name: The runner, and a sampler for the job's length
-        run: scripts/ci/sample.sh "results/sampler-$GITHUB_JOB-${{ matrix.system }}.txt"
+        run: scripts/ci/sample.sh "results/sampler-$GITHUB_JOB-${{ matrix.system }}-${{ matrix.part }}.txt"
       - uses: ./.github/actions/setup
         with:
           userns: true
@@ -156,14 +171,14 @@ jobs:
       - name: NixOS stable
         timeout-minutes: 45
         run: |
-          node scripts/ci/stable.ts branch ${{ matrix.system }} results --next --branch --parent=HEAD~1
+          node scripts/ci/stable.ts branch ${{ matrix.system }} results --next --branch --parent=HEAD~1 --part=${{ matrix.part }}
       # A job that succeeds has written its own result (as in `test`).
       - name: The result was written
-        run: test -s results/stable-branch-${{ matrix.system }}.json
+        run: test -s results/stable-branch-${{ matrix.system }}-${{ matrix.part }}.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
-          name: results-${{ matrix.system }}-stable
+          name: results-${{ matrix.system }}-stable-${{ matrix.part }}
           path: results
           if-no-files-found: error
           retention-days: 7
@@ -199,13 +214,17 @@ jobs:
           DOWNLOAD: ${{ steps.download.outcome }}
           URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          shopt -s nullglob
-          files=(results/branch-*-linux.json)
-          stable=(results/stable-branch-*-linux.json)
-          if [ "$ONE_COMMIT" = success ] && [ "$TEST" = success ] && [ "$STABLE" = success ] && [ "$DOWNLOAD" = success ] \
-              && [ "${#files[@]}" = 2 ] && [ "${#stable[@]}" = 2 ] \
-              && jq -se 'length == 2 and all(.passed)' "${files[@]}" >/dev/null \
-              && jq -se 'length == 2 and all(.branch == [])' "${stable[@]}" >/dev/null; then
+          # Every part's result by name (the parts of scripts/lib/parts.ts),
+          # each file one passing result (a missing or empty file isn't).
+          files=() stable=()
+          for system in x86_64-linux aarch64-linux; do
+            for part in desktop rest1 rest2; do files+=("results/branch-$system-$part.json"); done
+            for part in a b; do stable+=("results/stable-branch-$system-$part.json"); done
+          done
+          ok=true
+          for f in "${files[@]}"; do jq -se 'length == 1 and .[0].passed == true' "$f" >/dev/null || ok=false; done
+          for f in "${stable[@]}"; do jq -se 'length == 1 and .[0].branch == []' "$f" >/dev/null || ok=false; done
+          if [ "$ok" = true ] && [ "$ONE_COMMIT" = success ] && [ "$TEST" = success ] && [ "$STABLE" = success ] && [ "$DOWNLOAD" = success ]; then
             state=success; desc="full suite passed on x86_64-linux and aarch64-linux"
           else
             state=failure; desc="full suite failed (or NixOS stable broke); see the run"
