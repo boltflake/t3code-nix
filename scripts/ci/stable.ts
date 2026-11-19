@@ -34,6 +34,7 @@
 //               package and tools, doesn't fail; an incomplete group; and,
 //               when the snapshot is behind, a default check that moving it
 //               would change (whatever stable-next's result)
+//   nixCalls    every Nix call it made (util.ts's NixCall)
 //
 // The runner smokes run with xvfb-run, dbus, xdotool and util-linux from the tree's
 // nixpkgs-stable pin (legacyPackages.<system>.stableSmokeTools), the stable
@@ -47,7 +48,7 @@ import { agentBrowserSmoke } from "../agent-browser-smoke.ts";
 import { desktopSmoke } from "../desktop-smoke.ts";
 import { compare } from "../lib/nixcache.ts";
 import { current, moved, pinHashes } from "../lib/snapshot.ts";
-import { run, tryRun, writeJson } from "../lib/util.ts";
+import { nixCalls, run, tryRun, writeJson } from "../lib/util.ts";
 
 /** `notApplicable`: forced Electron twins (and their smokes) with no usable
  * nixpkgs Electron, which built a placeholder or weren't started: neither
@@ -393,7 +394,7 @@ export async function main(argv: string[]): Promise<void> {
   } finally {
     rmSync(src, { recursive: true, force: true });
   }
-  writeJson(join(outDir, `stable-${set}-${system}.json`), result);
+  writeJson(join(outDir, `stable-${set}-${system}.json`), { ...result, nixCalls });
   console.log(`stable on ${system} (${set}): ${JSON.stringify(result.stable)}${result.stableNext ? ` next ${JSON.stringify(result.stableNext)}` : ""}`);
   if (result.branch) console.log(`branch: ${JSON.stringify(result.branch)}`);
 }

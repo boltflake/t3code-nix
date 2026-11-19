@@ -18,6 +18,8 @@
 //     Branch CI: both pins' variants on HEAD; a failure fails the branch only
 //     when the branch made it fail (the parent's same variant passes, gives
 //     no result, or doesn't exist). Exit 1 then.
+//   (run and branch write OUT_JSON as {results, nixCalls}: nixCalls is every
+//   Nix call it made, util.ts's NixCall.)
 //   node variants.ts observations PUBLISHED_TREE FILE...
 //     The issues job: each file's results for the published tree, as
 //     observations. The files come from a job that runs vendor code, so only
@@ -34,7 +36,7 @@
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { agentBrowserRun, type Expect } from "../agent-browser-smoke.ts";
-import { run, SYSTEMS, tryRun, writeJson } from "../lib/util.ts";
+import { nixCalls, run, SYSTEMS, tryRun, writeJson } from "../lib/util.ts";
 import { obs, type Observation } from "../update.ts";
 import { provenFailure, unpack } from "./stable.ts";
 
@@ -193,7 +195,7 @@ async function main(argv: string[]): Promise<number> {
   const results: Result[] = [];
   const cleanup: string[] = [];
   // Written after each variant, so a step that runs out of time keeps what it has.
-  const save = () => writeJson(outFile, { results });
+  const save = () => writeJson(outFile, { results, nixCalls });
   try {
     if (mode === "run") {
       const tree = flag("tree") ?? "";

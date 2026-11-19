@@ -5780,7 +5780,8 @@ let
   # workflows and composite actions, linted: actionlint for mistakes (with
   # shellcheck on the run: scripts), zizmor for security problems, offline
   # (the sandbox has no GitHub API) and failing on a file it can't read; zizmor
-  # also on the Dependabot config (its cooldown audit wants 7 days). The
+  # also on the Dependabot config (its cooldown audit wants 7 days); and
+  # shellcheck on scripts/ci/*.sh, which actionlint doesn't see. The
   # copy has no .git, so the files are found and named. Findings we accept are
   # ignored where they occur, with the reason next to them (.github/zizmor.yml
   # has the settings).
@@ -5794,6 +5795,7 @@ let
           pkgs.zizmor
           pkgs.util-linux # unshare, for tests/smoke.test.ts
           pkgs.jq # ci.yml's `tested` script, run by tests/ci.test.ts
+          pkgs.shellcheck # scripts/ci/*.sh (actionlint checks only run: steps)
         ];
       }
       ''
@@ -5813,6 +5815,10 @@ let
         mapfile -t actions <<< "$found"
         actionlint "''${workflows[@]}"
         zizmor "''${workflows[@]}" "''${actions[@]}" .github/dependabot.yml
+        found=$(find scripts/ci -name '*.sh')
+        [ -n "$found" ] || { echo "no scripts/ci/*.sh found"; exit 1; }
+        mapfile -t shells <<< "$found"
+        shellcheck "''${shells[@]}"
         # The linters still catch something with these settings: a broken
         # expression (actionlint's exit code 1: problems found), and a run:
         # script that expands an issue's title (zizmor's 14: a high finding).

@@ -166,8 +166,22 @@ test("test.ts: failures are built once more, and only they are", () => {
   // One path-info for the built allowlisted packages (pi failed to build).
   assert.deepEqual(readFileSync(join(tmp, "state", "path-info"), "utf8").trim(), "path-info --json /nix/store/codex /nix/store/fx");
   assert.deepEqual(manifest, { codex: { path: "/nix/store/codex", narHash: "sha256-c" }, fx: { path: "/nix/store/fx", narHash: "sha256-f" } });
-  const { electron, ...rest } = result;
+  const { electron, nixCalls, ...rest } = result;
   assert.deepEqual(rest, { set: "candidate", system: SYS, passed: false, failed: ["c", "pi", "t3code-nightly"], checked: [], notes: [] });
+  // Every Nix call it made is in the record, in order, with its outcome.
+  assert.ok(nixCalls.length > 0 && nixCalls.every((c: any) => ["nix", "nix-store", "nix-instantiate", "nix-env"].includes(c.cmd)
+    && c.start <= c.end && !c.timedOut && !/\n/.test(c.label)));
+  assert.ok(["nix-store", "nix-instantiate", "nix-env"].every((cmd) => nixCalls.some((c: any) => c.cmd === cmd)), "the other Nix programs too");
+  assert.ok(nixCalls.every((c: any, i: number) => i === 0 || nixCalls[i - 1].end <= c.start), "one at a time, in order");
+  assert.equal(nixCalls.filter((c: any) => c.sub === "build").length, builds.length, "each build the fake nix saw");
+  assert.ok(nixCalls.some((c: any) => c.sub === "build" && c.status !== 0), "a failed build is recorded as one");
+  assert.ok(nixCalls.some((c: any) => c.sub === "eval") && nixCalls.some((c: any) => c.sub === "path-info"));
+  // The last two, NixOS stable's evaluations after the first write, are in
+  // the file too (it's written again after them).
+  const last = nixCalls.slice(-2);
+  assert.deepEqual(last.map((c: any) => [c.cmd, c.sub]), [["nix", "eval"], ["nix-instantiate", ""]]);
+  // (The second's label may be cut short: it holds a temporary path.)
+  assert.ok(last[0].label === `eval --raw .#legacyPackages.${SYS}.stable.t3.drvPath` && last[1].label.startsWith("--option experimental-features "));
   assert.equal(electron.smokeRan, false, "no desktop smoke without --desktop");
   // One evaluation; both builds from the .drv paths it gave.
   assert.equal(evals, 1);

@@ -19,13 +19,14 @@
 //
 // Writes OUT_DIR/SET-SYSTEM.json ({set, system, passed, failed, checked,
 // notes}: the guard checks' notes, which hold no release; see lib/checks.nix
-// `notes`, narrow.ts and failedOnNotes) and
+// `notes`, narrow.ts and failedOnNotes; and nixCalls, every Nix call it made,
+// util.ts's NixCall) and
 // OUT_DIR/manifest-SET-SYSTEM.json (store path and narHash of every package in
 // ci/cache-allowlist.json, which the cache job compares before uploading).
 // Exits 0 whatever the tests say; only a broken runner or Nix fails it.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { narHashes, readJson, ROOT, run, tryRun, writeJson } from "../lib/util.ts";
+import { narHashes, nixCalls, readJson, rewriteJson, ROOT, run, tryRun, writeJson } from "../lib/util.ts";
 import { desktopSmoke } from "../desktop-smoke.ts";
 import { agentBrowserSmoke } from "../agent-browser-smoke.ts";
 import { nix as stableNix, smokesOf, unpack, workingTree } from "./stable.ts";
@@ -396,18 +397,18 @@ export async function main(argv: string[]): Promise<void> {
     for (const r of reported) failed.splice(failed.indexOf(r), 1);
     if (reported.length) console.log(`reported, not failed (an active Electron fallback the branch didn't change): ${reported.join(", ")}`);
   }
-  const write = () => writeJson(join(outDir, `${set}-${system}.json`),
-    { set, system, passed: failed.length === 0, failed, checked, notes, electron, ...(reported.length ? { reported } : {}) });
+  // Written again after NixOS stable's evaluations below: atomically.
+  const write = () => rewriteJson(join(outDir, `${set}-${system}.json`),
+    { set, system, passed: failed.length === 0, failed, checked, notes, electron, ...(reported.length ? { reported } : {}), nixCalls });
   write();
   writeJson(join(outDir, `manifest-${set}-${system}.json`), manifest);
   // Last, once the default's result is saved: the one runner step that
   // evaluates NixOS stable (bounded; a stall changes nothing).
   if (!failed.includes("default-nix-no-flakes")) {
     const disagree = stableNoFlakesFailures(system);
-    if (disagree.length) {
-      failed.push(...disagree);
-      write();
-    }
+    failed.push(...disagree);
+    // Again, with this step's Nix calls (and its failures, if any).
+    write();
   }
   console.log(`${set} on ${system}: ${failed.length ? `FAILED ${failed.join(", ")}` : "passed"}`);
 }

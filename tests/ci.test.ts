@@ -2525,6 +2525,36 @@ test("workflow: branch CI runs NixOS stable in a job of its own, and `tested` ne
     assert.match(upload, /\n\s+path: results\n/);
   }
   assert.doesNotMatch(test, /stable\.ts/, "the default job no longer runs it");
+  // The runner line and sampler, in both jobs, the same step: after the
+  // checkout (which cleans the folder), before setup (whose Nix build
+  // counts). The script reads /proc only and leaves its loop to the runner,
+  // which ends it with the job.
+  for (const [name, job] of [["test", test], ["stable", stable]] as const) {
+    const sampler = job.slice(job.indexOf("- name: The runner, and a sampler for the job's length")).split(/\n      - /)[0];
+    assert.equal(sampler, '- name: The runner, and a sampler for the job\'s length\n        run: scripts/ci/sample.sh "results/sampler-$GITHUB_JOB-${{ matrix.system }}.txt"', name);
+    assert.ok(job.indexOf("actions/checkout@") < job.indexOf("- name: The runner, and a sampler") && job.indexOf("- name: The runner, and a sampler") < job.indexOf("actions/setup"), name);
+  }
+  const sample = readFileSync(join(import.meta.dirname, "..", "scripts", "ci", "sample.sh"), "utf8").split("\n").filter((l) => l && (!l.startsWith("#") || l.startsWith("#!"))).join("\n");
+  assert.equal(sample, [
+    "#!/usr/bin/env bash",
+    "set -eu",
+    "file=$1",
+    "cpu=$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | head -1)",
+    "[ -n \"$cpu\" ] || cpu=$(sed -n 's/^CPU \\(implementer\\|part\\)[[:space:]]*: /\\1 /p' /proc/cpuinfo | head -2 | paste -sd ' ')",
+    'echo "CPU: $cpu; image: ${ImageOS:-} ${ImageVersion:-}"',
+    'mkdir -p "$(dirname "$file")"',
+    "sample() {",
+    "  while :; do",
+    '    echo "$(date +%s%3N) $(head -1 /proc/stat) $(awk \'NR > 2 && $1 != "lo:" { r += $2; t += $10 } END { print r, t }\' /proc/net/dev)"',
+    "    sleep 1",
+    "  done",
+    "}",
+    'sample > "$file" 2>/dev/null &',
+  ].join("\n"), "the sampler script, exactly (it runs on every branch CI job)");
+  // `test` checks its own result was written before the upload, as `stable` does.
+  const written = test.slice(test.indexOf("- name: The result was written")).split(/\n      - /)[0];
+  assert.equal(written, "- name: The result was written\n        run: test -s results/branch-${{ matrix.system }}.json");
+  assert.ok(test.indexOf("node scripts/ci/test.ts") < test.indexOf("- name: The result was written") && test.indexOf("- name: The result was written") < test.indexOf("upload-artifact@"));
   // `tested` needs both and checks each job's own result as well as the files.
   assert.match(tested, /\n    needs: \[one-commit, test, stable\]\n/);
   // The posting step runs whatever happened, with each job's result and the
@@ -2588,6 +2618,8 @@ test("workflow: branch CI runs the variants only when what they're built or run 
   // change often, and their own tests cover them); a new import is a
   // deliberate choice to add it to the list or not.
   const src = readFileSync(join(import.meta.dirname, "..", "scripts", "ci", "variants.ts"), "utf8");
+  // Each save carries the record of Nix calls so far (util.ts).
+  assert.match(src, /const save = \(\) => writeJson\(outFile, \{ results, nixCalls \}\);/);
   const imports = [...src.matchAll(/from "\.\.?\/([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(imports.sort(), ["agent-browser-smoke.ts", "lib/util.ts", "stable.ts", "update.ts"].sort());
 });

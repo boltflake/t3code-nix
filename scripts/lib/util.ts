@@ -2,8 +2,8 @@
 // dependencies to keep up to date.
 import { createHash } from "node:crypto";
 import { execFileSync, type ExecFileSyncOptions } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, renameSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -154,6 +154,19 @@ export function readJson<T = unknown>(path: string): T {
 
 export function writeJson(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
+}
+
+/** writeJson for a file the script writes again later: written next to it
+ * and renamed over it, so the file is the old one or the new one, never half
+ * of either (a temporary file left by a failed rename is removed). */
+export function rewriteJson(path: string, value: unknown): void {
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 export function currentPin(name: string, dir = VERSIONS): Pin | null {
@@ -316,12 +329,60 @@ export function clearFetched(): void {
   fetched.clear();
 }
 
+/** One Nix call (`nix`, `nix-store`, `nix-instantiate`, `nix-env`) that
+ * `run` made: when it started and ended (wall clock, epoch milliseconds, so
+ * it lines up with the Actions API's step times), the program, for `nix`
+ * its subcommand, its arguments (shortened), its exit status and whether
+ * its time limit ended it. The CI scripts write them into
+ * their result files as `nixCalls`; nothing in CI reads them. */
+export interface NixCall { start: number; end: number; cmd: string; sub: string; label: string; status: number; timedOut: boolean }
+const NIX_PROGRAMS = new Set(["nix", "nix-store", "nix-instantiate", "nix-env"]);
+/** The Nix calls made so far in this process, in order (calls run one at a
+ * time: `run` is synchronous). */
+export const nixCalls: NixCall[] = [];
+/** The clock the record uses (tests replace it). */
+export const nixClock = { now: () => Date.now() };
+
+/** What a Nix call was: for `nix`, its subcommand (the first word that isn't
+ * a flag, past any `--option NAME VALUE`); and its arguments as given,
+ * shortened (whoever reads the record classifies them). */
+function describe(cmd: string, args: string[]): { sub: string; label: string } {
+  const text = args.join(" ").replace(/\s+/g, " ").trim();
+  const words: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--option") i += 2;
+    else if (!args[i].startsWith("-")) words.push(args[i]);
+  }
+  return {
+    sub: cmd === "nix" ? (words[0] ?? "") : "",
+    label: text.length > 200 ? `${text.slice(0, 197)}...` : text,
+  };
+}
+
 /** Run a program; returns trimmed stdout. Throws on a non-zero exit. */
 export function run(cmd: string, args: string[], opts: ExecFileSyncOptions = {}): string {
-  // With stdio "inherit" there is no captured output: execFileSync returns null.
-  // A generous buffer: verbose Nix output must not kill a command.
-  const out = execFileSync(cmd, args, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024, ...opts });
-  return out == null ? "" : String(out).trim();
+  const record = NIX_PROGRAMS.has(basename(cmd));
+  const start = record ? nixClock.now() : 0;
+  let status = 0, timedOut = false;
+  try {
+    // With stdio "inherit" there is no captured output: execFileSync returns null.
+    // A generous buffer: verbose Nix output must not kill a command.
+    const out = execFileSync(cmd, args, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024, ...opts });
+    return out == null ? "" : String(out).trim();
+  } catch (e: any) {
+    status = typeof e.status === "number" && e.status !== 0 ? e.status : 1;
+    timedOut = e.code === "ETIMEDOUT";
+    throw e;
+  } finally {
+    if (record) {
+      const call: NixCall = { start, end: nixClock.now(), cmd: basename(cmd), ...describe(basename(cmd), args), status, timedOut };
+      nixCalls.push(call);
+      // One line as it ends, with the same fields, so a step killed by its
+      // own time limit (which writes no result file) still shows the calls
+      // it finished.
+      console.error(`nix call: ${JSON.stringify(call)}`);
+    }
+  }
 }
 
 /** Like run, but returns { status, stdout, stderr } instead of throwing. */

@@ -53,6 +53,12 @@ jobs:
         with:
           fetch-depth: 2
           persist-credentials: false
+      # Where the job's time goes: the runner's CPU model and image, and
+      # /proc's CPU counters and network bytes once a second until the job
+      # ends, into the uploaded results. Before setup, whose own Nix build
+      # counts too. Nothing in CI reads them.
+      - name: The runner, and a sampler for the job's length
+        run: scripts/ci/sample.sh "results/sampler-$GITHUB_JOB-${{ matrix.system }}.txt"
       - uses: ./.github/actions/setup
         with:
           userns: true
@@ -91,9 +97,12 @@ jobs:
             exit 0
           fi
           node scripts/ci/variants.ts branch ${{ matrix.system }} results/variants-${{ matrix.system }}.json --parent=HEAD~1
-      # A job that succeeds has uploaded its own result: with no files, the
-      # upload fails, so an earlier attempt's artifact (the newest by this
-      # name otherwise) can't stand in for it.
+      # A job that succeeds has written its own result, so an earlier
+      # attempt's artifact (the newest by this name otherwise) can't stand
+      # in for it (the upload alone wouldn't notice: the sampler's file is
+      # always there).
+      - name: The result was written
+        run: test -s results/branch-${{ matrix.system }}.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -127,6 +136,12 @@ jobs:
         with:
           fetch-depth: 2
           persist-credentials: false
+      # Where the job's time goes: the runner's CPU model and image, and
+      # /proc's CPU counters and network bytes once a second until the job
+      # ends, into the uploaded results. Before setup, whose own Nix build
+      # counts too. Nothing in CI reads them.
+      - name: The runner, and a sampler for the job's length
+        run: scripts/ci/sample.sh "results/sampler-$GITHUB_JOB-${{ matrix.system }}.txt"
       - uses: ./.github/actions/setup
         with:
           userns: true
@@ -142,7 +157,7 @@ jobs:
         timeout-minutes: 45
         run: |
           node scripts/ci/stable.ts branch ${{ matrix.system }} results --next --branch --parent=HEAD~1
-      # A job that succeeds has written its own result (see `test`'s upload).
+      # A job that succeeds has written its own result (as in `test`).
       - name: The result was written
         run: test -s results/stable-branch-${{ matrix.system }}.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

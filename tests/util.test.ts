@@ -2,7 +2,10 @@
 // Run: node --test tests/*.test.ts
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { clearFetched, getJson, getText, request, retryAfterMs, RETRIES, timing } from "../scripts/lib/util.ts";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { clearFetched, getJson, getText, nixCalls, nixClock, request, retryAfterMs, RETRIES, run, timing, tryRun } from "../scripts/lib/util.ts";
 
 const realFetch = globalThis.fetch;
 const realSleep = timing.sleep;
@@ -137,4 +140,58 @@ test("the GitHub token goes to api.github.com only, never to a vendor", async ()
     "https://github.com/o/r/releases": undefined,
     "https://api.github.com.evil.example/x": undefined,
   });
+});
+
+test("run records each Nix call once, with its outcome; other programs aren't recorded", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nix-calls-"));
+  const real = nixClock.now;
+  const after: (() => void)[] = [];
+  try {
+    mkdirSync(join(dir, "bin"));
+    // Stand-ins named like the Nix programs: exit with the code in $1 (1 when
+    // it isn't a number), or sleep.
+    for (const name of ["nix", "nix-store"]) {
+      writeFileSync(join(dir, "bin", name), '#!/bin/sh\ncase "$1" in sleep) sleep 5 ;; [0-9]*) exit "$1" ;; *) exit 1 ;; esac\n');
+      chmodSync(join(dir, "bin", name), 0o755);
+    }
+    let t = 1000;
+    nixClock.now = () => (t += 250);
+    // The calls' log lines, kept out of the test's output (and checked below).
+    const logged: string[] = [];
+    const error = console.error;
+    console.error = (line: string) => { logged.push(line); };
+    after.push(() => { console.error = error; });
+    nixCalls.length = 0;
+    assert.equal(run(join(dir, "bin", "nix"), ["0", "--json", "build", ".#a\n  b"]), "");
+    assert.equal(tryRun(join(dir, "bin", "nix-store"), ["3", "--query", "/nix/store/x"]).status, 3);
+    assert.equal(tryRun(join(dir, "bin", "nix"), ["sleep"], { timeout: 200 }).status, 1);
+    run("true", []);
+    // --option's two words aren't `nix`'s subcommand.
+    assert.equal(tryRun(join(dir, "bin", "nix"), ["--option", "experimental-features", "nix-command flakes", "build", ".#x"]).status, 1);
+    assert.equal(tryRun(join(dir, "bin", "nix"), ["--option", "x", "--option", "build", ".#y"]).status, 1);
+    // A spawn error (no such program) is a failed call too.
+    assert.equal(tryRun(join(dir, "bin", "nix-env"), ["-qa"]).status, 1);
+    assert.deepEqual(nixCalls, [
+      // `nix`'s subcommand is its first word that isn't a flag; the label is
+      // the arguments as given, whitespace collapsed.
+      { start: 1250, end: 1500, cmd: "nix", sub: "0", label: "0 --json build .#a b", status: 0, timedOut: false },
+      { start: 1750, end: 2000, cmd: "nix-store", sub: "", label: "3 --query /nix/store/x", status: 3, timedOut: false },
+      { start: 2250, end: 2500, cmd: "nix", sub: "sleep", label: "sleep", status: 1, timedOut: true },
+      { start: 2750, end: 3000, cmd: "nix", sub: "build", label: "--option experimental-features nix-command flakes build .#x", status: 1, timedOut: false },
+      { start: 3250, end: 3500, cmd: "nix", sub: "build", label: "--option x --option build .#y", status: 1, timedOut: false },
+      { start: 3750, end: 4000, cmd: "nix-env", sub: "", label: "-qa", status: 1, timedOut: false },
+    ]);
+    // Each call was logged as it ended, with the same fields.
+    assert.deepEqual(logged.map((l) => JSON.parse(l.replace(/^nix call: /, ""))), nixCalls);
+    // A long label is shortened.
+    nixCalls.length = 0;
+    run(join(dir, "bin", "nix"), ["0", "x".repeat(300)]);
+    assert.equal(nixCalls[0].label.length, 200);
+    assert.ok(nixCalls[0].label.endsWith("..."));
+  } finally {
+    for (const f of after) f();
+    nixClock.now = real;
+    nixCalls.length = 0;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

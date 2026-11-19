@@ -384,7 +384,9 @@ test("branch CI: a check main can't evaluate doesn't make every failure the bran
   stable.nix.one = (src, attr) => (onBranch(src) && attr.endsWith(".stable-unit") ? null : one(src, attr));
   rmSync("out", { recursive: true });
   await stable.main(["branch", "x86_64-linux", "out", "--branch", "--parent=HEAD~1"]);
-  assert.deepEqual(JSON.parse(readFileSync("out/stable-branch-x86_64-linux.json", "utf8")).branch, ["stable-unit"]);
+  const written = JSON.parse(readFileSync("out/stable-branch-x86_64-linux.json", "utf8"));
+  assert.deepEqual(written.branch, ["stable-unit"]);
+  assert.ok(Array.isArray(written.nixCalls), "the record of Nix calls (util.ts) is written with the result");
 });
 
 test("branch CI: the same in stable-next, as branch CI runs it (--next, the snapshot behind on both)", async () => {
