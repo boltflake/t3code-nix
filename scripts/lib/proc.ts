@@ -157,8 +157,11 @@ export function runGrouped(cmd: string, args: string[], opts: SpawnSyncOptions):
 
 /** The command that runs a program as PID 1 of PID (and user) namespaces of
  * its own: every orphan inside is handed to it, nothing outside can be in
- * it, and the kernel ends everything in it when its PID 1 ends. */
-export const ownPidNamespace = ["unshare", "--user", "--map-current-user", "--pid", "--fork", "--kill-child", "--"];
+ * it, and the kernel ends everything in it when its PID 1 ends. With a /proc
+ * of its own, so a program reading /proc/<its pid> finds itself (T3 Code's
+ * backend checks its own identity there; with the host's /proc it read an
+ * unrelated process's, or found none and exited). */
+export const ownPidNamespace = ["unshare", "--user", "--map-current-user", "--pid", "--fork", "--kill-child", "--mount-proc", "--"];
 
 /** Unless this script already is PID 1, run it again as PID 1 of a PID
  * namespace of its own (with its own /proc) and exit with its exit code:
@@ -176,7 +179,7 @@ export async function asPidNamespaceInit(): Promise<boolean> {
   for (const s of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const) process.on(s, () => ((signal ??= s), child?.kill("SIGKILL")));
   const work = mkdtempSync(join(tmpdir(), "pidns-"));
   const [unshare, ...flags] = ownPidNamespace;
-  child = spawn(unshare, [...flags.slice(0, -1), "--mount-proc", "--", process.execPath, ...process.execArgv, ...process.argv.slice(1)],
+  child = spawn(unshare, [...flags, process.execPath, ...process.execArgv, ...process.argv.slice(1)],
     { stdio: "inherit", env: { ...process.env, TMPDIR: work } });
   if (signal) child.kill("SIGKILL");
   const code = await new Promise<number>((resolve) => {

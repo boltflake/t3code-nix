@@ -19,8 +19,10 @@
 // PATH, and unprivileged user namespaces. Runs on real machines and CI
 // runners, not in the Nix sandbox. Never passes --no-sandbox: that would
 // test something users don't run. The app runs in a PID namespace of its
-// own, so no process it starts outlives the test. One at a time: two apps
-// at once collide on their backend port and X display.
+// own, so no process it starts outlives the test, and with a /proc of its
+// own, which it must be able to mount (not in containers that mask /proc).
+// One at a time: two apps at once collide on their backend port and X
+// display.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";

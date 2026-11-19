@@ -341,6 +341,22 @@ test("proc: a PID-1 run killed from outside says so and exits 128 + the signal",
   assert.match(stderr, /ended by SIGKILL/);
 });
 
+test("proc: the PID namespace has a /proc of its own, where a program finds itself", async () => {
+  const { ownPidNamespace } = await import("../scripts/lib/proc.ts");
+  const { spawnSync } = await import("node:child_process");
+  const { realpathSync } = await import("node:fs");
+  // T3 Code's backend reads /proc/<its pid> (its stat and exe) to know itself;
+  // with the host's /proc that was another process's, or none. The probe, a
+  // node child in the namespace, checks /proc/self is its own PID and that
+  // /proc/<that pid>/exe is its own program.
+  const probe = 'const fs = require("node:fs"); process.stdout.write([fs.readlinkSync("/proc/self"), String(process.pid), fs.readlinkSync(`/proc/${process.pid}/exe`)].join("\\n"))';
+  const r = spawnSync(ownPidNamespace[0], [...ownPidNamespace.slice(1), process.execPath, "-e", probe], { encoding: "utf8", timeout: 20_000 });
+  assert.equal(r.status, 0, r.stderr);
+  const [self, pid, exe] = r.stdout.split("\n");
+  assert.equal(self, pid, "/proc/self is this process");
+  assert.equal(exe, realpathSync(process.execPath), "/proc/<its pid>/exe is its own program");
+});
+
 test("proc: killChildNamespaces ends a child's PID namespace, escaped children too", async () => {
   const proc = new URL("../scripts/lib/proc.ts", import.meta.url).pathname;
   // A stand-in for the desktop smoke: an "app" in a namespace of its own,
