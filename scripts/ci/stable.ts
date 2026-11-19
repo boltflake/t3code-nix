@@ -1,7 +1,8 @@
-// The NixOS-stable groups for one set and system, run after the default checks
-// and apart from them: their own evaluation, their own workflow step and time
-// limit (a step that runs out leaves no result file, which narrowing reads as
-// incomplete).
+// The NixOS-stable groups for one set and system, apart from the default
+// checks: their own evaluation, their own workflow step and time limit (a step
+// that runs out leaves no result file, which narrowing reads as incomplete).
+// The update runs run them after the default checks, in the same job; branch
+// CI, in a job of its own beside them.
 //
 //   node stable.ts SET SYSTEM OUT_DIR [--next] [--branch] [--tree=HASH] [--parent=REV]
 //

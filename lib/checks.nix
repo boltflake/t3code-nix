@@ -5793,6 +5793,7 @@ let
           pkgs.actionlint
           pkgs.zizmor
           pkgs.util-linux # unshare, for tests/smoke.test.ts
+          pkgs.jq # ci.yml's `tested` script, run by tests/ci.test.ts
         ];
       }
       ''

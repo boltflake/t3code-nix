@@ -150,7 +150,6 @@ test("guard notes: read from the guard checks' outputs, other checks' files skip
   assert.deepEqual(failedOnNotes(true, ["guards", "codex", "other"], out), ["guards"]);
   assert.deepEqual(failedOnNotes(false, ["guards", "codex", "other"], out), []);
   const ci = readFileSync(join(import.meta.dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
-  assert.match(ci, /fetch-depth: 2\n/);
   assert.match(ci, /git diff --quiet HEAD~1 HEAD -- lib\/guard\.nix \|\| strict=\(--strict-guards\)\n.*test\.ts branch .* "\$\{strict\[@\]\}"/);
 });
 
@@ -2481,6 +2480,103 @@ test("workflow: agent-browser's variants run after publish on the published tree
   assert.match(download, /continue-on-error: true/);
   const resolve = job("resolve");
   assert.match(resolve, /held\.ts "\$RUNNER_TEMP\/held\.json" "\$RUNNER_TEMP\/retest\.json"/);
+});
+
+test("workflow: branch CI runs NixOS stable in a job of its own, and `tested` needs both jobs", () => {
+  const ci = readFileSync(join(import.meta.dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
+  // A job's text, up to the blank line before the next job (or its comment).
+  const jobOf = (name: string) => ci.slice(ci.indexOf(`\n  ${name}:\n`) + 1).split(/\n\n  (?=[#a-z])/)[0];
+  const test = jobOf("test"), stable = jobOf("stable"), tested = jobOf("tested");
+  const matrix = (body: string) => /\n    strategy:\n[\s\S]*?\n    runs-on: .*\n/.exec(body)?.[0];
+  assert.ok(matrix(stable), "stable has a matrix");
+  assert.equal(matrix(stable), matrix(test), "the same matrix, runners and fail-fast: false");
+  assert.match(stable, /\n      fail-fast: false\n/);
+  assert.match(stable, /\n    needs: one-commit\n/);
+  // Both jobs need main under the branch's commit (HEAD~1).
+  for (const job of [test, stable]) assert.match(job, /uses: actions\/checkout@[0-9a-f]{40} # .*\n\s+with:\n\s+fetch-depth: 2\n\s+persist-credentials: false\n/);
+  assert.match(stable, /uses: \.\/\.github\/actions\/setup\n\s+with:\n\s+userns: true\n/);
+  assert.doesNotMatch(stable, /desktop-tools/, "stable.ts builds its smokes' tools itself");
+  // The same store cache as `test`, restored only, after setup (it needs
+  // setup's Nix) and before stable.ts.
+  const cache = (body: string) => /uses: nix-community\/cache-nix-action@.*\n\s+with:\n((?:\s+[a-z-]+: .*\n)+)/.exec(body)?.[1];
+  assert.equal(cache(stable), cache(test));
+  assert.match(cache(stable) ?? "", /primary-key: nix-test-\$\{\{ matrix\.system \}\}-\$\{\{ hashFiles\('flake\.lock', 'pkgs\/\*\*', 'lib\/\*\*'\) \}\}\n/);
+  assert.match(cache(stable) ?? "", /restore-prefixes-first-match: nix-test-\$\{\{ matrix\.system \}\}-\n/);
+  assert.match(cache(stable) ?? "", /save: false/);
+  const at = (needle: string) => stable.indexOf(needle);
+  assert.ok(at("actions/setup") < at("cache-nix-action@") && at("cache-nix-action@") < at("node scripts/ci/stable.ts"), "setup, the cache, then stable.ts");
+  // The step as it was, with its limit; the job leaves 20 minutes over it.
+  const step = stable.slice(at("- name: NixOS stable")).split(/\n      - /)[0];
+  assert.match(step, /^- name: NixOS stable\n\s+timeout-minutes: 45\n\s+run: \|\n/);
+  assert.match(step, /\n\s+node scripts\/ci\/stable\.ts branch \$\{\{ matrix\.system \}\} results --next --branch --parent=HEAD~1\n/);
+  const jobLimit = Number(/\n    timeout-minutes: (\d+)/.exec(stable)?.[1]);
+  const steps = [...stable.matchAll(/\n {8}timeout-minutes: (\d+)/g)].map((m) => Number(m[1]));
+  assert.ok(steps.length >= 1 && jobLimit - steps.reduce((a, b) => a + b, 0) >= 20, `stable: steps ${steps.join("+")}, job ${jobLimit}`);
+  // A successful job has written and uploaded its own result: the check
+  // runs after stable.ts and before the upload, on every success.
+  const guard = stable.slice(at("- name: The result was written")).split(/\n      - /)[0];
+  assert.equal(guard, "- name: The result was written\n        run: test -s results/stable-branch-${{ matrix.system }}.json", "no condition or continue-on-error");
+  assert.ok(at("node scripts/ci/stable.ts") < at("- name: The result was written") && at("- name: The result was written") < at("upload-artifact@"));
+  for (const [job, name] of [[test, "results-${{ matrix.system }}"], [stable, "results-${{ matrix.system }}-stable"]]) {
+    const upload = job.slice(job.indexOf("upload-artifact@")).split(/\n      - /)[0];
+    assert.match(upload, new RegExp(`\\n\\s+name: ${name.replace(/[$.{}]/g, "\\$&")}\\n`));
+    assert.match(upload, /if-no-files-found: error\n/);
+    assert.match(upload, /if: \$\{\{ !cancelled\(\) \}\}\n/);
+    assert.match(upload, /\n\s+path: results\n/);
+  }
+  assert.doesNotMatch(test, /stable\.ts/, "the default job no longer runs it");
+  // `tested` needs both and checks each job's own result as well as the files.
+  assert.match(tested, /\n    needs: \[one-commit, test, stable\]\n/);
+  // The posting step runs whatever happened, with each job's result and the
+  // download's outcome (a tolerated download failure is `failure` there).
+  const post = tested.slice(tested.indexOf("- name: Post `tested`")).split("        run: |\n")[0];
+  assert.match(post, /^- name: Post `tested` if the suite passed on both systems\n\s+if: always\(\)\n/);
+  for (const line of ["ONE_COMMIT: ${{ needs.one-commit.result }}", "TEST: ${{ needs.test.result }}",
+    "STABLE: ${{ needs.stable.result }}", "DOWNLOAD: ${{ steps.download.outcome }}"]) assert.ok(post.includes(`\n          ${line}\n`), line);
+  assert.match(tested, /\[ "\$TEST" = success \] && \[ "\$STABLE" = success \]/);
+  assert.match(tested, /\n    if: always\(\)\n/);
+  assert.match(tested, /pattern: results-\*\n\s+path: results\n\s+merge-multiple: true\n/);
+
+  // The status script itself, run with each job's result and the files.
+  const script = tested.slice(tested.indexOf("        run: |\n", tested.indexOf("- name: Post `tested`")) + "        run: |\n".length)
+    .split("\n").filter((l) => l.startsWith("          ") || l === "").map((l) => l.slice(10)).join("\n");
+  assert.match(script, /gh api -X POST/);
+  const posted = (env: Record<string, string>, files: Record<string, unknown>) => {
+    const dir = mkdtempSync(join(tmpdir(), "tested-"));
+    try {
+      mkdirSync(join(dir, "results")); mkdirSync(join(dir, "bin"));
+      for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, "results", name), JSON.stringify(body));
+      // Run in the fixture folder, so nothing in the shell code names its path.
+      writeFileSync(join(dir, "bin", "gh"), `#!/bin/sh\nprintf '%s\\n' "$@" > posted\n`);
+      chmodSync(join(dir, "bin", "gh"), 0o755);
+      let code = 0;
+      try {
+        // No profile or bashrc, so the machine running the tests can't change
+        // what the script sees (a bash given a pipe for stdin may read the
+        // user's bashrc otherwise).
+        execFileSync("bash", ["--noprofile", "--norc", "-e", "-c", script], { cwd: dir, stdio: "pipe",
+          env: { PATH: `${join(dir, "bin")}:${process.env.PATH}`, GITHUB_REPOSITORY: "o/r", SHA: "abc", URL: "u", GH_TOKEN: "t",
+            ONE_COMMIT: "success", TEST: "success", STABLE: "success", DOWNLOAD: "success", ...env } });
+      } catch (e: any) { code = e.status; }
+      const args = existsSync(join(dir, "posted")) ? readFileSync(join(dir, "posted"), "utf8") : "";
+      return { code, state: /state=(\w+)/.exec(args)?.[1] };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const good: Record<string, unknown> = {};
+  for (const system of SYSTEMS) {
+    good[`branch-${system}.json`] = { passed: true, failed: [] };
+    good[`stable-branch-${system}.json`] = { branch: [] };
+  }
+  const without = (name: string) => Object.fromEntries(Object.entries(good).filter(([k]) => k !== name));
+  assert.deepEqual(posted({}, good), { code: 0, state: "success" });
+  const failing: Record<string, string>[] = [{ STABLE: "failure" }, { STABLE: "cancelled" }, { TEST: "failure" }, { ONE_COMMIT: "failure" }, { DOWNLOAD: "failure" }];
+  for (const env of failing)
+    assert.deepEqual(posted(env, good), { code: 1, state: "failure" }, JSON.stringify(env));
+  for (const files of [without("stable-branch-aarch64-linux.json"), without("branch-x86_64-linux.json"),
+    { ...good, "stable-branch-x86_64-linux.json": { branch: ["stable-t3"] } }, { ...good, "branch-aarch64-linux.json": { passed: false, failed: ["t3"] } }])
+    assert.deepEqual(posted({}, files), { code: 1, state: "failure" }, Object.keys(files).join(" "));
 });
 
 test("workflow: branch CI runs the variants only when what they're built or run from changed", () => {

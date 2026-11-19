@@ -4,8 +4,10 @@
 #   2. this workflow runs the full suite on both systems and posts `tested`
 #   3. fast-forward main to that commit
 # A branch more than one commit ahead of main is refused, so no untested
-# commit in the middle reaches main. The update bot publishes through
-# update.yml instead (its pushes start no workflows).
+# commit in the middle reaches main. NixOS stable runs in a job of its own
+# beside the default suite, so a push waits for the longer of the two. The
+# update bot publishes through update.yml instead (its pushes start no
+# workflows).
 name: ci
 
 on:
@@ -75,16 +77,6 @@ jobs:
           strict=()
           git diff --quiet HEAD~1 HEAD -- lib/guard.nix || strict=(--strict-guards)
           PATH="$DESKTOP_TOOLS_PATH:$PATH" node scripts/ci/test.ts branch ${{ matrix.system }} results --desktop --agent-browser "${strict[@]}"
-      # NixOS stable, after the default's result is written and apart from
-      # it: both stable groups and, when the snapshot is behind, the
-      # equivalence step on the moved tree. A stable failure fails the
-      # branch only when the branch made it fail (its derivation differs
-      # from main's and main's passes); an incomplete result fails it, and
-      # so does a step that runs out of time (no result file).
-      - name: NixOS stable
-        timeout-minutes: 45
-        run: |
-          node scripts/ci/stable.ts branch ${{ matrix.system }} results --next --branch --parent=HEAD~1
       # agent-browser's optional browsers (scripts/ci/variants.ts), only when
       # this commit changes what they're built or run from (the globs below,
       # like the store cache's key). A failure fails the branch only when the
@@ -99,17 +91,75 @@ jobs:
             exit 0
           fi
           node scripts/ci/variants.ts branch ${{ matrix.system }} results/variants-${{ matrix.system }}.json --parent=HEAD~1
+      # A job that succeeds has uploaded its own result: with no files, the
+      # upload fails, so an earlier attempt's artifact (the newest by this
+      # name otherwise) can't stand in for it.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: results-${{ matrix.system }}
           path: results
+          if-no-files-found: error
           retention-days: 7
 
-  # Runs whatever happened before, so a failure always leaves a `failure`
-  # status (and replaces an earlier success on the same commit).
+  # NixOS stable, beside the default suite: both stable groups and, when the
+  # snapshot is behind, the equivalence step on the moved tree. A stable
+  # failure fails the branch only when the branch made it fail (its
+  # derivation differs from main's, and main's passes or has no result); an
+  # incomplete result fails it, so does a default check that moving the
+  # snapshot would change, and so does a step that runs out of time (no
+  # result file).
+  # Its smokes' tools come from nixpkgs-stable (stable.ts builds them), so
+  # setup's desktop tools aren't needed; user namespaces are.
+  stable:
+    needs: one-commit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { system: x86_64-linux, runner: ubuntu-24.04 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 65
+    steps:
+      # Two commits: the branch's one and main under it (--parent=HEAD~1).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          userns: true
+      # main's update-run test-job cache, as in `test` (restore only). It's
+      # saved after update.yml's test job has run stable.ts too, so it holds
+      # whichever stable paths survived its trim.
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-test-${{ matrix.system }}-${{ hashFiles('flake.lock', 'pkgs/**', 'lib/**') }}
+          restore-prefixes-first-match: nix-test-${{ matrix.system }}-
+          save: false
+      - name: NixOS stable
+        timeout-minutes: 45
+        run: |
+          node scripts/ci/stable.ts branch ${{ matrix.system }} results --next --branch --parent=HEAD~1
+      # A job that succeeds has written its own result (see `test`'s upload).
+      - name: The result was written
+        run: test -s results/stable-branch-${{ matrix.system }}.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: results-${{ matrix.system }}-stable
+          path: results
+          if-no-files-found: error
+          retention-days: 7
+
+  # Runs whatever happened before, so a failure leaves a `failure` status
+  # (and replaces an earlier success on the same commit); on a cancelled run
+  # it's best effort (a run replaced while pending posts nothing). Both jobs'
+  # own success is needed as well as their files: a re-run that failed or
+  # ran out of time can't pass on an earlier attempt's artifact.
   tested:
-    needs: [one-commit, test]
+    needs: [one-commit, test, stable]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -130,13 +180,14 @@ jobs:
           SHA: ${{ github.sha }}
           ONE_COMMIT: ${{ needs.one-commit.result }}
           TEST: ${{ needs.test.result }}
+          STABLE: ${{ needs.stable.result }}
           DOWNLOAD: ${{ steps.download.outcome }}
           URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           shopt -s nullglob
           files=(results/branch-*-linux.json)
           stable=(results/stable-branch-*-linux.json)
-          if [ "$ONE_COMMIT" = success ] && [ "$TEST" = success ] && [ "$DOWNLOAD" = success ] \
+          if [ "$ONE_COMMIT" = success ] && [ "$TEST" = success ] && [ "$STABLE" = success ] && [ "$DOWNLOAD" = success ] \
               && [ "${#files[@]}" = 2 ] && [ "${#stable[@]}" = 2 ] \
               && jq -se 'length == 2 and all(.passed)' "${files[@]}" >/dev/null \
               && jq -se 'length == 2 and all(.branch == [])' "${stable[@]}" >/dev/null; then
