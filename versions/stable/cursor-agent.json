@@ -1,0 +1,16 @@
+{
+  "name": "cursor-agent",
+  "version": "2026.11.11-b912975",
+  "assets": {
+    "x86_64-linux": {
+      "url": "https://downloads.cursor.com/lab/2026.11.11-b912975/linux/x64/agent-cli-package.tar.gz",
+      "hash": "sha256-vgH0KtM0+B0FqZkvzwYKUsx0b1LMRR6EnrZSFGpuPJE=",
+      "checksumSource": "https://downloads.cursor.com/lab/2026.11.11-b912975/linux/x64/agent-cli-package.tar.gz.sha256"
+    },
+    "aarch64-linux": {
+      "url": "https://downloads.cursor.com/lab/2026.11.11-b912975/linux/arm64/agent-cli-package.tar.gz",
+      "hash": "sha256-8GivZO2RtTBGBZdlhvaQV5Z590CkHziAkaazoud2mHw=",
+      "checksumSource": "https://downloads.cursor.com/lab/2026.11.11-b912975/linux/arm64/agent-cli-package.tar.gz.sha256"
+    }
+  }
+}

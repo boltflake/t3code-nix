@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 150" role="img" aria-labelledby="title">
+  <title id="title">t3code-nix: T3 Code and all agent providers, packaged for Nix within minutes</title>
+  <style>
+    :root { --bg: #f0f2f6; --ink: #1a2740; --nix: #3f6cc0; --muted: #59616e; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #1b2028; --ink: #e3eaf7; --nix: #a9c4f2; --muted: #9aa3b0; }
+    }
+    .card { fill: var(--bg); }
+    .name { font: 700 44px/1 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; letter-spacing: -1px; fill: var(--ink); }
+    .name tspan { fill: var(--nix); }
+    .tag { font: 400 17px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: var(--muted); }
+
+    .flake { fill: none; stroke: #7fa6e8; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+    .energy { fill: none; stroke: #ffffff; stroke-width: 4; stroke-linecap: round; opacity: 0; }
+    .bolt { fill: #ffd23f; stroke: var(--bg); stroke-width: 6.4; stroke-linejoin: round; paint-order: stroke; }
+    /* A dash of 200 then a gap of 210, starting 201 in: nothing drawn at
+       the start (a zero-length dash would still draw its round cap). */
+    .strike { fill: none; stroke: #ffd23f; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; opacity: 0; stroke-dasharray: 200 210; animation: in 10s linear infinite; }
+    .glow { fill: none; filter: url(#blur); stroke-width: 11; stroke: #ffd23f; opacity: 0; stroke-dasharray: 200 210; animation: glow 10s linear infinite; }
+    .spin, .pop { transform-box: view-box; transform-origin: 100px 110px; }
+    .spin { animation: spin 10s cubic-bezier(.2, .9, .25, 1) infinite; }
+    .pop { animation: pop 10s cubic-bezier(.3, 1.6, .5, 1) infinite; }
+    .energy { animation: energy 10s ease-out infinite; }
+
+    @keyframes in { 0% { opacity: 1; stroke-dashoffset: 201; } 2.5% { opacity: 1; stroke-dashoffset: 0; } 4%, 100% { opacity: 0; stroke-dashoffset: 0; } }
+    @keyframes glow { 0% { opacity: .9; stroke-dashoffset: 201; } 2.5% { opacity: .9; stroke-dashoffset: 0; } 4.5%, 100% { opacity: 0; stroke-dashoffset: 0; } }
+    @keyframes pop { 0%, 2.6% { transform: scale(0); opacity: 0; } 2.8% { opacity: 1; } 4.5% { transform: scale(1.12); } 6%, 96% { transform: scale(1); opacity: 1; } 99.5%, 100% { transform: scale(0); opacity: 0; } }
+    @keyframes spin { 0%, 2.5% { transform: rotate(0) scale(1); } 3% { transform: rotate(-6deg) scale(.92); } 6% { transform: rotate(60deg) scale(1.04); } 7.5%, 100% { transform: rotate(60deg) scale(1); } }
+    @keyframes energy { 0%, 2.6% { opacity: 0; stroke-dashoffset: 24; } 2.8% { opacity: 1; } 6.5% { opacity: 1; stroke-dashoffset: -100; } 7%, 100% { opacity: 0; stroke-dashoffset: -100; } }
+
+    @media (prefers-reduced-motion: reduce) {
+      .strike, .glow, .spin, .pop, .energy { animation: none; }
+    }
+  </style>
+  <defs>
+    <filter id="blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4"/></filter>
+    <g id="arm"><path d="M50 43 V12"/><path d="M43.5 19 L50 25.5 L56.5 19"/></g>
+    <g id="arms"><use href="#arm"/><use href="#arm" transform="rotate(60 50 50)"/><use href="#arm" transform="rotate(120 50 50)"/><use href="#arm" transform="rotate(180 50 50)"/><use href="#arm" transform="rotate(240 50 50)"/><use href="#arm" transform="rotate(300 50 50)"/></g>
+    <path id="arm-e" d="M50 43 V12" pathLength="100" stroke-dasharray="24 76"/>
+    <g id="arms-e"><use href="#arm-e"/><use href="#arm-e" transform="rotate(60 50 50)"/><use href="#arm-e" transform="rotate(120 50 50)"/><use href="#arm-e" transform="rotate(180 50 50)"/><use href="#arm-e" transform="rotate(240 50 50)"/><use href="#arm-e" transform="rotate(300 50 50)"/></g>
+    <path id="bolt" d="M62 6 L35 53 H50 L40 94 L68 44 H53 Z"/>
+    <path id="strike" d="M136 -8 L110 36 L124 40 L96 80 L110 84 L100 106"/>
+  </defs>
+
+  <rect class="card" width="880" height="150" rx="14"/>
+
+  <!-- The logo: the same drawing and 10-second loop as the earlier preview's header. -->
+  <svg x="6" y="-4" width="160" height="160" viewBox="0 0 200 200" aria-hidden="true">
+    <use href="#strike" class="glow"/><use href="#strike" class="strike"/>
+    <g class="spin">
+      <g class="flake" transform="translate(100 110) scale(1.25) translate(-50 -50)"><use href="#arms"/></g>
+      <g class="energy" transform="translate(100 110) scale(1.25) translate(-50 -50)"><use href="#arms-e"/></g>
+    </g>
+    <g class="pop">
+      <g transform="translate(100 110) scale(1.25) translate(-50 -50)"><use href="#bolt" class="bolt" transform="translate(51 50) scale(.78) translate(-51 -50)"/></g>
+    </g>
+  </svg>
+
+  <text class="name" x="172" y="78">t3code<tspan>-nix</tspan></text>
+  <text class="tag" x="174" y="110">T3 Code and all agent providers, packaged for Nix within minutes</text>
+</svg>

@@ -1,0 +1,29 @@
+{
+  "name": "agent-browser",
+  "version": "0.43.0",
+  "tag": "v0.43.0",
+  "assets": {
+    "x86_64-linux": {
+      "url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.43.0/agent-browser-linux-musl-x64",
+      "hash": "sha256-ELOx1fqPU/e8RCc7zvqmQpmrdwcbyD512W3l7WYCXIk=",
+      "assetId": 741434872,
+      "digest": "sha256:10b3b1d5fa8f53f7bc44273bcefaa64299ab77071bc83e75d96de5ed66025c89"
+    },
+    "aarch64-linux": {
+      "url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.43.0/agent-browser-linux-musl-arm64",
+      "hash": "sha256-8dFGrZXB32J7MFVHX8uXHf0C91eh7vdWqPK9nhn//0o=",
+      "assetId": 741434874,
+      "digest": "sha256:f1d146ad95c1df627b3055475fcb971dfd02f757a1eef756a8f2bd9e19ffff4a"
+    }
+  },
+  "licenses": {
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/vercel-labs/agent-browser/1cc19526f3641c8543d55aa6700e7c55b37ac356/LICENSE",
+      "hash": "sha256-AUuzHoPVwudq6hzG6CIXNGq0E2LzLLNVrQ9cEKoK6v8="
+    }
+  },
+  "released": {
+    "at": "2026-11-12T23:09:31.000Z",
+    "kind": "published"
+  }
+}

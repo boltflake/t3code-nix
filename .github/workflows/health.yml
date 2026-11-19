@@ -1,0 +1,79 @@
+# The hourly backstop. Outside update.yml's concurrency group, so a waiting
+# dispatch can't replace it. Two independent jobs:
+#   dispatch  starts an ordinary update.yml run, so updates still arrive
+#             while the watcher is dead, and a quiet hour's run retries held
+#             versions (see scripts/update.ts); fails on its own
+#   issues    reads the watcher's /health, works out watcher-stalled,
+#             watcher-auth and update-lag (scripts/ci/health.ts) and writes
+#             them, in the shared `issues` concurrency group
+# Needs the repository variable WATCHER_URL and the secret
+# WATCHER_HEALTH_TOKEN.
+name: health
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: health
+  cancel-in-progress: false
+
+jobs:
+  # Only once updates are on (UPDATES, see update.yml's resolve job).
+  dispatch:
+    if: vars.UPDATES == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run update.yml --repo "$GITHUB_REPOSITORY" --ref main
+
+  # Not before the watcher is deployed (build step 6): no URL, no checks.
+  # Only on main: a branch's versions/ would raise false lags. Not before
+  # updates are on (UPDATES): with nothing publishing, every release is a lag.
+  issues:
+    if: vars.UPDATES == 'true' && vars.WATCHER_URL != '' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: issues
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      # Whether an update run is going (a release waiting behind it isn't a lag).
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          nix: false
+      - name: Read the watcher's health
+        env:
+          URL: ${{ vars.WATCHER_URL }}
+          TOKEN: ${{ secrets.WATCHER_HEALTH_TOKEN }}
+        run: |
+          out="$RUNNER_TEMP/health.json"
+          # On failure the file holds the error instead, for health.ts.
+          if ! curl -sS --fail-with-body --max-time 20 -H "Authorization: Bearer $TOKEN" "$URL/health" > "$out" 2> "$RUNNER_TEMP/curl.err"; then
+            { cat "$RUNNER_TEMP/curl.err"; head -c 300 "$out"; } > "$out.err"
+            mv "$out.err" "$out"
+          fi
+      - name: Write issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          obs="$RUNNER_TEMP/observations-health.json"
+          node scripts/ci/health.ts "$RUNNER_TEMP/health.json" > "$obs"
+          # As escaped text: versions and details come from upstream.
+          { echo '<pre>'; jq -r '.observations[] | "\(.kind) \(.package // "") \(.version // "") \(.detail)" | @html' "$obs"; echo '</pre>'; } >> "$GITHUB_STEP_SUMMARY"
+          node scripts/ci/issues.ts "$obs"

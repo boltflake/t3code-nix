@@ -1,0 +1,8 @@
+# zizmor's settings for the unit check (lib/checks.nix), which runs it offline
+# on every workflow and composite action. Findings we accept are ignored where
+# they occur, with the reason next to them.
+rules:
+  # A style hint (`$/...` instead of `./...` for this repository's own
+  # actions), not a security finding.
+  self-repository:
+    disable: true

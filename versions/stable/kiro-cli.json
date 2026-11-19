@@ -1,0 +1,16 @@
+{
+  "name": "kiro-cli",
+  "version": "3.2.1",
+  "assets": {
+    "x86_64-linux": {
+      "url": "https://desktop-release.q.us-east-1.amazonaws.com/3.2.1/kirocli-x86_64-linux.tar.gz",
+      "hash": "sha256-JVGswuUBOa74Guai09H5tuluv3fHR131TMS7i5GP1mI=",
+      "checksumSource": "https://desktop-release.q.us-east-1.amazonaws.com/3.2.1/manifest.json"
+    },
+    "aarch64-linux": {
+      "url": "https://desktop-release.q.us-east-1.amazonaws.com/3.2.1/kirocli-aarch64-linux.tar.gz",
+      "hash": "sha256-zRoRBJWU2LY2TSvgPAHnnbdSbQAoSpZPmIJGnvwZOg0=",
+      "checksumSource": "https://desktop-release.q.us-east-1.amazonaws.com/3.2.1/manifest.json"
+    }
+  }
+}
