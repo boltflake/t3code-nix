@@ -1,0 +1,17 @@
+{
+  "name": "browser-stable",
+  "version": "f1e5c356f35d07e7b71a6b5e6c9338e0b029e0c0",
+  "assets": {},
+  "channel": "nixos-26.05",
+  "rev": "f1e5c356f35d07e7b71a6b5e6c9338e0b029e0c0",
+  "narHash": "sha256-qXFIqA6FCcx7XeDzw0ZNlkDT9UiCzrNDwK8RuU8RcHM=",
+  "chromium": "157.0.8103.50",
+  "outPaths": {
+    "x86_64-linux": "/nix/store/63yr5q25h4gc50jm3g5y80gdbw5zyg5z-ungoogled-chromium-157.0.8103.50",
+    "aarch64-linux": "/nix/store/gyv0qcgzq42w9q9izzx3xjqfg8s8rcjg-ungoogled-chromium-157.0.8103.50"
+  },
+  "released": {
+    "at": "2026-11-14T06:25:46.009Z",
+    "kind": "seen"
+  }
+}

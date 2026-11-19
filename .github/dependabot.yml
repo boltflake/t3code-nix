@@ -1,0 +1,20 @@
+# Dependabot moves the pinned outside actions. Weekly, every update in one
+# PR of one commit, releases at least 7 days old. Each composite action under
+# .github/actions needs its own entry in `directories` (tests/ci.test.ts
+# checks it). A Dependabot PR lands like any change: `@dependabot rebase`
+# onto the current main, read each moved action's compare diff, wait for
+# `tested` with both test jobs passed, then fast-forward main. Actions branch
+# CI doesn't run are checked after landing.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/setup
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,0 +1,50 @@
+{
+  "name": "t3-nightly",
+  "version": "0.1.10-nightly.20261112.4564",
+  "tag": "v0.1.10-nightly.20261112.4564",
+  "assets": {
+    "x86_64-linux": {
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.10-nightly.20261112.4564/t3-0.1.10-nightly.20261112.4564-linux-x64.tar.gz",
+      "hash": "sha256-zAeG6Ph7vKiprz81K3mqL4y1vKTqXnpD/1rN/9dx5Z0=",
+      "assetId": 738061900,
+      "digest": "sha256:cc0786e8f87bbca8a9af3f352b79aa2f8cb5bca4ea5e7a43ff5acdffd771e59d"
+    },
+    "aarch64-linux": {
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.10-nightly.20261112.4564/t3-0.1.10-nightly.20261112.4564-linux-arm64.tar.gz",
+      "hash": "sha256-DffCOTyPrNhr3BDCjoKVryCLxyTpPQaI1iMvB+w8x5I=",
+      "assetId": 738061916,
+      "digest": "sha256:0df7c2393c8facd86bdc10c28e8295af208bc724e93d0688d6232f07ec3cc792"
+    }
+  },
+  "licenses": {
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/pingdotgg/t3code/bc647ed53595888efacdd8ca435967d48888a952/LICENSE",
+      "hash": "sha256-k12PKvDHA/nDlRfuV8xJMLGdAtUzvpMLY/DoL5NhS0M="
+    }
+  },
+  "browser": {
+    "version": "157.0.8103.38",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/bc647ed53595888efacdd8ca435967d48888a952/apps/server/src/preview/PreviewBrowser.ts",
+    "assets": {
+      "x86_64-linux": {
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/linux64/chrome-headless-shell-linux64.zip",
+        "hash": "sha256-3q//p0Zgs0hTpBGcNh/UJ6yMn8ti21HduKeXzYOkui0="
+      },
+      "aarch64-linux": {
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/linux-arm64/chrome-headless-shell-linux-arm64.zip",
+        "hash": "sha256-ubkQpXsqFes+VQAKIzn5Opc5NKQT6/xuWFpQ7GxC/Ww="
+      }
+    }
+  },
+  "speech": {
+    "id": "handy-computer/whisper-tiny.en-gguf",
+    "revision": "becb8bcb804405dc97b380a523d9975888820986",
+    "filename": "whisper-tiny.en-Q8_0.gguf",
+    "size": 45904544,
+    "sha256": "e8c9b73c06344307d8b346e07fbe93dd88d894627854bcff31523f1ce44394fa",
+    "url": "https://huggingface.co/handy-computer/whisper-tiny.en-gguf/resolve/becb8bcb804405dc97b380a523d9975888820986/whisper-tiny.en-Q8_0.gguf",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/bc647ed53595888efacdd8ca435967d48888a952/apps/server/src/speech/catalog.json",
+    "checked": "https://raw.githubusercontent.com/pingdotgg/t3code/bc647ed53595888efacdd8ca435967d48888a952/apps/server/src/speech/catalog.json",
+    "fromCatalog": true
+  }
+}

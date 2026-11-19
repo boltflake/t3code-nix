@@ -1,0 +1,29 @@
+{
+  "name": "codex",
+  "version": "0.167.2",
+  "tag": "rust-v0.167.2",
+  "assets": {
+    "x86_64-linux": {
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-package-x86_64-unknown-linux-musl.tar.zst",
+      "hash": "sha256-u+p7mmj0ULOvGONhMO+Ih+bqQpCxz8MJZnjrbL6fPzQ=",
+      "assetId": 737172485,
+      "digest": "sha256:bbea7b9a68f450b3af18e36130ef8887e6ea4290b1cfc3096678eb6cbe9f3f34"
+    },
+    "aarch64-linux": {
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-package-aarch64-unknown-linux-musl.tar.zst",
+      "hash": "sha256-I/dnhRERT8ms395jvJeiGs+ZsgPeDHklvnL4ioFn2Gs=",
+      "assetId": 737167021,
+      "digest": "sha256:23f7678511114fc9acdfde63bc97a21acf99b203de0c7925be72f88a8167d86b"
+    }
+  },
+  "licenses": {
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/openai/codex/ce21072c90d32c40af7a55b60b2fb35c84a43a6a/LICENSE",
+      "hash": "sha256-0X8ifk312hYAORM4hlzg8wVSEXYKNmiPgWlB1YIy2Nw="
+    },
+    "NOTICE": {
+      "url": "https://raw.githubusercontent.com/openai/codex/ce21072c90d32c40af7a55b60b2fb35c84a43a6a/NOTICE",
+      "hash": "sha256-nXFXXs/ZqEP8Fnew77CAU8a6n9aGoN4ab1OC/TwiCRU="
+    }
+  }
+}

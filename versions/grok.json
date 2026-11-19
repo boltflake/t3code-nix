@@ -1,0 +1,18 @@
+{
+  "name": "grok",
+  "version": "1.0.77",
+  "assets": {
+    "x86_64-linux": {
+      "url": "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-x86_64",
+      "hash": "sha256-twKVCqWCfYVeSTJ4q2IVpOD1vOtbumxiQ6n1XN0UOwo=",
+      "md5": "N4VneZg3ldpQExSxUOVH6g==",
+      "checksumSource": "none (downloaded)"
+    },
+    "aarch64-linux": {
+      "url": "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-aarch64",
+      "hash": "sha256-sw7uFKZWEk7zydqFd7Xng+8s/6vrK2ecXEljPnfu1XQ=",
+      "md5": "cehlC378Mo2VnZ2goh41LA==",
+      "checksumSource": "none (downloaded)"
+    }
+  }
+}

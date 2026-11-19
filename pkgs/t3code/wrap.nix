@@ -1,0 +1,209 @@
+# Puts the providers on PATH for an unwrapped t3code or t3. t3code finds its
+# providers on PATH, so this is all the bundling it needs. At startup t3code
+# puts the user's login-shell PATH ahead of this one, so providers the user
+# installed themselves win and these fill the gaps (see the README).
+#
+# Which providers is the caller's choice, by t3code's driver names
+# (providers.nix; "claude" and our package names work too) or as packages:
+#
+#   t3code.override { providers = [ "codex" "claude" ]; }
+#   t3code.override { excludeProviders = [ "grok" "muse" ]; }
+#   t3code.override { providers = [ pkgs.codex "opencode" ]; }
+#
+# A name that isn't a provider is an error that suggests the nearest one.
+#
+# Runtimes for agents t3code installs from the ACP registry, off by default:
+#
+#   t3code.override { acpRuntimes = [ "nodejs" ]; }   # npm agents
+#   t3code.override { acpRuntimes = [ "uv" ]; }       # uv agents (uv, python3)
+#
+# They go at the end of PATH, after the providers: the user's own Node or uv
+# (from the login shell's PATH, which t3code puts first) always wins.
+#
+# It also links the HTML-preview browser where t3code looks for it
+# (preview-browser.sh); leave it out with
+#
+#   t3code.override { withPreviewBrowser = false; }
+#
+# which drops it from the closure; a link an earlier launch made stays.
+#
+# T3 Connect's relay client is nixpkgs' cloudflared, named by
+# T3CODE_CLOUDFLARED_PATH (unless the user sets it to something; t3 takes an
+# empty or blank one as unset, so the wrapper does too, for ASCII blanks).
+# t3 looks there before its own downloads in ~/.t3/tools/cloudflared and
+# before PATH, so an older download (from upstream's install) is never used
+# and none is made. It's on PATH too.
+#
+# The CLI refuses `t3 update`, `t3 service install`, `t3 up` and plain
+# `t3 connect` (lib/guard.nix); for upstream's own service on purpose (with
+# the module's runtimeCompat):
+#
+#   t3.override { allowUpstreamService = true; }
+#
+# The desktop app's Electron (desktop.nix, lib/electron.nix) is set here too
+# and passed on; null keeps the unwrapped app's own choice ("auto"):
+#
+#   t3code.override { electron = "bundled"; }
+{
+  lib,
+  symlinkJoin,
+  makeWrapper,
+  installShellFiles,
+  runCommand,
+  replaceVars,
+  coreutils,
+  cloudflared,
+  nodejs,
+  uv,
+  python3,
+  unwrapped,
+  # The desktop app's Electron, or null for the unwrapped app's own.
+  electron ? null,
+  # Every provider this t3code supports: driver name -> package.
+  availableProviders,
+  providers ? builtins.attrNames availableProviders,
+  excludeProviders ? [ ],
+  previewBrowser,
+  withPreviewBrowser ? true,
+  acpRuntimes ? [ ],
+  guard,
+  allowUpstreamService ? false,
+  # Put into the name: "-free" for t3code-free and t3-free.
+  variant ? "",
+}:
+let
+  # The unwrapped app, with the Electron asked for (desktop only).
+  app =
+    if electron == null then
+      unwrapped
+    else if unwrapped ? passthru.electron then
+      unwrapped.override { inherit electron; }
+    else
+      throw "t3code: electron applies to the desktop app only, not ${unwrapped.name}";
+  helper = import ./select-providers.nix {
+    inherit lib;
+    available = availableProviders;
+  };
+  selected = helper.select { inherit providers excludeProviders; };
+
+  # The ACP registry's runners: npm (with node) for npm agents; uv with a
+  # full python3 for uv agents (uv would otherwise download a Python that
+  # can't start without nix-ld, and python3Minimal lacks ssl).
+  runtimes = {
+    nodejs = [ nodejs ];
+    uv = [
+      uv
+      python3
+    ];
+  };
+  runtimeNames = lib.unique (
+    map (
+      r:
+      if !builtins.isString r then
+        throw "t3code: acpRuntimes takes names (${lib.concatStringsSep ", " (builtins.attrNames runtimes)}), not packages"
+      else if runtimes ? ${r} then
+        r
+      else
+        throw (helper.unknownRuntime r (builtins.attrNames runtimes))
+    ) acpRuntimes
+  );
+  runtimeFlags = lib.optionals (runtimeNames != [ ]) [
+    "--suffix"
+    "PATH"
+    ":"
+    (lib.makeBinPath (lib.concatMap (r: runtimes.${r}) runtimeNames))
+  ];
+
+  # t3code looks for Antigravity on PATH as `agy_acp_server.par` and treats
+  # it as the newer CLI when the real file is named `agy`. This link lives
+  # only on t3code's PATH, not in the antigravity package.
+  shims = runCommand "t3code-provider-shims" { } (
+    ''
+      mkdir -p $out/bin
+    ''
+    + lib.concatMapStrings (
+      p:
+      lib.optionalString (lib.getName p == "antigravity") ''
+        ln -s ${p}/bin/agy $out/bin/agy_acp_server.par
+      ''
+    ) selected
+  );
+  # The CLI takes --base-dir; the desktop app doesn't.
+  cli = if lib.hasPrefix "t3-" app.name then "1" else "0";
+  linkPreviewBrowser = replaceVars ./preview-browser.sh (
+    lib.genAttrs [
+      "mkdir"
+      "ln"
+      "mv"
+      "rm"
+    ] (c: "${coreutils}/bin/${c}")
+  );
+  guardFlags = lib.optional (cli == "1" && !allowUpstreamService) guard.refuseT3;
+  browserFlags = lib.optionals withPreviewBrowser [
+    "--run"
+    (lib.concatStringsSep " " [
+      ". ${linkPreviewBrowser};"
+      "t3codeLinkPreviewBrowser ${cli}"
+      "${previewBrowser}/libexec/chrome-headless-shell"
+      previewBrowser.platform
+      previewBrowser.version
+      ''"$@" || echo "warning: couldn't link T3 Code's preview browser" >&2''
+    ])
+  ];
+in
+symlinkJoin {
+  name = lib.replaceStrings [ "-unwrapped" ] [ variant ] app.name;
+  paths = [ app ];
+  nativeBuildInputs = [
+    makeWrapper
+  ]
+  ++ lib.optional (cli == "1") installShellFiles;
+
+  postBuild = ''
+    for bin in ${app}/bin/*; do
+      name=$(basename "$bin")
+      rm "$out/bin/$name"
+      makeWrapper "$bin" "$out/bin/$name" \
+        ${lib.concatStringsSep " " guardFlags} \
+        --prefix PATH : ${
+          lib.makeBinPath (
+            selected
+            ++ [
+              shims
+              cloudflared
+            ]
+          )
+        } \
+        ${lib.escapeShellArgs runtimeFlags} \
+        --run ${lib.escapeShellArg ''case "''${T3CODE_CLOUDFLARED_PATH-}" in *[![:space:]]*) ;; *) export T3CODE_CLOUDFLARED_PATH=${cloudflared}/bin/cloudflared ;; esac''} \
+        ${lib.escapeShellArgs browserFlags}
+    done
+  ''
+  # The CLI's shell completions, from the (already patched) binary itself,
+  # with a throwaway home: they complete the command `t3`.
+  + lib.optionalString (cli == "1") ''
+    export HOME=$(mktemp -d)
+    export T3CODE_HOME=$HOME/.t3
+    for shell in bash zsh fish; do
+      ${app}/bin/t3 --completions $shell > $HOME/t3.$shell
+    done
+    installShellCompletion --bash --name t3 $HOME/t3.bash
+    installShellCompletion --cmd t3 --zsh $HOME/t3.zsh --fish $HOME/t3.fish
+  '';
+
+  passthru = {
+    unwrapped = app;
+    electron = app.passthru.electron or null;
+    providers = selected;
+    acpRuntimes = runtimeNames;
+    previewBrowser = if withPreviewBrowser then previewBrowser else null;
+    # For the preview-browser-link check.
+    inherit linkPreviewBrowser;
+  };
+
+  meta = app.meta // {
+    description =
+      lib.replaceStrings [ "without providers" ] [ "with its providers" ]
+        app.meta.description;
+  };
+}

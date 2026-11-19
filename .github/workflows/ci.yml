@@ -1,0 +1,149 @@
+# Branch CI for human changes (packaging, workflows, the watcher). main's
+# ruleset requires the `tested` status, so a change reaches main like this:
+#   1. push one commit on a branch, on top of main
+#   2. this workflow runs the full suite on both systems and posts `tested`
+#   3. fast-forward main to that commit
+# A branch more than one commit ahead of main is refused, so no untested
+# commit in the middle reaches main. The update bot publishes through
+# update.yml instead (its pushes start no workflows).
+name: ci
+
+on:
+  push:
+    branches-ignore: [main, "bot/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  one-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Exactly one commit on top of main
+        run: |
+          ahead=$(git rev-list --count origin/main..HEAD)
+          base=$(git merge-base origin/main HEAD)
+          [ "$base" = "$(git rev-parse origin/main)" ] || { echo "rebase onto main first"; exit 1; }
+          [ "$ahead" = 1 ] || { echo "squash to one commit (found $ahead)"; exit 1; }
+
+  test:
+    needs: one-commit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { system: x86_64-linux, runner: ubuntu-24.04 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    steps:
+      # Two commits: the branch's one and main under it (one-commit checks).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          userns: true
+          desktop-tools: true
+      # update.yml's test-job store cache, restored before the suite's builds
+      # (the action needs the Nix that setup installs, so setup's own Node
+      # comes first, as in update.yml). Restore only: a branch's cache would
+      # help only that branch and use up the repo's 10 GB. Restoring here is
+      # fine: branch CI runs vendor binaries at the same trust level as
+      # update.yml's test jobs, and the cache job, which pushes to Cachix,
+      # never restores a store cache.
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-test-${{ matrix.system }}-${{ hashFiles('flake.lock', 'pkgs/**', 'lib/**') }}
+          restore-prefixes-first-match: nix-test-${{ matrix.system }}-
+          save: false
+      # The desktop smoke's tools (setup's desktop-tools) for this step only.
+      # A guard check's note fails the suite only when this commit changes
+      # lib/guard.nix's lists: one main already has (a release shipped with
+      # it) blocks no unrelated change.
+      - run: |
+          strict=()
+          git diff --quiet HEAD~1 HEAD -- lib/guard.nix || strict=(--strict-guards)
+          PATH="$DESKTOP_TOOLS_PATH:$PATH" node scripts/ci/test.ts branch ${{ matrix.system }} results --desktop --agent-browser "${strict[@]}"
+      # NixOS stable, after the default's result is written and apart from
+      # it: both stable groups and, when the snapshot is behind, the
+      # equivalence step on the moved tree. A stable failure fails the
+      # branch only when the branch made it fail (its derivation differs
+      # from main's and main's passes); an incomplete result fails it, and
+      # so does a step that runs out of time (no result file).
+      - name: NixOS stable
+        timeout-minutes: 45
+        run: |
+          node scripts/ci/stable.ts branch ${{ matrix.system }} results --next --branch --parent=HEAD~1
+      # agent-browser's optional browsers (scripts/ci/variants.ts), only when
+      # this commit changes what they're built or run from (the globs below,
+      # like the store cache's key). A failure fails the branch only when the
+      # branch made it fail (HEAD~1's same variant passes, gives no result,
+      # or doesn't exist); otherwise it's reported here.
+      - name: agent-browser's optional browsers
+        timeout-minutes: 60
+        run: |
+          if git diff --quiet HEAD~1 HEAD -- flake.nix flake.lock pkgs lib versions/agent-browser.json \
+            'versions/browser-*.json' scripts/agent-browser-smoke.ts scripts/ci/variants.ts; then
+            echo "nothing the variants are built or run from changed"
+            exit 0
+          fi
+          node scripts/ci/variants.ts branch ${{ matrix.system }} results/variants-${{ matrix.system }}.json --parent=HEAD~1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: results-${{ matrix.system }}
+          path: results
+          retention-days: 7
+
+  # Runs whatever happened before, so a failure always leaves a `failure`
+  # status (and replaces an earlier success on the same commit).
+  tested:
+    needs: [one-commit, test]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        id: download
+        continue-on-error: true
+        with:
+          pattern: results-*
+          path: results
+          merge-multiple: true
+      - name: Post `tested` if the suite passed on both systems
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          ONE_COMMIT: ${{ needs.one-commit.result }}
+          TEST: ${{ needs.test.result }}
+          DOWNLOAD: ${{ steps.download.outcome }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          shopt -s nullglob
+          files=(results/branch-*-linux.json)
+          stable=(results/stable-branch-*-linux.json)
+          if [ "$ONE_COMMIT" = success ] && [ "$TEST" = success ] && [ "$DOWNLOAD" = success ] \
+              && [ "${#files[@]}" = 2 ] && [ "${#stable[@]}" = 2 ] \
+              && jq -se 'length == 2 and all(.passed)' "${files[@]}" >/dev/null \
+              && jq -se 'length == 2 and all(.branch == [])' "${stable[@]}" >/dev/null; then
+            state=success; desc="full suite passed on x86_64-linux and aarch64-linux"
+          else
+            state=failure; desc="full suite failed (or NixOS stable broke); see the run"
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -f state="$state" -f context=tested -f description="$desc" -f target_url="$URL"
+          [ "$state" = success ]

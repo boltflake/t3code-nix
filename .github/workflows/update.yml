@@ -1,0 +1,1019 @@
+# Update, test, publish. Run by the watcher (workflow_dispatch), by
+# health.yml every hour, or by hand. One real run at a time; a dispatch
+# arriving during a run waits, and GitHub keeps only the newest waiting run,
+# which is enough because every run reads upstream and main afresh. A run
+# with nothing new but held versions retries them (scripts/update.ts).
+#
+# Only jobs that never run vendor binaries outside the Nix sandbox get write
+# permissions or secrets. Values from upstream reach scripts through files
+# and environment variables, never through ${{ }} in shell code. Artifacts
+# and outputs live in $RUNNER_TEMP, outside the checkout. Scripts are
+# TypeScript, run by Node 26: from the flake's pinned nixpkgs in jobs that
+# install Nix, Node 26 from actions/setup-node in the others.
+name: update
+# The status page (pages.yml) leaves dry runs out by this title; health
+# (scripts/ci/gh.ts updateRuns) knows publish's re-dispatches by theirs.
+run-name: ${{ inputs.dry_run && 'update (dry run)' || (inputs.attempt != '0' && inputs.attempt != '' && format('update (retry {0})', inputs.attempt)) || 'update' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      attempt:
+        description: Re-dispatch count after main moved during publishing
+        default: "0"
+      dry_run:
+        description: Record every write instead of doing it (runs this ref's scripts)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One run runs and one waits, and a newer dispatch replaces the waiting one.
+# Every real run on main is the same kind of run, so runs never overlap. Dry
+# runs, and real runs dispatched on a branch by mistake (the gate stops them),
+# share a group per ref, so they can't replace a run waiting on main (only
+# each other, which is harmless: nothing is published from a branch).
+concurrency:
+  group: ${{ (inputs.dry_run || github.ref != 'refs/heads/main') && format('update-dry-{0}', github.ref) || 'update' }}
+  cancel-in-progress: false
+
+env:
+  DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+  ATTEMPT: ${{ inputs.attempt }}
+  RUN_ID: ${{ github.run_id }}
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+jobs:
+  # Is this run's workflow definition still current (compared with the ref's
+  # head now, not the commit the dispatch was made at)? If so, resolve
+  # upstream versions into a candidate. Runs no vendor code.
+  # A real run only once the repository variable UPDATES is `true` (set at
+  # go-live after the first dry run), so neither the hourly backstop nor the
+  # watcher can publish before the repository is set up; a dry run always.
+  resolve:
+    if: inputs.dry_run || vars.UPDATES == 'true'
+    runs-on: ubuntu-24.04
+    # Setup takes a few minutes; update.ts's first pass and the nixpkgs bump
+    # end within 20 minutes of its start (BUMP_BY_MS), and a retry pass reads
+    # upstream again (about 18 minutes at worst, every source slow): 45; and
+    # the Electron step's 10-minute budget (12 with its timeout): 57.
+    timeout-minutes: 57
+    permissions:
+      contents: read
+      issues: read
+      actions: write
+    outputs:
+      current: ${{ steps.gate.outputs.current }}
+      head: ${{ steps.gate.outputs.head }}
+      inputs: ${{ steps.candidate.outputs.inputs }}
+      desktop: ${{ steps.candidate.outputs.desktop }}
+      browser: ${{ steps.candidate.outputs.browser }}
+      # The candidate and the observations are read back by ID, never by
+      # name: a job running vendor code holds the run's artifact token, and
+      # could replace an artifact of the same name (see the issues job).
+      # Test results are read by pattern; publish recomputes the tree from
+      # inputs that each passed, so a forged result can only make a test
+      # run lie (an accepted risk).
+      candidate-artifact: ${{ steps.candidate-artifact.outputs.artifact-id }}
+      obs-artifact: ${{ steps.obs-artifact.outputs.artifact-id }}
+      # When this run read upstream: the issues job orders runs' news by it.
+      seen-at: ${{ steps.resolve.outputs.seen-at }}
+      # The scopes with an open browser-failed issue (JSON), retested by the
+      # variants job at the next publish.
+      retest: ${{ steps.held.outputs.retest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      # Node from setup-node; Nix is installed below, after the gate.
+      - uses: ./.github/actions/setup
+        with:
+          nix: false
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          head=$(git rev-parse HEAD)
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          # Only main publishes: a real run on a branch would put the branch's
+          # untested commits on main. Every later job then skips.
+          if [ "$DRY_RUN" != true ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::a real run publishes main; dispatch it on main, or as a dry run"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node scripts/ci/gate.ts "$WORKFLOW_SHA" "$head" >> "$GITHUB_OUTPUT"
+      - name: Versions held by open issues
+        id: held
+        if: steps.gate.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/ci/held.ts "$RUNNER_TEMP/held.json" "$RUNNER_TEMP/retest.json"
+          echo "retest=$(jq -c . "$RUNNER_TEMP/retest.json")" >> "$GITHUB_OUTPUT"
+      # For the nixpkgs bump, which update.ts decides after its first pass
+      # (with each new T3 Code on the latest channel, and at least weekly): `nix flake
+      # update` and the cache check's evaluation. Nothing is built here.
+      - if: steps.gate.outputs.current == 'true'
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Resolve upstream versions
+        id: resolve
+        if: steps.gate.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HELD_JSON: ${{ runner.temp }}/held.json
+          # GitHub's API limit for `nix flake update` and fetching nixpkgs.
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
+        run: |
+          echo "seen-at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/obs"
+          node scripts/update.ts --write > "$RUNNER_TEMP/obs/observations-resolve.json"
+          # A bump that was due but waits, and why; and other notes.
+          jq -r '.observations[] | select(.kind == "waiting" or .kind == "note") | "\(.package): \(.detail)"' \
+            "$RUNNER_TEMP/obs/observations-resolve.json" >> "$GITHUB_STEP_SUMMARY"
+      - id: candidate
+        if: steps.gate.outputs.current == 'true'
+        env:
+          HELD_JSON: ${{ runner.temp }}/held.json
+        run: |
+          inputs=$(node scripts/ci/candidate.ts make "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/obs/observations-candidate.json")
+          echo "inputs=$inputs" >> "$GITHUB_OUTPUT"
+          # What this run tests (held inputs left out aren't listed).
+          jq -r --slurpfile r "$RUNNER_TEMP/obs/observations-resolve.json" '.inputs[] | . as $i
+            | "\(.name): \(.from) -> \(.to)" + ([$r[0].changed[] | select(.name == $i.name) | " (\(.why))"][0] // "")' \
+            "$RUNNER_TEMP/candidate/inputs.json" >> "$GITHUB_STEP_SUMMARY"
+          # The desktop app can only be affected by its own pins or nixpkgs.
+          case ",$inputs," in
+            *,t3code,*|*,t3code-nightly,*|*,nixpkgs,*) echo "desktop=--desktop" >> "$GITHUB_OUTPUT" ;;
+            *) echo "desktop=" >> "$GITHUB_OUTPUT" ;;
+          esac
+          # agent-browser with its Chromium: its own pin, a browser pin or nixpkgs.
+          case ",$inputs," in
+            *,agent-browser,*|*,browser-unstable,*|*,browser-stable,*|*,nixpkgs,*) echo "browser=--agent-browser" >> "$GITHUB_OUTPUT" ;;
+            *) echo "browser=" >> "$GITHUB_OUTPUT" ;;
+          esac
+      # Which Electron the Desktop app's auto picks on each tree this run can
+      # publish (ci/electron-runtime.json), from evaluating the package; only
+      # when the inputs include a Desktop app pin or nixpkgs. Best effort:
+      # a tree it can't evaluate keeps its earlier record, and this step never
+      # fails the run (scripts/ci/electron-runtime.ts has its own limits).
+      - name: The Electron each tree runs
+        if: steps.candidate.outputs.desktop != ''
+        continue-on-error: true
+        timeout-minutes: 12
+        env:
+          NIX_CONFIG: access-tokens = github.com=${{ github.token }}
+        run: node scripts/ci/electron-runtime.ts table "$RUNNER_TEMP/candidate" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: candidate-artifact
+        if: steps.candidate.outputs.inputs != ''
+        with:
+          name: candidate
+          path: ${{ runner.temp }}/candidate
+          retention-days: 7
+      # The status page shows "testing" from the candidate while the tests run;
+      # best effort (its hourly run catches up).
+      - name: Tell the status page
+        if: steps.candidate-artifact.outputs.artifact-id != '' && env.DRY_RUN != 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main || echo "::warning::couldn't start pages.yml"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: obs-artifact
+        if: always()
+        with:
+          name: observations-resolve
+          path: ${{ runner.temp }}/obs
+          if-no-files-found: ignore
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: dry-run-gate
+          path: ${{ runner.temp }}/dry-run-gate.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The full suite on the whole candidate, per architecture. No secrets, no
+  # write permissions: this is where vendor binaries run outside the sandbox.
+  # The Nix store is cached between runs (private to the repo), so unchanged
+  # packages aren't downloaded again. The key leaves out versions/, so a new
+  # cache is saved only when nixpkgs or the packaging changes, not on every
+  # pin bump (a changed pin is fetched fresh, the rest restored). Only this
+  # job saves it (narrow and final restore it); the reconcile job deletes the
+  # older ones, which needs actions: write, never given to a job like this.
+  test:
+    needs: resolve
+    if: needs.resolve.outputs.inputs != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { system: x86_64-linux, runner: ubuntu-24.04 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.candidate-artifact }}
+          path: ${{ runner.temp }}/candidate
+      # Setup builds Node and the desktop tools from flake.lock: the pin this
+      # job tests, so with a nixpkgs bump in its set, the candidate's.
+      - name: The nixpkgs pin this job tests
+        run: |
+          lock="$RUNNER_TEMP/candidate/files/flake.lock"
+          [ ! -e "$lock" ] || cp "$lock" flake.lock
+      - uses: ./.github/actions/setup
+        with:
+          userns: true
+          desktop-tools: ${{ needs.resolve.outputs.desktop != '' }}
+      # Before the store cache, so its key hashes the tree being tested.
+      - name: Apply the candidate
+        run: node scripts/ci/candidate.ts apply "$RUNNER_TEMP/candidate"
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-test-${{ matrix.system }}-${{ hashFiles('flake.lock', 'pkgs/**', 'lib/**') }}
+          restore-prefixes-first-match: nix-test-${{ matrix.system }}-
+          gc-max-store-size-linux: 4G
+      - name: Test the candidate
+        # A hang fails the step (the job's own limit would cancel it, and
+        # narrowing skips a cancelled test job): below the job's limit.
+        timeout-minutes: 80
+        env:
+          DESKTOP: ${{ needs.resolve.outputs.desktop }}
+          BROWSER: ${{ needs.resolve.outputs.browser }}
+        run: |
+          C="$RUNNER_TEMP/candidate" R="$RUNNER_TEMP/results"
+          # The desktop smoke's tools (setup's desktop-tools), only when it runs.
+          PATH="${DESKTOP:+$DESKTOP_TOOLS_PATH:}$PATH" \
+            node scripts/ci/test.ts candidate ${{ matrix.system }} "$R" ${DESKTOP:+"$DESKTOP"} ${BROWSER:+"$BROWSER"}
+          node scripts/ci/candidate.ts tree "$C" > "$R/tree-candidate-${{ matrix.system }}.txt"
+      # NixOS stable, apart from the default (stable.ts): its own step and
+      # time limit, after the default's result is written. Running out of
+      # time leaves no result file: stable incomplete. Stable-next and the
+      # equivalence step too, since the candidate can publish. Its smokes'
+      # tools come from nixpkgs-stable (stable.ts builds them).
+      - name: NixOS stable
+        if: ${{ !cancelled() }}
+        timeout-minutes: 45
+        run: |
+          C="$RUNNER_TEMP/candidate" R="$RUNNER_TEMP/results"
+          node scripts/ci/stable.ts candidate ${{ matrix.system }} "$R" --next \
+            --tree="$(node scripts/ci/candidate.ts tree "$C")"
+      # Also when the stable step failed or ran out of time: the default's
+      # results stand on their own (a missing stable file is incomplete).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: results-candidate-${{ matrix.system }}
+          path: ${{ runner.temp }}/results
+          retention-days: 7
+
+  # Did the candidate pass on both systems? If not, test main alone and each
+  # input alone (just main if there's one input), on both architectures.
+  narrow-plan:
+    needs: [resolve, test]
+    if: always() && needs.resolve.outputs.inputs != '' && needs.test.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      failed: ${{ steps.plan.outputs.failed }}
+      sets: ${{ steps.plan.outputs.sets }}
+      stable-sets: ${{ steps.plan.outputs.stable-sets || '[]' }}
+      obs-artifact: ${{ steps.obs-artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: results-candidate-*
+          path: ${{ runner.temp }}/results
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.candidate-artifact }}
+          path: ${{ runner.temp }}/candidate
+      - uses: ./.github/actions/setup
+        with:
+          nix: false
+      # Also main's NixOS-stable evidence (stable-broken, stable-ok) when the
+      # candidate's stable derivations are main's, on every run.
+      - id: plan
+        run: |
+          mkdir -p "$RUNNER_TEMP/obs"
+          node scripts/ci/narrow.ts plan "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/results" \
+            "$RUNNER_TEMP/obs/observations-narrow-plan.json" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: obs-artifact
+        if: always()
+        with:
+          name: observations-narrow-plan
+          path: ${{ runner.temp }}/obs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  narrow:
+    needs: [resolve, narrow-plan]
+    # No sets: the candidate failed only on the nixpkgs Electron runtime, so
+    # the final is every input with the fallback (narrow.ts plan).
+    if: always() && needs.narrow-plan.outputs.failed == 'true' && needs.narrow-plan.outputs.sets != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        set: ${{ fromJSON(needs.narrow-plan.outputs.sets) }}
+        system: [x86_64-linux, aarch64-linux]
+    runs-on: ${{ matrix.system == 'aarch64-linux' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.candidate-artifact }}
+          path: ${{ runner.temp }}/candidate
+      # Setup builds Node and the desktop tools from flake.lock: the pin this
+      # job tests, so with a nixpkgs bump in its set, the candidate's.
+      - name: The nixpkgs pin this job tests
+        env:
+          NAMES: ${{ matrix.set }}
+        run: |
+          lock="$RUNNER_TEMP/candidate/files/flake.lock"
+          case ",$NAMES," in
+            *,nixpkgs,*) [ ! -e "$lock" ] || cp "$lock" flake.lock ;;
+          esac
+      - uses: ./.github/actions/setup
+        with:
+          userns: true
+          desktop-tools: ${{ needs.resolve.outputs.desktop != '' }}
+      # Before the store cache, so its key hashes the tree being tested.
+      - name: Apply ${{ matrix.set }}
+        env:
+          SET: ${{ matrix.set }}
+        run: '[ "$SET" = main ] || node scripts/ci/candidate.ts apply "$RUNNER_TEMP/candidate" "$SET"'
+      # Restore only: the test job saves it.
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-test-${{ matrix.system }}-${{ hashFiles('flake.lock', 'pkgs/**', 'lib/**') }}
+          restore-prefixes-first-match: nix-test-${{ matrix.system }}-
+          save: false
+      - name: Test ${{ matrix.set }} alone
+        # A hang fails the step (the job's own limit would cancel it, and
+        # narrowing skips a cancelled test job): below the job's limit.
+        timeout-minutes: 80
+        env:
+          SET: ${{ matrix.set }}
+          DESKTOP: ${{ needs.resolve.outputs.desktop }}
+          BROWSER: ${{ needs.resolve.outputs.browser }}
+        run: |
+          # The desktop smoke's tools (setup's desktop-tools), only when it runs.
+          PATH="${DESKTOP:+$DESKTOP_TOOLS_PATH:}$PATH" \
+            node scripts/ci/test.ts "$SET" ${{ matrix.system }} "$RUNNER_TEMP/results" ${DESKTOP:+"$DESKTOP"} ${BROWSER:+"$BROWSER"}
+      # NixOS stable only for main alone and nixpkgs-stable alone; the other
+      # inputs' stable results would decide nothing.
+      - name: NixOS stable, ${{ matrix.set }} alone
+        if: ${{ !cancelled() && contains(fromJSON(needs.narrow-plan.outputs.stable-sets), matrix.set) }}
+        timeout-minutes: 45
+        env:
+          SET: ${{ matrix.set }}
+        run: |
+          if [ "$SET" = main ]; then tree=$(git rev-parse 'HEAD^{tree}')
+          else tree=$(node scripts/ci/candidate.ts tree "$RUNNER_TEMP/candidate" "$SET"); fi
+          node scripts/ci/stable.ts "$SET" ${{ matrix.system }} "$RUNNER_TEMP/results" --tree="$tree"
+      # Also when the stable step failed or ran out of time: the default's
+      # results stand on their own (a missing stable file is incomplete).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: results-narrow-${{ matrix.set }}-${{ matrix.system }}
+          path: ${{ runner.temp }}/results
+          retention-days: 7
+
+  # With failures: the final candidate is main plus every input that passed
+  # alone, and it gets the full suite again.
+  decide:
+    needs: [resolve, narrow-plan, narrow]
+    if: always() && needs.narrow-plan.outputs.failed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      final: ${{ steps.decide.outputs.final }}
+      electron: ${{ steps.decide.outputs.electron }}
+      obs-artifact: ${{ steps.obs-artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.candidate-artifact }}
+          path: ${{ runner.temp }}/candidate
+      # With a single input, its result is the candidate's.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: results-*
+          path: ${{ runner.temp }}/results
+          merge-multiple: true
+      - uses: ./.github/actions/setup
+        with:
+          nix: false
+      - id: decide
+        run: |
+          mkdir -p "$RUNNER_TEMP/obs"
+          out="$RUNNER_TEMP/obs/observations-decide.json"
+          node scripts/ci/narrow.ts decide "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/results" > "$out"
+          {
+            echo "final=$(jq -r '.final | join(",")' "$out")"
+            # The Electron fallback channels the final tree gets (candidate.ts --electron).
+            echo "electron=$(jq -r '.electron | join(",")' "$out")"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: obs-artifact
+        if: always()
+        with:
+          name: observations-decide
+          path: ${{ runner.temp }}/obs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  final:
+    needs: [resolve, decide]
+    if: always() && needs.decide.outputs.final != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { system: x86_64-linux, runner: ubuntu-24.04 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.candidate-artifact }}
+          path: ${{ runner.temp }}/candidate
+      # Setup builds Node and the desktop tools from flake.lock: the pin this
+      # job tests, so with a nixpkgs bump in its set, the candidate's.
+      - name: The nixpkgs pin this job tests
+        env:
+          NAMES: ${{ needs.decide.outputs.final }}
+        run: |
+          lock="$RUNNER_TEMP/candidate/files/flake.lock"
+          case ",$NAMES," in
+            *,nixpkgs,*) [ ! -e "$lock" ] || cp "$lock" flake.lock ;;
+          esac
+      - uses: ./.github/actions/setup
+        with:
+          userns: true
+          desktop-tools: ${{ needs.resolve.outputs.desktop != '' }}
+      # Before the store cache, so its key hashes the tree being tested.
+      - name: Apply the final candidate
+        env:
+          FINAL: ${{ needs.decide.outputs.final }}
+          ELECTRON: ${{ needs.decide.outputs.electron }}
+        run: node scripts/ci/candidate.ts apply "$RUNNER_TEMP/candidate" "$FINAL" --electron="$ELECTRON"
+      # Restore only: the test job saves it.
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-test-${{ matrix.system }}-${{ hashFiles('flake.lock', 'pkgs/**', 'lib/**') }}
+          restore-prefixes-first-match: nix-test-${{ matrix.system }}-
+          save: false
+      - name: Test the final candidate
+        # A hang fails the step (the job's own limit would cancel it, and
+        # narrowing skips a cancelled test job): below the job's limit.
+        timeout-minutes: 80
+        env:
+          FINAL: ${{ needs.decide.outputs.final }}
+          ELECTRON: ${{ needs.decide.outputs.electron }}
+          DESKTOP: ${{ needs.resolve.outputs.desktop }}
+          BROWSER: ${{ needs.resolve.outputs.browser }}
+        run: |
+          C="$RUNNER_TEMP/candidate" R="$RUNNER_TEMP/results"
+          # The desktop smoke's tools (setup's desktop-tools), only when it runs.
+          PATH="${DESKTOP:+$DESKTOP_TOOLS_PATH:}$PATH" \
+            node scripts/ci/test.ts final ${{ matrix.system }} "$R" ${DESKTOP:+"$DESKTOP"} ${BROWSER:+"$BROWSER"}
+          node scripts/ci/candidate.ts tree "$C" "$FINAL" --electron="$ELECTRON" > "$R/tree-final-${{ matrix.system }}.txt"
+      # NixOS stable with stable-next and the equivalence step, as in the
+      # test job: the final can publish.
+      - name: NixOS stable
+        if: ${{ !cancelled() }}
+        timeout-minutes: 45
+        env:
+          FINAL: ${{ needs.decide.outputs.final }}
+          ELECTRON: ${{ needs.decide.outputs.electron }}
+        run: |
+          C="$RUNNER_TEMP/candidate" R="$RUNNER_TEMP/results"
+          node scripts/ci/stable.ts final ${{ matrix.system }} "$R" --next \
+            --tree="$(node scripts/ci/candidate.ts tree "$C" "$FINAL" --electron="$ELECTRON")"
+      # Also when the stable step failed or ran out of time: the default's
+      # results stand on their own (a missing stable file is incomplete).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: results-final-${{ matrix.system }}
+          path: ${{ runner.temp }}/results
+          retention-days: 7
+
+  # Decide whether the set may be published (it passed on both systems, which
+  # tested one tree), then publish it. The decision is pure; no vendor code
+  # runs here. Emits test-passed or combination-failed as issue evidence.
+  publish:
+    needs: [resolve, narrow-plan, decide, final]
+    if: >-
+      always() && needs.narrow-plan.result == 'success'
+      && (needs.narrow-plan.outputs.failed != 'true' || needs.decide.outputs.final != '')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      statuses: write
+      actions: write
+    outputs:
+      ok: ${{ steps.verdict.outputs.ok }}
+      tree: ${{ steps.verdict.outputs.tree }}
+      set: ${{ steps.verdict.outputs.set }}
+      names: ${{ steps.verdict.outputs.names }}
+      electron: ${{ steps.verdict.outputs.electron }}
+      published: ${{ steps.publish.outputs.published }}
+      published-tree: ${{ steps.publish.outputs.published-tree }}
+      obs-artifact: ${{ steps.obs-artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # zizmor: ignore[artipacked] publish pushes with these credentials;
+          # it uploads nothing from the checkout, only files under $RUNNER_TEMP.
+          ref: ${{ needs.resolve.outputs.head }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.candidate-artifact }}
+          path: ${{ runner.temp }}/candidate
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: results-${{ needs.narrow-plan.outputs.failed == 'true' && 'final' || 'candidate' }}-*
+          path: ${{ runner.temp }}/results
+          merge-multiple: true
+      # Main's results from the narrowing: a nixpkgs-stable bump answers only
+      # for the NixOS-stable failures main doesn't have (narrow.ts ownStable).
+      - if: needs.narrow-plan.outputs.failed == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: results-narrow-main-*
+          path: ${{ runner.temp }}/results
+          merge-multiple: true
+      - uses: ./.github/actions/setup
+        with:
+          nix: false
+      - id: verdict
+        env:
+          SET: ${{ needs.narrow-plan.outputs.failed == 'true' && 'final' || 'candidate' }}
+          FINAL: ${{ needs.decide.outputs.final }}
+          ELECTRON: ${{ needs.decide.outputs.electron }}
+        run: |
+          C="$RUNNER_TEMP/candidate"
+          mkdir -p "$RUNNER_TEMP/results" "$RUNNER_TEMP/obs"
+          names=$FINAL
+          [ "$SET" = candidate ] && names=$(node scripts/ci/candidate.ts names "$C")
+          out="$RUNNER_TEMP/obs/observations-verdict.json"
+          # The final's tree includes its Electron fallback (decide's channels).
+          electron=
+          if [ "$SET" = final ]; then electron=$ELECTRON; fi
+          node scripts/ci/narrow.ts verdict "$C" "$RUNNER_TEMP/results" "$SET" "$names" --electron="$electron" > "$out"
+          {
+            echo "ok=$(jq -r .ok "$out")"
+            echo "tree=$(jq -r '.tree // ""' "$out")"
+            echo "move=$(jq -c '.move' "$out")"
+            echo "set=$SET"
+            echo "names=$names"
+            # The final's Electron fallback channels (none on the fast path).
+            echo "electron=$electron"
+          } >> "$GITHUB_OUTPUT"
+      - id: publish
+        if: steps.verdict.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAMES: ${{ steps.verdict.outputs.names }}
+          TREE: ${{ steps.verdict.outputs.tree }}
+          MOVE: ${{ steps.verdict.outputs.move }}
+          ELECTRON: ${{ steps.verdict.outputs.electron }}
+        run: |
+          out="$RUNNER_TEMP/obs/observations-publish.json"
+          node scripts/ci/publish.ts "$RUNNER_TEMP/candidate" "$NAMES" "$TREE" "$MOVE" --electron="$ELECTRON" > "$out"
+          cat "$out"
+          {
+            echo "published=$(jq -r '[.observations[] | select(.kind == "published") | .version][0] // ""' "$out")"
+            echo "published-tree=$(jq -r '.trees.published // ""' "$out")"
+          } >> "$GITHUB_OUTPUT"
+      # The guard checks' notes (guard-review issues) only for what reached
+      # main: a run that published (a dry run: that would have).
+      - name: Guard notes, once published
+        if: steps.publish.outcome == 'success' && (steps.publish.outputs.published != '' || inputs.dry_run)
+        run: |
+          jq '{observations: .guard}' "$RUNNER_TEMP/obs/observations-verdict.json" > "$RUNNER_TEMP/obs/observations-guard.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: obs-artifact
+        if: always()
+        with:
+          name: observations-publish
+          path: ${{ runner.temp }}/obs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Push the allowlisted free packages after checking each matches what the
+  # tests built. It builds exactly the published tree (base + final inputs)
+  # from scratch: it never restores the test jobs' store cache, so nothing a
+  # vendor binary could have touched reaches Cachix. Vendor code runs only
+  # inside the Nix build sandbox. A dry run records what it would push.
+  # Needs the CACHIX_CACHE variable.
+  cache:
+    needs: [resolve, publish]
+    if: >-
+      always() && vars.CACHIX_CACHE != '' && needs.publish.outputs.ok == 'true'
+      && (needs.publish.outputs.published != '' || inputs.dry_run)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { system: x86_64-linux, runner: ubuntu-24.04 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.candidate-artifact }}
+          path: ${{ runner.temp }}/candidate
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: results-${{ needs.publish.outputs.set }}-${{ matrix.system }}
+          path: ${{ runner.temp }}/results
+          merge-multiple: true
+      - uses: ./.github/actions/setup
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        if: ${{ !inputs.dry_run }}
+        with:
+          name: ${{ vars.CACHIX_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+      - name: Push the allowlisted packages that match the tested build
+        env:
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          NAMES: ${{ needs.publish.outputs.names }}
+          TREE: ${{ needs.publish.outputs.tree }}
+          PUBLISHED_TREE: ${{ needs.publish.outputs.published-tree }}
+          SET: ${{ needs.publish.outputs.set }}
+          ELECTRON: ${{ needs.publish.outputs.electron }}
+        run: |
+          C="$RUNNER_TEMP/candidate"
+          node scripts/ci/candidate.ts apply "$C" "$NAMES" --electron="$ELECTRON"
+          [ "$(node scripts/ci/candidate.ts tree "$C" "$NAMES" --electron="$ELECTRON")" = "$TREE" ]
+          # The published tree: plus the NixOS-stable snapshot's copy when it
+          # moved (checked against the tested tree). Only the stable outputs
+          # read it, and none is pushed; the default manifest is unchanged.
+          node scripts/lib/snapshot.ts checkout "$TREE" "${PUBLISHED_TREE:-$TREE}"
+          mkdir -p "$RUNNER_TEMP/obs"
+          node scripts/ci/cache.ts "$RUNNER_TEMP/results/manifest-$SET-${{ matrix.system }}.json" \
+            ${{ matrix.system }} > "$RUNNER_TEMP/obs/observations-cache-${{ matrix.system }}.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: observations-cache-${{ matrix.system }}
+          path: ${{ runner.temp }}/obs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # agent-browser's optional browsers (chromium, google-chrome), report-only
+  # (scripts/ci/variants.ts): after publish, on the published tree (rebuilt
+  # like the cache job's), so only what users get gives evidence and Chrome's
+  # download never delays publishing. Runs vendor code: no write permission,
+  # no secrets; its results are read by name and filtered (variant-issues).
+  # The step's own timeout is the budget; running out of it, or any failure,
+  # leaves a missing or partial result: no evidence, never a failed run.
+  variants:
+    needs: [resolve, publish]
+    if: >-
+      always() && needs.publish.outputs.ok == 'true'
+      && (needs.publish.outputs.published != '' || inputs.dry_run)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { system: x86_64-linux, runner: ubuntu-24.04 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.candidate-artifact }}
+          path: ${{ runner.temp }}/candidate
+      - uses: ./.github/actions/setup
+        with:
+          userns: true
+      - name: The published tree, and what to run
+        id: plan
+        env:
+          NAMES: ${{ needs.publish.outputs.names }}
+          TREE: ${{ needs.publish.outputs.tree }}
+          PUBLISHED_TREE: ${{ needs.publish.outputs.published-tree }}
+          ELECTRON: ${{ needs.publish.outputs.electron }}
+          RETEST: ${{ needs.resolve.outputs.retest }}
+          HEAD: ${{ needs.resolve.outputs.head }}
+        run: |
+          C="$RUNNER_TEMP/candidate"
+          node scripts/ci/candidate.ts apply "$C" "$NAMES" --electron="$ELECTRON"
+          [ "$(node scripts/ci/candidate.ts tree "$C" "$NAMES" --electron="$ELECTRON")" = "$TREE" ]
+          # The published tree: plus the snapshot's move, checked against the
+          # tested tree, as in the cache job. Both trees' objects are written
+          # here, so variants.ts can unpack the published one.
+          node scripts/lib/snapshot.ts checkout "$TREE" "${PUBLISHED_TREE:-$TREE}"
+          printf '%s' "${RETEST:-[]}" > "$RUNNER_TEMP/retest.json"
+          # An empty result until the smokes write theirs, so a publish that
+          # asks for none still uploads one (variant-issues reads them).
+          mkdir -p "$RUNNER_TEMP/variants"
+          echo '{"results": []}' > "$RUNNER_TEMP/variants/variants-${{ matrix.system }}.json"
+          tree=${PUBLISHED_TREE:-$TREE}
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "args=$(node scripts/ci/variants.ts args "$NAMES" "$RUNNER_TEMP/retest.json" "$HEAD" "$tree")" >> "$GITHUB_OUTPUT"
+      - name: Smoke the optional browsers
+        if: steps.plan.outputs.args != ''
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          TREE: ${{ steps.plan.outputs.tree }}
+          ARGS: ${{ steps.plan.outputs.args }}
+        run: |
+          # shellcheck disable=SC2086 # ARGS is variants.ts's own word list.
+          node scripts/ci/variants.ts run ${{ matrix.system }} "$RUNNER_TEMP/variants/variants-${{ matrix.system }}.json" --tree="$TREE" $ARGS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: variants-${{ matrix.system }}
+          path: ${{ runner.temp }}/variants
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The variants' results as issues: its own job, so the run's other issues
+  # never wait for the browsers. In the issues job's concurrency group.
+  variant-issues:
+    needs: [resolve, publish, variants]
+    if: >-
+      always() && needs.variants.result != 'skipped'
+      && (inputs.dry_run || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: ${{ inputs.dry_run && format('issues-dry-{0}', github.ref) || 'issues' }}
+      cancel-in-progress: false
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head }}
+          persist-credentials: false
+      # By name (a matrix job's outputs can't carry one ID per system), and
+      # filtered by variants.ts observations: only its two kinds, its scopes,
+      # browsers and systems, and only for the published tree.
+      # None found (the variants job failed before uploading) is no evidence,
+      # not a failed run.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          pattern: variants-*
+          path: ${{ runner.temp }}/variants
+          merge-multiple: true
+      - uses: ./.github/actions/setup
+        with:
+          nix: false
+      - name: Make sure the label exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ "$DRY_RUN" = true ] || gh label create t3code-nix --color 5319e7 \
+            --description "Opened and closed by t3code-nix's update workflow" 2>/dev/null || true
+      - name: Apply the variants' results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEEN_AT: ${{ needs.resolve.outputs.seen-at }}
+          PUBLISHED_TREE: ${{ needs.publish.outputs.published-tree || needs.publish.outputs.tree }}
+        run: |
+          shopt -s nullglob
+          mkdir -p "$RUNNER_TEMP/obs" "$RUNNER_TEMP/dry-run"
+          node scripts/ci/variants.ts observations "$PUBLISHED_TREE" "$RUNNER_TEMP"/variants/*.json > "$RUNNER_TEMP/obs/observations-variants.json"
+          cat "$RUNNER_TEMP/obs/observations-variants.json"
+          node scripts/ci/issues.ts "$RUNNER_TEMP/obs/observations-variants.json" > "$RUNNER_TEMP/dry-run/variant-issues.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && inputs.dry_run
+        with:
+          name: dry-run-variant-issues
+          path: ${{ runner.temp }}/dry-run
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Repairs every run, and deletes the test jobs' older store caches (the
+  # purge needs actions: write, which the test jobs never get). Runs the
+  # dispatched revision's script against main's history, so a branch's dry
+  # run exercises its own reconcile.
+  # Never two at once: the release step reads "latest" and then moves it,
+  # and two tag repairs would race. Only this workflow runs reconcile, and
+  # its real runs on main sit in one run-level group (update), with one
+  # running run and at most one pending one that has started no jobs: so at
+  # most one reconcile job exists, and none is ever replaced or cancelled
+  # (assuming a re-run of failed jobs joins that group too). Nothing else
+  # (health.yml included) may run reconcile, or that would stop holding.
+  reconcile:
+    needs: [resolve, publish]
+    if: always() && needs.resolve.outputs.current == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: ${{ inputs.dry_run && format('reconcile-dry-{0}', github.ref) || 'reconcile' }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: write
+    outputs:
+      obs-artifact: ${{ steps.obs-artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          nix: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch -q origin main
+          mkdir -p "$RUNNER_TEMP/obs"
+          node scripts/ci/reconcile.ts origin/main > "$RUNNER_TEMP/obs/observations-reconcile.json"
+          cat "$RUNNER_TEMP/obs/observations-reconcile.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: obs-artifact
+        if: always()
+        with:
+          name: observations-reconcile
+          path: ${{ runner.temp }}/obs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The only writer of issues here; shares its concurrency group with
+  # health.yml's issue job (dry runs use their own group). GitHub keeps one
+  # waiting job per group: with these two writers none is dropped. Should one
+  # ever be (a re-run of failed jobs outside the update group would be a third
+  # writer), its problems come back on the next run; its evidence too: a pin
+  # on main is a resolver `pass`, the nixpkgs revision on main an `on-main`,
+  # and a lost cache-ok comes again with the next publish. A failed or
+  # cancelled job anywhere becomes update-failed; otherwise the run counts as
+  # ok. Runs when resolve failed too; only a deliberate re-dispatch
+  # (current=false) skips it.
+  issues:
+    needs: [resolve, test, narrow-plan, narrow, decide, final, publish, cache, reconcile]
+    # Any resolve that didn't succeed (a failure, a timeout, a cancel) still
+    # reports; a successful one only when it went ahead (current). A real
+    # run reports only from main (a branch's run is stopped at the gate). A
+    # resolve skipped because updates aren't on yet reports nothing.
+    if: always() && needs.resolve.result != 'skipped' && (inputs.dry_run || github.ref == 'refs/heads/main') && (needs.resolve.result != 'success' || needs.resolve.outputs.current == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: ${{ inputs.dry_run && format('issues-dry-{0}', github.ref) || 'issues' }}
+      cancel-in-progress: false
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head || github.sha }}
+          persist-credentials: false
+      # By ID, from the outputs of the jobs that made them: a job running
+      # vendor code holds the run's artifact token and could add or replace
+      # artifacts, so a name or pattern proves nothing. A replaced one isn't
+      # found (only the newest of a name is listed) and is left out; if none
+      # is found, the step fails and the fallback below reports it.
+      - name: The observation artifacts to read
+        id: obs
+        env:
+          IDS: >-
+            ${{ needs.resolve.outputs.obs-artifact }},${{ needs.narrow-plan.outputs.obs-artifact }},${{ needs.decide.outputs.obs-artifact }},
+            ${{ needs.publish.outputs.obs-artifact }},${{ needs.reconcile.outputs.obs-artifact }}
+        run: |
+          ids=
+          for id in ${IDS//,/ }; do
+            if [[ $id =~ ^[0-9]+$ ]]; then ids+=${ids:+,}$id; fi
+          done
+          echo "ids=$ids" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.obs.outputs.ids != ''
+        with:
+          artifact-ids: ${{ steps.obs.outputs.ids }}
+          path: ${{ runner.temp }}/obs
+          merge-multiple: true
+      # The cache job is a matrix, whose outputs can't carry one ID per
+      # system: its artifacts are read by name, keeping only the kinds it
+      # makes, so a forged one can't close or hold anything else.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: observations-cache-*
+          path: ${{ runner.temp }}/obs-cache
+          merge-multiple: true
+      - uses: ./.github/actions/setup
+        with:
+          nix: false
+      - name: Make sure the label exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/obs" "$RUNNER_TEMP/dry-run"
+          if [ "$DRY_RUN" = true ]; then
+            echo '[{"action": "create_label", "name": "t3code-nix"}]' > "$RUNNER_TEMP/dry-run/label.json"
+            exit 0
+          fi
+          gh label create t3code-nix --color 5319e7 \
+            --description "Opened and closed by t3code-nix's update workflow" 2>/dev/null || true
+      - name: Apply observations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+          # When this run read upstream (empty if it never did: then now).
+          SEEN_AT: ${{ needs.resolve.outputs.seen-at }}
+        run: |
+          flags=(--run-ok)
+          if [ "$FAILED" = true ]; then
+            flags=()
+            # A fixed detail, so each failing run doesn't count as a change
+            # (the issue and its comments link the run).
+            jq -n '{observations: [{kind: "update-failed", package: null, channel: null,
+              version: null, detail: "a job failed or was cancelled"}]}' > "$RUNNER_TEMP/obs/observations-run.json"
+          fi
+          shopt -s nullglob
+          # Numbered names, so a forged file can't replace a trusted one.
+          n=0
+          for f in "$RUNNER_TEMP"/obs-cache/*.json; do
+            n=$((n + 1))
+            # Exactly what cache.ts makes: its kinds, a system as channel,
+            # no version, and our own package names.
+            jq '{observations: [.observations[] | select(
+                  (.kind == "cache-ok" or .kind == "nondeterministic" or .kind == "update-failed")
+                  and (.channel == "x86_64-linux" or .channel == "aarch64-linux") and .version == null
+                  and (.detail | type == "string")
+                  and (.package == null or (.package | type == "string" and test("^[A-Za-z0-9._+-]+$"))))]}' \
+              "$f" > "$RUNNER_TEMP/obs/cache-filtered-$n.json"
+          done
+          node scripts/ci/issues.ts "$RUNNER_TEMP"/obs/*.json "${flags[@]}" > "$RUNNER_TEMP/dry-run/issues.json"
+      - name: Fallback if applying observations failed
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          key="update-failed/issues-job/-"
+          if [ "$DRY_RUN" = true ]; then
+            echo "[{\"action\": \"upsert_issue\", \"key\": \"$key\"}]" > "$RUNNER_TEMP/dry-run/fallback.json"
+            exit 0
+          fi
+          # Every issue of ours, not only the newest page.
+          existing=$(gh issue list --label t3code-nix --state all --limit 100000 --json number,body \
+            --jq "[.[] | select(.body | contains(\"$key\"))][0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue reopen "$existing" 2>/dev/null || true
+            gh issue comment "$existing" --body "The issues job failed again: $RUN_URL"
+          else
+            gh issue create --label t3code-nix --title "update-failed: issues job" --body \
+              "<!-- t3code-nix: {\"clean\": 0, \"detail\": \"issues job failed\", \"key\": \"$key\", \"reminded\": null, \"version\": null} -->
+          The issues job of $RUN_URL failed, so that run's observations weren't applied."
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && env.DRY_RUN == 'true'
+        with:
+          name: dry-run-issues
+          path: ${{ runner.temp }}/dry-run
+          if-no-files-found: ignore
+          retention-days: 7

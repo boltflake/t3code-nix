@@ -1,0 +1,51 @@
+{
+  "name": "t3code",
+  "version": "0.1.9",
+  "tag": "v0.1.9",
+  "assets": {
+    "x86_64-linux": {
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.9/T3-Code-0.1.9-amd64.deb",
+      "hash": "sha256-QYx4JfcxB7e1ujurrl47SFgB3CLZ3A1RivYy95BsvdE=",
+      "assetId": 735290148,
+      "digest": "sha256:418c7825f73107b7b5ba3babae5e3b485801dc22d9dc0d518af632f7906cbdd1"
+    },
+    "aarch64-linux": {
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.9/T3-Code-0.1.9-arm64.deb",
+      "hash": "sha256-eVmXa01/xEQ8n7dwEod01OhvFNsBBEvjaQHkiJCPO7Q=",
+      "assetId": 735290153,
+      "digest": "sha256:7959976b4d7fc4443c9fb770128774d4e86f14db01044be36901e488908f3bb4"
+    }
+  },
+  "licenses": {
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/pingdotgg/t3code/24e77473ecf41bc1f7142529c7911c1c1aae1d76/LICENSE",
+      "hash": "sha256-k12PKvDHA/nDlRfuV8xJMLGdAtUzvpMLY/DoL5NhS0M="
+    }
+  },
+  "browser": {
+    "version": "157.0.8103.38",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/24e77473ecf41bc1f7142529c7911c1c1aae1d76/apps/server/src/preview/PreviewBrowser.ts",
+    "assets": {
+      "x86_64-linux": {
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/linux64/chrome-headless-shell-linux64.zip",
+        "hash": "sha256-3q//p0Zgs0hTpBGcNh/UJ6yMn8ti21HduKeXzYOkui0="
+      },
+      "aarch64-linux": {
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/linux-arm64/chrome-headless-shell-linux-arm64.zip",
+        "hash": "sha256-ubkQpXsqFes+VQAKIzn5Opc5NKQT6/xuWFpQ7GxC/Ww="
+      }
+    }
+  },
+  "speech": {
+    "id": "handy-computer/whisper-tiny.en-gguf",
+    "revision": "becb8bcb804405dc97b380a523d9975888820986",
+    "filename": "whisper-tiny.en-Q8_0.gguf",
+    "size": 45904544,
+    "sha256": "e8c9b73c06344307d8b346e07fbe93dd88d894627854bcff31523f1ce44394fa",
+    "url": "https://huggingface.co/handy-computer/whisper-tiny.en-gguf/resolve/becb8bcb804405dc97b380a523d9975888820986/whisper-tiny.en-Q8_0.gguf",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/24e77473ecf41bc1f7142529c7911c1c1aae1d76/apps/server/src/speech/catalog.json",
+    "checked": "https://raw.githubusercontent.com/pingdotgg/t3code/24e77473ecf41bc1f7142529c7911c1c1aae1d76/apps/server/src/speech/catalog.json",
+    "fromCatalog": true
+  },
+  "electron": "44.10.1"
+}

@@ -1,0 +1,158 @@
+# The status page and badges (scripts/status.ts; plan: "Status page and
+# badges" and "Status page redesign and live view"), on GitHub Pages. Its
+# own workflow, never part of update.yml: deploy-pages reads its artifact by
+# name, and in an update run the jobs that run vendor code hold the run's
+# artifact token and could replace it. Here nothing runs but our scripts.
+#
+# Started hourly, by publish after each publish, by the update run's resolve
+# job once its candidate is uploaded, and by GitHub whenever an update run on
+# main is requested, starts or completes (workflow_run, with main's copy of
+# this file, building main's checkout). Reconcile re-enables it after
+# GitHub's 60-day disable. It deploys only when the built site's digest
+# differs from the live one, and only on main once the repository variable
+# PAGES is `true` (set at go-live, with Pages set to "GitHub Actions"). A
+# dry run builds the checked-out revision's script on main's data, without
+# the live view, and uploads the site as an artifact.
+#
+# The live view (each package's state) comes from two places:
+#   live   reads the unfinished update runs, their candidate artifacts and
+#          the open issues (scripts/ci/status-reads.ts). The artifacts are
+#          untrusted (vendor-code jobs could replace them), so this job holds
+#          no secret and no write permission, and hands on validated JSON.
+#   build  reads the watcher's /health in a step of its own, the only one
+#          that sees WATCHER_HEALTH_TOKEN; only on main, not on a dry run,
+#          and only once WATCHER_URL is set.
+name: pages
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build only; upload the site as an artifact
+        type: boolean
+        default: false
+  # zizmor: ignore[dangerous-triggers] GitHub runs main's own copy of this
+  # file on main's checkout, never a fork's; the job that reads the update
+  # runs' untrusted artifacts holds no secret and no write permission.
+  workflow_run:
+    workflows: [update]
+    branches: [main]
+    types: [requested, in_progress, completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Only real runs on main share `pages` (a run waiting there is replaced by
+  # a newer one); a dry run, or a run on any other ref, waits in its own.
+  group: ${{ (inputs.dry_run || github.ref != 'refs/heads/main') && format('pages-dry-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+    outputs:
+      reads: ${{ steps.reads.outputs.reads }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          nix: false
+      - id: reads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          out="$RUNNER_TEMP/reads.json"
+          node scripts/ci/status-reads.ts "$out"
+          # One line of JSON, so no line of it can end the heredoc.
+          { echo 'reads<<READS_EOF'; cat "$out"; echo 'READS_EOF'; } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: live
+    # Also when the live reads failed: the page is built without them.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      deploy: ${{ steps.build.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          nix: false
+      - name: Read the watcher's health
+        id: health
+        if: github.ref == 'refs/heads/main' && !inputs.dry_run && vars.WATCHER_URL != ''
+        env:
+          TOKEN: ${{ secrets.WATCHER_HEALTH_TOKEN }}
+          URL: ${{ vars.WATCHER_URL }}
+        run: |
+          # A failed read leaves no file: the page is built without the live
+          # view, and status.ts reports it.
+          curl -fsS --max-time 20 -H "Authorization: Bearer $TOKEN" "$URL/health" > "$RUNNER_TEMP/health.json" \
+            || { echo "::warning::couldn't read the watcher's /health"; rm -f "$RUNNER_TEMP/health.json"; }
+      - id: build
+        env:
+          ENABLED: ${{ vars.PAGES == 'true' && github.ref == 'refs/heads/main' && !inputs.dry_run }}
+          WANT_LIVE: ${{ steps.health.conclusion == 'success' }}
+          READS: ${{ needs.live.outputs.reads }}
+        run: |
+          git fetch -q origin main
+          site="$RUNNER_TEMP/site"
+          args=()
+          if [ "$WANT_LIVE" = true ]; then
+            printf '%s' "$READS" > "$RUNNER_TEMP/reads.json"
+            args=(--health "$RUNNER_TEMP/health.json" --reads "$RUNNER_TEMP/reads.json")
+          fi
+          # The live site's status.json, past any CDN cache; unreadable
+          # means deploy. From GITHUB_REPOSITORY, which every run has (a
+          # scheduled run's event carries no repository).
+          site_status="https://$GITHUB_REPOSITORY_OWNER.github.io/${GITHUB_REPOSITORY#*/}/status.json"
+          curl -fsS --max-time 20 "$site_status?run=$GITHUB_RUN_ID" > "$RUNNER_TEMP/live-site.json" || rm -f "$RUNNER_TEMP/live-site.json"
+          result=$(node scripts/status.ts "$site" origin/main "${args[@]}" --site "$RUNNER_TEMP/live-site.json")
+          live=$(jq -r '.live' <<< "$result")
+          echo "built $(jq -r '.digest' <<< "$result"), live view: $live $(jq -r '.error // ""' <<< "$result")" >> "$GITHUB_STEP_SUMMARY"
+          deploy=false
+          if [ "$ENABLED" = true ] && [ "$(jq -r '.deploy' <<< "$result")" = true ]; then deploy=true; fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+          if [ "$ENABLED" = true ] && [ "$(jq -r '.fail' <<< "$result")" = true ]; then
+            echo "::error::the live reads failed and nothing else changed; the live site stays as it is"
+            exit 1
+          fi
+      - if: steps.build.outputs.deploy == 'true'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+      - if: inputs.dry_run
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-dry-run
+          path: ${{ runner.temp }}/site
+          retention-days: 7
+
+  deploy:
+    needs: build
+    # Not success(): that would also need `live`, which may have failed.
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.build.outputs.deploy == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

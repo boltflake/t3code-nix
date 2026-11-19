@@ -1,0 +1,17 @@
+// The release watcher (see src/watcher.ts). Deployed by
+// .github/workflows/deploy-watcher.yml, which fills in the KV namespace and
+// account IDs from repository variables. Secrets (set with
+// `wrangler secret put`): GITHUB_TOKEN, HEALTH_TOKEN.
+{
+  "name": "t3code-nix-watcher",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  // Two crons, both every minute, written differently so the handler can
+  // tell them apart (each polls its own sources).
+  "triggers": { "crons": ["* * * * *", "*/1 * * * *"] },
+  "kv_namespaces": [{ "binding": "STATE", "id": "KV_NAMESPACE_ID" }],
+  "version_metadata": { "binding": "CF_VERSION" },
+  "vars": { "REPO": "swsammy/t3code-nix" },
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

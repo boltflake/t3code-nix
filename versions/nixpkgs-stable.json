@@ -1,0 +1,12 @@
+{
+  "name": "nixpkgs-stable",
+  "version": "f1e5c356f35d07e7b71a6b5e6c9338e0b029e0c0",
+  "assets": {},
+  "channel": "nixos-26.05",
+  "rev": "f1e5c356f35d07e7b71a6b5e6c9338e0b029e0c0",
+  "narHash": "sha256-qXFIqA6FCcx7XeDzw0ZNlkDT9UiCzrNDwK8RuU8RcHM=",
+  "released": {
+    "at": "2026-11-14T08:00:00.000Z",
+    "kind": "seen"
+  }
+}

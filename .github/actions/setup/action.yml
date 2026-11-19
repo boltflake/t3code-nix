@@ -1,0 +1,70 @@
+# Every job's setup: Node 26 on PATH (the scripts are TypeScript, run
+# directly by Node), and Nix for the jobs that build or test. With nix: true,
+# Node comes from the flake's pinned nixpkgs; jobs that only run scripts
+# (nix: false) take Node 26 from actions/setup-node, which is much quicker
+# than installing Nix. With desktop-tools: true, the desktop smoke's tools
+# (xvfb-run, dbus, xdotool, util-linux's unshare) come from the same
+# nixpkgs in the same build, so nixpkgs is evaluated once; their bin
+# folders go into DESKTOP_TOOLS_PATH,
+# not PATH, for the step that runs the smoke to prepend. Needs a checkout.
+name: setup
+description: Put Node 26 on PATH, and install Nix if asked
+inputs:
+  nix:
+    description: Install Nix (and take Node from the pinned nixpkgs)
+    default: "true"
+  userns:
+    description: Allow unprivileged user namespaces (Electron's sandbox, bubblewrap)
+    default: "false"
+  desktop-tools:
+    description: Also build the desktop smoke's tools, for DESKTOP_TOOLS_PATH (needs nix)
+    default: "false"
+runs:
+  using: composite
+  steps:
+    # A build that hangs fails after 15 minutes (the daemon's own setting, so
+    # it applies whoever is trusted): a hung check is then a failed check, held
+    # like any other. Every package here is a download, unpack and patch, far
+    # below that; two waves of hung builds (max-jobs = auto: four, the runners'
+    # CPU count) in each of test.ts's two passes still fit in a test step's 80
+    # minutes. It also bounds this action's own builds (Node, the desktop
+    # tools), which come from cache.nixos.org; one that had to build from
+    # source and took longer would fail setup, an update-failed that holds
+    # nothing. Other settings go after it.
+    - if: inputs.nix == 'true'
+      uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      with:
+        extra_nix_config: |
+          timeout = 900
+    - name: Node 26 (and the desktop smoke's tools) from the pinned nixpkgs
+      if: inputs.nix == 'true'
+      shell: bash
+      env:
+        DESKTOP_TOOLS: ${{ inputs.desktop-tools }}
+      # Only Nix store paths that nix build gave for the pinned nixpkgs are
+      # written to GITHUB_PATH and GITHUB_ENV, never text from a run's inputs;
+      # pages.yml, which reads untrusted artifacts, uses `nix: false`.
+      run: | # zizmor: ignore[github-env]
+        attrs=(nixpkgs#nodejs_26)
+        [ "$DESKTOP_TOOLS" != true ] || attrs+=(nixpkgs#xvfb-run nixpkgs#dbus nixpkgs#xdotool nixpkgs#util-linux)
+        # One evaluation; --json keeps each result with what was asked for.
+        built=$(nix build --inputs-from . "${attrs[@]}" --no-link --json)
+        node=$(jq -er '.[0].outputs.out' <<< "$built")
+        [ -x "$node/bin/node" ] || { echo "no node in $node"; exit 1; }
+        echo "$node/bin" >> "$GITHUB_PATH"
+        if [ "$DESKTOP_TOOLS" = true ]; then
+          tools=$(jq -er '[.[1:][] | (.outputs.bin // .outputs.out) + "/bin"] | join(":")' <<< "$built")
+          for t in xvfb-run dbus-run-session xdotool unshare; do
+            PATH=$tools command -v "$t" >/dev/null || { echo "no $t in $tools"; exit 1; }
+          done
+          echo "DESKTOP_TOOLS_PATH=$tools" >> "$GITHUB_ENV"
+        fi
+    # The major version only: nixpkgs' nodejs_26 moves with each bump.
+    - if: inputs.nix != 'true'
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 26
+    - name: Allow user namespaces
+      if: inputs.userns == 'true'
+      shell: bash
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
