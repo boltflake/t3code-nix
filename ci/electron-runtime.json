@@ -3,28 +3,28 @@
     "aarch64-linux": {
       "bundled": "44.10.1",
       "choice": "nixpkgs",
-      "rev": "04906337b6d53e8bb0eaf0470ae9f070a4d4eb55",
-      "version": "44.11.3"
+      "rev": "0bb8272318b4ca41bf0edc6224df3e3e3046b70d",
+      "version": "44.11.4"
     },
     "x86_64-linux": {
       "bundled": "44.10.1",
       "choice": "nixpkgs",
-      "rev": "04906337b6d53e8bb0eaf0470ae9f070a4d4eb55",
-      "version": "44.11.3"
+      "rev": "0bb8272318b4ca41bf0edc6224df3e3e3046b70d",
+      "version": "44.11.4"
     }
   },
   "t3code-nightly": {
     "aarch64-linux": {
       "bundled": "44.10.1",
       "choice": "nixpkgs",
-      "rev": "04906337b6d53e8bb0eaf0470ae9f070a4d4eb55",
-      "version": "44.11.3"
+      "rev": "0bb8272318b4ca41bf0edc6224df3e3e3046b70d",
+      "version": "44.11.4"
     },
     "x86_64-linux": {
       "bundled": "44.10.1",
       "choice": "nixpkgs",
-      "rev": "04906337b6d53e8bb0eaf0470ae9f070a4d4eb55",
-      "version": "44.11.3"
+      "rev": "0bb8272318b4ca41bf0edc6224df3e3e3046b70d",
+      "version": "44.11.4"
     }
   }
 }

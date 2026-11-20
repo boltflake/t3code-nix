@@ -1,38 +1,38 @@
 {
   "name": "t3-nightly",
-  "version": "0.1.10-nightly.20261112.4564",
-  "tag": "v0.1.10-nightly.20261112.4564",
+  "version": "0.1.11-nightly.20261120.4979",
+  "tag": "v0.1.11-nightly.20261120.4979",
   "assets": {
     "x86_64-linux": {
-      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.10-nightly.20261112.4564/t3-0.1.10-nightly.20261112.4564-linux-x64.tar.gz",
-      "hash": "sha256-zAeG6Ph7vKiprz81K3mqL4y1vKTqXnpD/1rN/9dx5Z0=",
-      "assetId": 738061900,
-      "digest": "sha256:cc0786e8f87bbca8a9af3f352b79aa2f8cb5bca4ea5e7a43ff5acdffd771e59d"
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.11-nightly.20261120.4979/t3-0.1.11-nightly.20261120.4979-linux-x64.tar.gz",
+      "hash": "sha256-VVriI4wKWE6Pf+LovA9BlfaxG4YoWvcsIHxh5CDGrGQ=",
+      "assetId": 770751293,
+      "digest": "sha256:555ae2238c0a584e8f7fe2e8bc0f4195f6b11b86285af72c207c61e420c6ac64"
     },
     "aarch64-linux": {
-      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.10-nightly.20261112.4564/t3-0.1.10-nightly.20261112.4564-linux-arm64.tar.gz",
-      "hash": "sha256-DffCOTyPrNhr3BDCjoKVryCLxyTpPQaI1iMvB+w8x5I=",
-      "assetId": 738061916,
-      "digest": "sha256:0df7c2393c8facd86bdc10c28e8295af208bc724e93d0688d6232f07ec3cc792"
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.11-nightly.20261120.4979/t3-0.1.11-nightly.20261120.4979-linux-arm64.tar.gz",
+      "hash": "sha256-de71i6rMj2tQ3uzCmOcPOkW5+N17XXr9xSUnlz3+9Ys=",
+      "assetId": 770751288,
+      "digest": "sha256:75eef58baacc8f6b50deecc298e70f3a45b9f8dd7b5d7afdc52527973dfef58b"
     }
   },
   "licenses": {
     "LICENSE": {
-      "url": "https://raw.githubusercontent.com/pingdotgg/t3code/bc647ed53595888efacdd8ca435967d48888a952/LICENSE",
+      "url": "https://raw.githubusercontent.com/pingdotgg/t3code/59651c1761f6c63e9b6056839067066968e6a406/LICENSE",
       "hash": "sha256-k12PKvDHA/nDlRfuV8xJMLGdAtUzvpMLY/DoL5NhS0M="
     }
   },
   "browser": {
-    "version": "157.0.8103.38",
-    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/bc647ed53595888efacdd8ca435967d48888a952/apps/server/src/preview/PreviewBrowser.ts",
+    "version": "157.0.8103.78",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/59651c1761f6c63e9b6056839067066968e6a406/apps/server/src/preview/PreviewBrowser.ts",
     "assets": {
       "x86_64-linux": {
-        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/linux64/chrome-headless-shell-linux64.zip",
-        "hash": "sha256-3q//p0Zgs0hTpBGcNh/UJ6yMn8ti21HduKeXzYOkui0="
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux64/chrome-headless-shell-linux64.zip",
+        "hash": "sha256-+QMpcg+2Hlp22ptrUJtq0SpITJxd8DWUA+k1F3xtFTo="
       },
       "aarch64-linux": {
-        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/linux-arm64/chrome-headless-shell-linux-arm64.zip",
-        "hash": "sha256-ubkQpXsqFes+VQAKIzn5Opc5NKQT6/xuWFpQ7GxC/Ww="
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux-arm64/chrome-headless-shell-linux-arm64.zip",
+        "hash": "sha256-kS+/h35T3jTXs8ylEE87lWB9Qb01QSzMbNKlmf8MDb8="
       }
     }
   },
@@ -43,8 +43,13 @@
     "size": 45904544,
     "sha256": "e8c9b73c06344307d8b346e07fbe93dd88d894627854bcff31523f1ce44394fa",
     "url": "https://huggingface.co/handy-computer/whisper-tiny.en-gguf/resolve/becb8bcb804405dc97b380a523d9975888820986/whisper-tiny.en-Q8_0.gguf",
-    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/bc647ed53595888efacdd8ca435967d48888a952/apps/server/src/speech/catalog.json",
-    "checked": "https://raw.githubusercontent.com/pingdotgg/t3code/bc647ed53595888efacdd8ca435967d48888a952/apps/server/src/speech/catalog.json",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/59651c1761f6c63e9b6056839067066968e6a406/apps/server/src/speech/catalog.json",
+    "checked": "https://raw.githubusercontent.com/pingdotgg/t3code/59651c1761f6c63e9b6056839067066968e6a406/apps/server/src/speech/catalog.json",
     "fromCatalog": true
+  },
+  "electron": "44.10.1",
+  "released": {
+    "at": "2026-11-20T06:35:04.000Z",
+    "kind": "published"
   }
 }
