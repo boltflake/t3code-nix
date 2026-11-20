@@ -1,16 +1,20 @@
 {
   "name": "antigravity",
-  "version": "1.5.6",
+  "version": "1.5.13",
   "assets": {
     "x86_64-linux": {
-      "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.6-6212266538958848/linux-x64/cli_linux_x64.tar.gz",
-      "hash": "sha512-DGeCSQjK+cwxVmmYArgJfy/QLEYIrpKTyap/F+G800LEucLhWDiCU6N4BO9r2cax0lz6yjwHu7dYc3j8kYObtA==",
+      "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.13-5999302598852608/linux-x64/cli_linux_x64.tar.gz",
+      "hash": "sha512-AUs3OHcDrKsfR81TLIu2AWemo1N7D5iR3gPxsf+pYUMHvIPEsvdVEnOwh31yJxawzZ4meC9rKlBwXbTwXhjGjw==",
       "checksumSource": "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json"
     },
     "aarch64-linux": {
-      "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.6-6212266538958848/linux-arm/cli_linux_arm64.tar.gz",
-      "hash": "sha512-7RA6ni8Q2Z6vKYjSrOVf//oItvnTsil0WdxCYX36I4btmEsSMe/aTZMnmh3qq5p+Ubhe0Gk4Unhwquwhu6JyVA==",
+      "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.13-5999302598852608/linux-arm/cli_linux_arm64.tar.gz",
+      "hash": "sha512-3M6i60VQmfUXXwyHzEezj87+TLDLRN6jknRpu0u/aKw8CzD8BK/7JMF+kJWThqk8N4Xo5LixozOMpOTVe4AFew==",
       "checksumSource": "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json"
     }
+  },
+  "released": {
+    "at": "2026-11-20T05:20:25.918Z",
+    "kind": "seen"
   }
 }

@@ -1,18 +1,22 @@
 {
   "name": "grok",
-  "version": "1.0.77",
+  "version": "1.0.89",
   "assets": {
     "x86_64-linux": {
-      "url": "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-x86_64",
-      "hash": "sha256-twKVCqWCfYVeSTJ4q2IVpOD1vOtbumxiQ6n1XN0UOwo=",
-      "md5": "N4VneZg3ldpQExSxUOVH6g==",
+      "url": "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.89-linux-x86_64",
+      "hash": "sha256-o9+s5R2b3HH9Eh4Egd0C2bRqch96a4kvdWSA6WZuuh8=",
+      "md5": "6s6xNWn/RFNMNmRFvlvlIA==",
       "checksumSource": "none (downloaded)"
     },
     "aarch64-linux": {
-      "url": "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-aarch64",
-      "hash": "sha256-sw7uFKZWEk7zydqFd7Xng+8s/6vrK2ecXEljPnfu1XQ=",
-      "md5": "cehlC378Mo2VnZ2goh41LA==",
+      "url": "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.89-linux-aarch64",
+      "hash": "sha256-ZBs+UA1kINOwcReiyFfM7rgrM/S1PSOpWJW9dqR3P5Y=",
+      "md5": "WZvXiRPIjry68/sWbk1t/A==",
       "checksumSource": "none (downloaded)"
     }
+  },
+  "released": {
+    "at": "2026-11-17T17:36:02.000Z",
+    "kind": "uploaded"
   }
 }

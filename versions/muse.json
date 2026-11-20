@@ -1,16 +1,20 @@
 {
   "name": "muse",
-  "version": "1.4.15-R8339.1",
+  "version": "1.4.24-R9131.1",
   "assets": {
     "x86_64-linux": {
-      "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.15-R8339.1&file=muse-x86-linux",
-      "hash": "sha256-q+CnKHjGK1cMbu1sF8X8PFIKmQ7PBAURdBwACSMSo9U=",
-      "checksumSource": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.15-R8339.1&file=manifest.json"
+      "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.24-R9131.1&file=muse-x86-linux",
+      "hash": "sha256-11LEXc4HnuKeEYgEsJHYGsKxuJtn8xe0oWL6GvEgZGU=",
+      "checksumSource": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.24-R9131.1&file=manifest.json"
     },
     "aarch64-linux": {
-      "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.15-R8339.1&file=muse-aarch64-linux",
-      "hash": "sha256-0HYCRxFvdfPL0V6F+Xiw4BDUhGFh0RDfhxvK80a79g4=",
-      "checksumSource": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.15-R8339.1&file=manifest.json"
+      "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.24-R9131.1&file=muse-aarch64-linux",
+      "hash": "sha256-MdTB/fOC5nEbHIhU2XamCV/kdD6xeyqPmlu0Ou9brWM=",
+      "checksumSource": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.24-R9131.1&file=manifest.json"
     }
+  },
+  "released": {
+    "at": "2026-11-20T05:20:25.918Z",
+    "kind": "seen"
   }
 }

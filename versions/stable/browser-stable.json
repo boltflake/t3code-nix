@@ -1,17 +1,43 @@
 {
   "name": "browser-stable",
-  "version": "f1e5c356f35d07e7b71a6b5e6c9338e0b029e0c0",
+  "version": "3457b69ac4aba6d9ea9a743370af160fb502db29",
   "assets": {},
   "channel": "nixos-26.05",
-  "rev": "f1e5c356f35d07e7b71a6b5e6c9338e0b029e0c0",
-  "narHash": "sha256-qXFIqA6FCcx7XeDzw0ZNlkDT9UiCzrNDwK8RuU8RcHM=",
-  "chromium": "157.0.8103.50",
+  "rev": "3457b69ac4aba6d9ea9a743370af160fb502db29",
+  "narHash": "sha256-Obi0Kr71SBfU9aaDxSncVRT4wYTjLzjMyCmmuC2XGd0=",
+  "chromium": "157.0.8103.78",
   "outPaths": {
-    "x86_64-linux": "/nix/store/63yr5q25h4gc50jm3g5y80gdbw5zyg5z-ungoogled-chromium-157.0.8103.50",
-    "aarch64-linux": "/nix/store/gyv0qcgzq42w9q9izzx3xjqfg8s8rcjg-ungoogled-chromium-157.0.8103.50"
+    "x86_64-linux": "/nix/store/20q8zlays0wqw02xclaqf7dibrar8g7f-ungoogled-chromium-157.0.8103.78",
+    "aarch64-linux": "/nix/store/y3z066kvkga03gds7fbm1d399zzcd7zq-ungoogled-chromium-157.0.8103.78"
+  },
+  "browsers": {
+    "chromium": {
+      "version": "158.0.8127.36",
+      "outPaths": {
+        "x86_64-linux": "/nix/store/s86pa2r4hsjqwa6hibpyzzg5pgd9lm51-chromium-158.0.8127.36",
+        "aarch64-linux": "/nix/store/qspai0bmckcw2c2a08n18f88r7xx435i-chromium-158.0.8127.36"
+      }
+    },
+    "google-chrome": {
+      "version": "158.0.8127.36",
+      "outPaths": {
+        "x86_64-linux": "/nix/store/zfg70dkd98f280xba0hvk772is9z8066-google-chrome-158.0.8127.36",
+        "aarch64-linux": "/nix/store/m4imj8vyq9gfgvcsqvbgg3vvc8jiy2xv-google-chrome-158.0.8127.36"
+      },
+      "assets": {
+        "x86_64-linux": {
+          "url": "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_158.0.8127.36-1_amd64.deb",
+          "hash": "sha256-Rpa84AsSjzhahwui627t5haY8iN06g2OCa+KHGVD05c="
+        },
+        "aarch64-linux": {
+          "url": "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_158.0.8127.36-1_arm64.deb",
+          "hash": "sha256-4G3BbuAVDZ4t7NcJ36XE11xpWLbjWUdNburbSENJEp0="
+        }
+      }
+    }
   },
   "released": {
-    "at": "2026-11-14T06:25:46.009Z",
+    "at": "2026-11-20T05:20:25.918Z",
     "kind": "seen"
   }
 }

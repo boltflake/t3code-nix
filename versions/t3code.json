@@ -1,38 +1,38 @@
 {
   "name": "t3code",
-  "version": "0.1.9",
-  "tag": "v0.1.9",
+  "version": "0.1.10",
+  "tag": "v0.1.10",
   "assets": {
     "x86_64-linux": {
-      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.9/T3-Code-0.1.9-amd64.deb",
-      "hash": "sha256-QYx4JfcxB7e1ujurrl47SFgB3CLZ3A1RivYy95BsvdE=",
-      "assetId": 735290148,
-      "digest": "sha256:418c7825f73107b7b5ba3babae5e3b485801dc22d9dc0d518af632f7906cbdd1"
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.10/T3-Code-0.1.10-amd64.deb",
+      "hash": "sha256-wG9+7jWtDQZroCNTnEaQHS1rkSGEIHf4PTtP5/h302A=",
+      "assetId": 757185590,
+      "digest": "sha256:c06f7eee35ad0d066ba023539c46901d2d6b9121842077f83d3b4fe7f877d360"
     },
     "aarch64-linux": {
-      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.9/T3-Code-0.1.9-arm64.deb",
-      "hash": "sha256-eVmXa01/xEQ8n7dwEod01OhvFNsBBEvjaQHkiJCPO7Q=",
-      "assetId": 735290153,
-      "digest": "sha256:7959976b4d7fc4443c9fb770128774d4e86f14db01044be36901e488908f3bb4"
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.10/T3-Code-0.1.10-arm64.deb",
+      "hash": "sha256-Ix6n5iq1Epq8HbAxROjdJVCvUwkI2F873hUZ+LlrZVI=",
+      "assetId": 757185609,
+      "digest": "sha256:231ea7e62ab5129abc1db03144e8dd2550af530908d85f3bde1519f8b96b6552"
     }
   },
   "licenses": {
     "LICENSE": {
-      "url": "https://raw.githubusercontent.com/pingdotgg/t3code/24e77473ecf41bc1f7142529c7911c1c1aae1d76/LICENSE",
+      "url": "https://raw.githubusercontent.com/pingdotgg/t3code/7d32075e3757ded707914e2450c3e392a9665765/LICENSE",
       "hash": "sha256-k12PKvDHA/nDlRfuV8xJMLGdAtUzvpMLY/DoL5NhS0M="
     }
   },
   "browser": {
-    "version": "157.0.8103.38",
-    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/24e77473ecf41bc1f7142529c7911c1c1aae1d76/apps/server/src/preview/PreviewBrowser.ts",
+    "version": "157.0.8103.78",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/7d32075e3757ded707914e2450c3e392a9665765/apps/server/src/preview/PreviewBrowser.ts",
     "assets": {
       "x86_64-linux": {
-        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/linux64/chrome-headless-shell-linux64.zip",
-        "hash": "sha256-3q//p0Zgs0hTpBGcNh/UJ6yMn8ti21HduKeXzYOkui0="
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux64/chrome-headless-shell-linux64.zip",
+        "hash": "sha256-+QMpcg+2Hlp22ptrUJtq0SpITJxd8DWUA+k1F3xtFTo="
       },
       "aarch64-linux": {
-        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/linux-arm64/chrome-headless-shell-linux-arm64.zip",
-        "hash": "sha256-ubkQpXsqFes+VQAKIzn5Opc5NKQT6/xuWFpQ7GxC/Ww="
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux-arm64/chrome-headless-shell-linux-arm64.zip",
+        "hash": "sha256-kS+/h35T3jTXs8ylEE87lWB9Qb01QSzMbNKlmf8MDb8="
       }
     }
   },
@@ -43,9 +43,13 @@
     "size": 45904544,
     "sha256": "e8c9b73c06344307d8b346e07fbe93dd88d894627854bcff31523f1ce44394fa",
     "url": "https://huggingface.co/handy-computer/whisper-tiny.en-gguf/resolve/becb8bcb804405dc97b380a523d9975888820986/whisper-tiny.en-Q8_0.gguf",
-    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/24e77473ecf41bc1f7142529c7911c1c1aae1d76/apps/server/src/speech/catalog.json",
-    "checked": "https://raw.githubusercontent.com/pingdotgg/t3code/24e77473ecf41bc1f7142529c7911c1c1aae1d76/apps/server/src/speech/catalog.json",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/7d32075e3757ded707914e2450c3e392a9665765/apps/server/src/speech/catalog.json",
+    "checked": "https://raw.githubusercontent.com/pingdotgg/t3code/7d32075e3757ded707914e2450c3e392a9665765/apps/server/src/speech/catalog.json",
     "fromCatalog": true
   },
-  "electron": "44.10.1"
+  "electron": "44.10.1",
+  "released": {
+    "at": "2026-11-17T01:44:04.000Z",
+    "kind": "published"
+  }
 }

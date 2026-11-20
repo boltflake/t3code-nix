@@ -1,17 +1,43 @@
 {
   "name": "browser-unstable",
-  "version": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
+  "version": "04906337b6d53e8bb0eaf0470ae9f070a4d4eb55",
   "assets": {},
   "channel": "nixos-unstable",
-  "rev": "d4f25a3e562008648d45bcf2d70bcc7422cad84e",
-  "narHash": "sha256-x9sADJvoVG0L6RejZB+/BB4YiGZFBZrfTlhF4uBq1tQ=",
-  "chromium": "157.0.8103.50",
+  "rev": "04906337b6d53e8bb0eaf0470ae9f070a4d4eb55",
+  "narHash": "sha256-lME2lHoDHAaSHP3/okgiVoJ0icVEvsQH8LeU3We7tcc=",
+  "chromium": "157.0.8103.78",
   "outPaths": {
-    "x86_64-linux": "/nix/store/6ljywaxsnshw8qp9hpqmgplp2c92yy5j-ungoogled-chromium-157.0.8103.50",
-    "aarch64-linux": "/nix/store/7sqsb8vxrxq5s7qfsd2gyv8l4g8084zj-ungoogled-chromium-157.0.8103.50"
+    "x86_64-linux": "/nix/store/8nnhl6h7rrsmvypzrg8klawk3wvm6839-ungoogled-chromium-157.0.8103.78",
+    "aarch64-linux": "/nix/store/y7pf2kzv812gbpb2747ipbc6cpk1pcrn-ungoogled-chromium-157.0.8103.78"
+  },
+  "browsers": {
+    "chromium": {
+      "version": "157.0.8103.78",
+      "outPaths": {
+        "x86_64-linux": "/nix/store/b3xq32a3v70bq0w9r7z88d7rrpba7cq7-chromium-157.0.8103.78",
+        "aarch64-linux": "/nix/store/hkwkd6vvpahw0gg63dr3kmw171nnm48b-chromium-157.0.8103.78"
+      }
+    },
+    "google-chrome": {
+      "version": "157.0.8103.78",
+      "outPaths": {
+        "x86_64-linux": "/nix/store/mn8m5bsipl1ds8dcagdlc9m1a4c7innd-google-chrome-157.0.8103.78",
+        "aarch64-linux": "/nix/store/h7cybvzfysnnwxz5adynmmcpwqfdylzw-google-chrome-157.0.8103.78"
+      },
+      "assets": {
+        "x86_64-linux": {
+          "url": "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_157.0.8103.78-1_amd64.deb",
+          "hash": "sha256-TXQGNrXJb2h3mGAsWq1qWicPRN0C5I2wY4rneqSGexs="
+        },
+        "aarch64-linux": {
+          "url": "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_157.0.8103.78-1_arm64.deb",
+          "hash": "sha256-a+CPtilocDmsfOlm8nwsWi39HcFwe1SbNS3jNbPobdI="
+        }
+      }
+    }
   },
   "released": {
-    "at": "2026-11-14T06:25:46.009Z",
+    "at": "2026-11-20T05:20:25.918Z",
     "kind": "seen"
   }
 }
