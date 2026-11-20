@@ -1,7 +1,7 @@
 <img src="docs/header.svg" width="100%" alt="t3code-nix: T3 Code and all agent providers, packaged for Nix within minutes">
 
 <p align="center">
-  <a href="https://swsammy.github.io/t3code-nix/"><img src="docs/live-status.svg" width="560" alt="Live: the status page shows what’s shipping right now"></a>
+  <a href="https://swsammy.github.io/t3code-nix/"><img src="docs/live-status.svg" width="272" alt="Live: package status"></a>
   <br>
   <a href="https://swsammy.github.io/t3code-nix/"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fswsammy.github.io%2Ft3code-nix%2Fbadges%2Ft3code.json&query=%24.message&label=T3%20Code%20latest&color=3f6cc0&style=flat-square" alt="T3 Code on the latest channel: the version this flake ships now"></a>
   <a href="https://swsammy.github.io/t3code-nix/"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fswsammy.github.io%2Ft3code-nix%2Fbadges%2Ft3code-nightly.json&query=%24.message&label=nightly&color=6e5494&style=flat-square" alt="T3 Code on the nightly channel: the version this flake ships now"></a>
