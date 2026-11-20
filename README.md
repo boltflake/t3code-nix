@@ -1,5 +1,12 @@
 <img src="docs/header.svg" width="100%" alt="t3code-nix: T3 Code and all agent providers, packaged for Nix within minutes">
 
+<p align="center">
+  <a href="https://swsammy.github.io/t3code-nix/"><img src="docs/live-status.svg" width="560" alt="Live: the status page shows what’s shipping right now"></a>
+  <br>
+  <a href="https://swsammy.github.io/t3code-nix/"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fswsammy.github.io%2Ft3code-nix%2Fbadges%2Ft3code.json&query=%24.message&label=T3%20Code%20latest&color=3f6cc0&style=flat-square" alt="T3 Code on the latest channel: the version this flake ships now"></a>
+  <a href="https://swsammy.github.io/t3code-nix/"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fswsammy.github.io%2Ft3code-nix%2Fbadges%2Ft3code-nightly.json&query=%24.message&label=nightly&color=6e5494&style=flat-square" alt="T3 Code on the nightly channel: the version this flake ships now"></a>
+</p>
+
 This flake packages the [<img src="docs/logos/t3code.png" height="16" alt=""> T3 Code](https://github.com/pingdotgg/t3code) desktop app and CLI for x86_64 and aarch64 Linux. It includes every supported agent provider, plus a few useful agent tools. This is a community project, not affiliated with or endorsed by the T3 Code team or any provider's vendor.
 
 <img src="docs/how-updates-reach-you.svg" width="100%" alt="How an update reaches you: an upstream release, checked for every minute, then built and tested on x86_64 and aarch64, this flake updated on GitHub only if both pass, then free packages cached. On your system: update your flake input and rebuild">

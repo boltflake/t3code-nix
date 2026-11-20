@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 48" role="img" aria-labelledby="title">
+  <title id="title">Live: the status page shows what’s shipping right now</title>
+  <style>
+    :root { --bg: #f0f2f6; --edge: #d5dbe5; --ink: #1a2740; --muted: #59616e; --live: #d1242f; --chip: #ffe1e1; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #1b2028; --edge: #2c3440; --ink: #e3eaf7; --muted: #9aa3b0; --live: #ff4d4f; --chip: #3a1619; }
+    }
+    .card { fill: var(--bg); stroke: var(--edge); stroke-width: 1; }
+    .chip { fill: var(--chip); }
+    .dot { fill: var(--live); }
+    .ring { fill: none; stroke: var(--live); stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: ripple 2s ease-out infinite; }
+    .ring.late { animation-delay: 1s; }
+    .core { transform-box: fill-box; transform-origin: center; animation: beat 2s ease-in-out infinite; }
+    .live { font: 700 13px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 1.5px; fill: var(--live); }
+    .text { font: 600 16px "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: var(--ink); }
+    .sub { font: 400 16px "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: var(--muted); }
+    .arrow { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; animation: nudge 2s ease-in-out infinite; }
+    @keyframes ripple { 0% { transform: scale(1); opacity: .7; } 100% { transform: scale(2.6); opacity: 0; } }
+    @keyframes beat { 0%, 100% { transform: scale(1); } 50% { transform: scale(.82); } }
+    @keyframes nudge { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(3px); } }
+    @media (prefers-reduced-motion: reduce) { .ring, .core, .arrow { animation: none; } .ring { opacity: 0; } }
+  </style>
+  <rect class="card" x="0.5" y="0.5" width="559" height="47" rx="23.5"/>
+  <rect class="chip" x="8" y="8" width="82" height="32" rx="16"/>
+  <circle class="ring" cx="26" cy="24" r="5"/>
+  <circle class="ring late" cx="26" cy="24" r="5"/>
+  <circle class="dot core" cx="26" cy="24" r="5"/>
+  <text class="live" x="40" y="28.5">LIVE</text>
+  <text x="106" y="29.5"><tspan class="text">Status page</tspan><tspan class="sub"> · what’s shipping right now</tspan></text>
+  <path class="arrow" d="M530 19 l6 5 -6 5"/>
+</svg>
