@@ -1,8 +1,5 @@
 <img src="docs/header.svg" width="100%" alt="t3code-nix: T3 Code and all agent providers, packaged for Nix within minutes">
 
-> [!WARNING]
-> **Status: not live yet.** Until this banner is gone, do not use this flake!
-
 This flake packages the [<img src="docs/logos/t3code.png" height="16" alt=""> T3 Code](https://github.com/pingdotgg/t3code) desktop app and CLI for x86_64 and aarch64 Linux. It includes every supported agent provider, plus a few useful agent tools. This is a community project, not affiliated with or endorsed by the T3 Code team or any provider's vendor.
 
 <img src="docs/how-updates-reach-you.svg" width="100%" alt="How an update reaches you: an upstream release, checked for every minute, then built and tested on x86_64 and aarch64, this flake updated on GitHub only if both pass, then free packages cached. On your system: update your flake input and rebuild">
