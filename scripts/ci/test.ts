@@ -7,7 +7,9 @@
 // that part of the suite (scripts/lib/parts.ts: desktop, rest1 or rest2),
 // its result files named SET-SYSTEM-PART (merge-parts.ts joins them).
 // The flake is evaluated once: one `nix eval` gives every check's output and
-// .drv. All checks then build from their .drv paths in one `nix build
+// .drv (in a part, two: the names, then its own checks' and the few it
+// reads; evaluateChecks).
+// All checks then build from their .drv paths in one `nix build
 // --keep-going` (builds in parallel, no second evaluation: with a candidate
 // applied the tree is dirty, so Nix's evaluation cache doesn't help). Checks
 // whose output didn't appear are built once more before they count, so one
@@ -365,6 +367,26 @@ export const failedOnNotes = (strict: boolean, names: string[], out: (name: stri
 export const smokeRuns = (part: string | undefined, ran: boolean, desktop: boolean) =>
   part === undefined || part === "desktop" ? ran : desktop;
 
+/** The checks a part reads, evaluated (all of them without a part): its
+ * own, the desktop apps' (the Electron evidence lists them, and finds which
+ * failures depend on them) and, in rest2, those default.nix is compared
+ * with. Only its own are built. */
+export function evaluateChecks(system: string, part: (typeof TEST_PARTS)[number] | undefined, nix = run): Record<string, Check> {
+  if (part === undefined) return JSON.parse(nix("nix", ["eval", "--json", `.#checks.${system}`, "--apply", CHECKS_APPLY]));
+  const all: string[] = JSON.parse(nix("nix", ["eval", "--json", `.#checks.${system}`, "--apply", "builtins.attrNames"]));
+  const apps = new Set(CHANNELS.flatMap((ch) => [...ROLES[ch].auto, ROLES[ch].forced, ROLES[ch].bundled, ...Object.keys(ROLES[ch].smokes)]));
+  const wanted = all.filter((n) => testPart(n) === part || apps.has(n) || (part === "rest2" && NO_FLAKES_ATTRS.includes(n)));
+  // Plain names go into the expression quoted, with no escaping; anything
+  // else (never the case today) evaluates everything instead.
+  const odd = wanted.filter((n) => !/^[a-z0-9][a-z0-9-]*$/.test(n));
+  if (odd.length) {
+    console.log(`evaluating every check: ${odd.join(", ")} can't be named in the expression`);
+    return evaluateChecks(system, undefined, nix);
+  }
+  return JSON.parse(nix("nix", ["eval", "--json", `.#checks.${system}`, "--apply",
+    `cs: (${CHECKS_APPLY}) { inherit (cs) ${wanted.map((n) => `"${n}"`).join(" ")}; }`]));
+}
+
 export async function main(argv: string[]): Promise<void> {
   const positional = argv.filter((a) => !a.startsWith("--"));
   if (positional.length !== 3) {
@@ -375,7 +397,7 @@ export async function main(argv: string[]): Promise<void> {
   mkdirSync(outDir, { recursive: true });
 
   const part = partArg(argv, TEST_PARTS);
-  const checks: Record<string, Check> = JSON.parse(run("nix", ["eval", "--json", `.#checks.${system}`, "--apply", CHECKS_APPLY]));
+  const checks = evaluateChecks(system, part);
   const has = (p: (typeof TEST_PARTS)[number]) => part === undefined || part === p;
   const names = checkNames(Object.keys(checks), set).filter((n) => part === undefined || testPart(n) === part);
   const firstFail = buildChecks(names, checks);

@@ -25,9 +25,10 @@
 //   stableNext  the same for .stableNextChecks (with --next: the sets that can
 //               publish, and branch CI); its smokes only when the snapshot
 //               would move
-//   drvs, base  a digest of the stable group's derivations, and of the base
-//               commit's (so a set whose stable derivations are main's is
-//               evidence about main's stable set)
+//   drvs, base  a digest of the stable group's derivations, and (for a
+//               candidate, not branch CI) of the base commit's (so a set
+//               whose stable derivations are main's is evidence about main's
+//               stable set)
 //   move        with --next and without --branch, when the snapshot would
 //               move and stable-next passed: the equivalence step (every
 //               default check the same on the moved tree, each
@@ -384,7 +385,9 @@ export async function main(argv: string[]): Promise<void> {
       result.stable = stable.group;
       result.drvs = digest(stable.drvs);
     }
-    if (stable && set !== "main") {
+    // Only a candidate's (the update runs): on a branch, HEAD is the tested
+    // commit itself, and nothing reads branch CI's base.
+    if (stable && set !== "main" && !argv.includes("--branch")) {
       const base = unpack(run("git", ["rev-parse", "HEAD^{tree}"]));
       try {
         const b = nix.drvs(base, groupAttr(system, "stable-"));

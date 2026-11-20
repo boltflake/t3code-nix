@@ -5,7 +5,8 @@
 // runs' narrowing), they run everything.
 //
 // - The default suite (test.ts) in three: `desktop` (the T3 Code desktop
-//   apps, `t3code*`, and their desktop smokes), `rest1` (the agent-browser
+//   apps, `t3code*`, their desktop smokes, and `module-eval`, the costliest
+//   evaluation), `rest1` (the agent-browser
 //   checks, `agent-browser*`, and the agent-browser smoke, which needs them
 //   built) and `rest2` (also the evaluations without flakes, lazily and of
 //   NixOS stable, which build nothing, and agent-browser's optional
@@ -29,6 +30,10 @@ const half = (name: string) => createHash("sha256").update(name).digest()[0] % 2
 export function testPart(name: string): TestPart {
   if (name.startsWith("t3code")) return "desktop";
   if (name.startsWith("agent-browser")) return "rest1";
+  // The costliest evaluation (NixOS configurations): each part evaluates
+  // only its own checks, and desktop's are otherwise few (its time goes on
+  // the smokes, which evaluate nothing).
+  if (name === "module-eval") return "desktop";
   return half(name) === 0 ? "rest1" : "rest2";
 }
 

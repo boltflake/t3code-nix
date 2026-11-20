@@ -16,7 +16,7 @@ import * as issues from "../scripts/ci/issues.ts";
 import { branchElectronReported, desktopFailures, electronEvidence, type ElectronEvidence, type SmokeState } from "../scripts/ci/test.ts";
 import { mergeElectron } from "../scripts/ci/merge-parts.ts";
 import { TEST_PARTS, testPart } from "../scripts/lib/parts.ts";
-import { activeChannels, canonical, FALLBACK_FILE, generated, pairOf, runtimeList } from "../scripts/lib/electron-fallback.ts";
+import { activeChannels, canonical, CHANNELS, FALLBACK_FILE, generated, pairOf, ROLES, runtimeList } from "../scripts/lib/electron-fallback.ts";
 import { electronFallbackChecks, obs, Report } from "../scripts/update.ts";
 import { SYSTEMS } from "../scripts/lib/util.ts";
 import { Fake } from "./fake-gh.ts";
@@ -168,11 +168,17 @@ test("the evidence: per-system runtime lists, what passed, provisional failures,
   const rest = electronEvidence(checks, [], {}, tmp, () => [], new Set(["codex", "preview-browser-pin"]));
   assert.deepEqual(rest.channels.t3code!.passed, []);
   // The update runs' parts, merged (merge-parts.ts), give the whole suite's
-  // evidence: each part's failures, its own checks, the smokes in desktop.
+  // evidence: each part evaluates only its own checks and the desktop apps'
+  // (evaluateChecks), with its own failures and the smokes in desktop. A
+  // rest part's failure that builds on a desktop app (preview-browser-pin)
+  // still depends on it.
   const notRun = Object.fromEntries(Object.keys(smokes).map((n) => [n, "not-run" as SmokeState]));
+  const apps = new Set(CHANNELS.flatMap((ch) => [...ROLES[ch].auto, ROLES[ch].forced, ROLES[ch].bundled, ...Object.keys(ROLES[ch].smokes)]));
+  assert.notEqual(testPart("preview-browser-pin"), "desktop");
   const parts = TEST_PARTS.map((part) => {
     const names = Object.keys(checks).filter((n) => testPart(n) === part);
-    return electronEvidence(checks, failed.filter((f) => names.includes(f) || (part === "desktop" && f in smokes)),
+    const evaluated = Object.fromEntries(Object.entries(checks).filter(([n]) => names.includes(n) || apps.has(n)));
+    return electronEvidence(evaluated, failed.filter((f) => names.includes(f) || (part === "desktop" && f in smokes)),
       part === "desktop" ? smokes : notRun, tmp, (drv) => (drv === "/d/p.drv" ? ["/d/p.drv", "/d/w.drv"] : [drv]), new Set(names));
   });
   const merged = mergeElectron(parts);

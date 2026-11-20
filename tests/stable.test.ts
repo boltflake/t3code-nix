@@ -427,6 +427,7 @@ test("branch CI: a check main can't evaluate doesn't make every failure the bran
   const r = JSON.parse(readFileSync("out/stable-branch-x86_64-linux.json", "utf8"));
   assert.ok(r.stable.failed.includes("stable-agent-browser") && r.stable.failed.includes("stable-unit"), JSON.stringify(r.stable));
   assert.deepEqual(r.branch, []);
+  assert.equal(r.base, undefined, "no base in branch CI: HEAD is the tested commit");
   // A check that evaluates on main but not on the branch still counts.
   fakeNix();
   const [drvs, one] = [stable.nix.drvs, stable.nix.one];

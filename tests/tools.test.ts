@@ -105,14 +105,19 @@ function runTest(desktop = false, part?: string, extra: string[] = []): { result
   const state = join(tmp, "state");
   mkdirSync(bin);
   mkdirSync(state);
-  const names = ["a", "b", "c", "codex", "fx", "pi", "t3code", "t3code-electron-bundled", "t3code-nightly", "t3code-unwrapped"];
+  const names = ["a", "agent-browser", "b", "c", "codex", "fx", "pi", "t3code", "t3code-electron-bundled", "t3code-nightly", "t3code-unwrapped"];
   const evaled = JSON.stringify(Object.fromEntries(names.map((n) => [n, { out: `/nix/store/${n}`, drv: `/nix/store/${n}.drv` }])));
   writeFileSync(join(bin, "nix"), `#!/bin/sh
 state=${state}
 case "$1" in
   # The stable part of default-nix-no-flakes (both sides unevaluable: nothing to compare).
   eval) case " $* " in *" --raw "*) ls "${join(tmp, "out")}"/candidate-${SYS}*.json >/dev/null 2>&1 && touch "$state/raw-after-result"; exit 1 ;; esac
-    echo x >> "$state/evals"; echo '${evaled}' ;;
+    # A part asks for the names first, then only its checks.
+    case " $* " in *" builtins.attrNames "*) echo '${JSON.stringify(names)}'; exit 0 ;; esac
+    echo x >> "$state/evals"
+    case " $* " in *"inherit (cs)"*) for a; do last=$a; done
+      ${process.execPath} -e 'const want = [...process.argv[1].matchAll(/"([a-z0-9-]+)"/g)].map((m) => m[1]); const all = JSON.parse(process.argv[2]); console.log(JSON.stringify(Object.fromEntries(Object.entries(all).filter(([n]) => want.includes(n)))))' "$last" '${evaled}' ;;
+    *) echo '${evaled}' ;; esac ;;
   build)
     shift
     echo "$*" >> "$state/builds"
@@ -121,7 +126,7 @@ case "$1" in
         -*) ;;
         /nix/store/*.drv^\*) name=\$(basename "\${arg%.drv^\*}")
           case "$name" in
-            a|codex|fx|t3code|t3code-electron-bundled|t3code-unwrapped) touch "$state/$name" ;;
+            a|agent-browser|codex|fx|t3code|t3code-electron-bundled|t3code-unwrapped) touch "$state/$name" ;;
             b) if [ -e "$state/b-tried" ]; then touch "$state/b"; else touch "$state/b-tried"; fi ;;
           esac ;;
         *) echo "unexpected build argument $arg" >&2; exit 2 ;;
@@ -138,7 +143,7 @@ esac
   // default-nix-no-flakes's stable part and default-nix-lazy, which list nothing here.
   // The flake's own derivation for each attribute (default-nix-no-flakes);
   // none for the stable set, which the fake flake can't evaluate either.
-  writeFileSync(join(bin, "nix-instantiate"), '#!/bin/sh\nfor a; do last=$a; done\ncase "$last" in stable.*) exit 1 ;; esac\necho "/nix/store/$last.drv"\n');
+  writeFileSync(join(bin, "nix-instantiate"), `#!/bin/sh\nfor a; do last=$a; done\necho "$last" >> "${state}/instantiated"\ncase "$last" in stable.*) exit 1 ;; esac\necho "/nix/store/$last.drv"\n`);
   writeFileSync(join(bin, "nix-env"), `#!/bin/sh\necho "$*" >> "${state}/nix-env"\n`);
   chmodSync(join(bin, "nix"), 0o755);
   chmodSync(join(bin, "nix-store"), 0o755);
@@ -165,7 +170,7 @@ esac
 test("test.ts: failures are built once more, and only they are", () => {
   const { result, manifest, builds, evals } = runTest();
   // One path-info for the built allowlisted packages (pi failed to build).
-  assert.deepEqual(readFileSync(join(tmp, "state", "path-info"), "utf8").trim(), "path-info --json /nix/store/t3code-unwrapped /nix/store/codex /nix/store/fx");
+  assert.deepEqual(readFileSync(join(tmp, "state", "path-info"), "utf8").trim(), "path-info --json /nix/store/t3code-unwrapped /nix/store/codex /nix/store/fx /nix/store/agent-browser");
   assert.deepEqual(manifest, { codex: { path: "/nix/store/codex", narHash: "sha256-c" }, fx: { path: "/nix/store/fx", narHash: "sha256-f" } });
   const { electron, nixCalls, ...rest } = result;
   assert.deepEqual(rest, { set: "candidate", system: SYS, passed: false, failed: ["c", "pi", "t3code-nightly"], checked: [], notes: [] });
@@ -187,7 +192,7 @@ test("test.ts: failures are built once more, and only they are", () => {
   // One evaluation; both builds from the .drv paths it gave.
   assert.equal(evals, 1);
   assert.equal(builds.length, 2);
-  assert.match(builds[0], /^--no-link --keep-going -L \/nix\/store\/a\.drv\^\* \/nix\/store\/b\.drv\^\* \/nix\/store\/c\.drv\^\* /);
+  assert.match(builds[0], /^--no-link --keep-going -L \/nix\/store\/a\.drv\^\* \/nix\/store\/agent-browser\.drv\^\* \/nix\/store\/b\.drv\^\* \/nix\/store\/c\.drv\^\* /);
   assert.doesNotMatch(builds[1], /\/a\.drv/);
   assert.equal(builds[1], "--no-link --keep-going -L /nix/store/b.drv^* /nix/store/c.drv^* /nix/store/pi.drv^* /nix/store/t3code-nightly.drv^*");
   // The stable comparison ran once the default's result was saved.
@@ -215,14 +220,19 @@ test("test.ts: a part builds only its own checks and runs only its own smokes an
   // evaluations. (The shares, by the name's hash, written out here.)
   ({ result, builds, manifest } = runTest(true, "rest2", ["--agent-browser"]));
   assert.deepEqual(built(builds), ["codex", "fx", "pi"]);
+  // default.nix is compared with the flake on t3code (another part's check,
+  // evaluated here too); nothing silently skipped.
+  const compared = readFileSync(join(tmp, "state", "instantiated"), "utf8").split("\n");
+  assert.ok(compared.includes("t3code") && compared.includes("agent-browser"), compared.join(" "));
   assert.deepEqual(Object.keys(manifest), ["codex", "fx"], "the cache manifest holds the part's own built packages");
   assert.ok(!result.failed.some((f: string) => /smoke/.test(f)), "no smoke in rest2");
   assert.ok(existsSync(join(tmp, "state", "nix-env")) && existsSync(join(tmp, "state", "raw-after-result")));
   rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true });
-  // rest1: the other share and the agent-browser smoke (its checks aren't
+  // rest1: the other share and the agent-browser smoke (agent-browser's
+  // fake output isn't a real one, and agent-browser-stable-chromium isn't
   // in this fake set, so both smokes fail without starting).
   ({ result, builds, manifest } = runTest(true, "rest1", ["--agent-browser"]));
-  assert.deepEqual(built(builds), ["a", "b", "c"]);
+  assert.deepEqual(built(builds), ["a", "agent-browser", "b", "c"]);
   assert.deepEqual(manifest, {}, "none of rest2's packages");
   // The desktop apps aren't rest1's: it vouches for none of them.
   assert.deepEqual(Object.values(result.electron.channels).flatMap((c: any) => c.passed), []);
@@ -1113,4 +1123,42 @@ test("smokeRuns: the desktop smoke's verdict, in the part that runs it; the run'
   assert.deepEqual([smokeRuns(undefined, true, false), smokeRuns(undefined, false, true)], [true, false]);
   assert.deepEqual([smokeRuns("desktop", true, true), smokeRuns("desktop", false, true)], [true, false]);
   assert.deepEqual([smokeRuns("rest1", false, true), smokeRuns("rest2", false, false), smokeRuns("rest1", true, false)], [true, false, false]);
+});
+
+test("evaluateChecks: a part evaluates its own checks, the desktop apps' and (rest2) those default.nix is compared with", async () => {
+  const { evaluateChecks, NO_FLAKES_ATTRS } = await import("../scripts/ci/test.ts");
+  const { testPart } = await import("../scripts/lib/parts.ts");
+  const all = ["a", "b", "c", "codex", "fx", "agent-browser", "module-eval", "unit", "t3code", "t3code-unwrapped", "t3code-electron-bundled", "t3code-nightly", "t3code-free"];
+  const asked: string[][] = [];
+  let names = all;
+  const nix = (_cmd: string, args: string[]) => {
+    asked.push(args);
+    const apply = args[args.length - 1];
+    if (apply === "builtins.attrNames") return JSON.stringify(names);
+    // The part's names, quoted in the expression's `inherit (cs)`.
+    const m = /\{ inherit \(cs\) (.*); \}$/.exec(apply);
+    const wanted: string[] = m ? m[1].split(" ").map((s) => JSON.parse(s)) : names;
+    return JSON.stringify(Object.fromEntries(wanted.map((n) => [n, { out: n, drv: n }])));
+  };
+  const apps = ["t3code", "t3code-unwrapped", "t3code-electron-bundled", "t3code-nightly"];
+  for (const part of ["desktop", "rest1", "rest2"] as const) {
+    asked.length = 0;
+    const got = Object.keys(evaluateChecks("x86_64-linux", part, nix)).sort();
+    const want = all.filter((n) => testPart(n) === part || apps.includes(n) || (part === "rest2" && NO_FLAKES_ATTRS.includes(n))).sort();
+    assert.deepEqual(got, want, part);
+    assert.equal(asked.length, 2, "the names, then the part's checks");
+  }
+  // module-eval (the costliest evaluation) is desktop's; t3code-free isn't an app the evidence lists.
+  assert.ok(Object.keys(evaluateChecks("x86_64-linux", "desktop", nix)).includes("module-eval"));
+  assert.ok(!Object.keys(evaluateChecks("x86_64-linux", "rest1", nix)).includes("t3code-free"));
+  // The whole suite: one evaluation of everything.
+  asked.length = 0;
+  assert.deepEqual(Object.keys(evaluateChecks("x86_64-linux", undefined, nix)).sort(), [...all].sort());
+  assert.equal(asked.length, 1);
+  // A name that isn't plain (it would need escaping in the expression): the
+  // part evaluates everything instead.
+  names = [...all, "t3code-${x}"];
+  asked.length = 0;
+  assert.deepEqual(Object.keys(evaluateChecks("x86_64-linux", "desktop", nix)).sort(), [...names].sort());
+  assert.ok(!asked.some((a) => a.some((x) => x.includes("inherit (cs)"))));
 });

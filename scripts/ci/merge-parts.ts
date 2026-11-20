@@ -46,8 +46,9 @@ function readPart(path: string): any {
 }
 
 /** Each part's Electron evidence (test.ts) as one: every channel's lists
- * are the same in every part (each evaluates the whole suite); what passed
- * is what any part saw pass, as each vouches only for the checks it ran. */
+ * are the same in every part (each evaluates the desktop apps' checks,
+ * test.ts's evaluateChecks); what passed is what any part saw pass, as each
+ * vouches only for the checks it ran. */
 export function mergeElectron(es: any[]): any {
   const present = es.filter((e) => e && typeof e === "object");
   if (!present.length) return undefined;
