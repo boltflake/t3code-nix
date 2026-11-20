@@ -55,9 +55,9 @@ variable `CACHIX_CACHE` (the cache's name) is set, and needs the secret
 
 ## When an issue opens
 
-The update runs and the hourly health check open issues and close them by
-themselves; every kind is listed in `PROBLEMS` in `scripts/ci/issues.ts`.
-These five need explaining:
+The update runs, the hourly health check and the weekly tooling check
+(`tooling.yml`) open issues and close them by themselves; every kind is
+listed in `PROBLEMS` in `scripts/ci/issues.ts`. These six need explaining:
 
 | Issue | What it means | What to do | It closes when |
 | --- | --- | --- | --- |
@@ -66,6 +66,7 @@ These five need explaining:
 | `integrity` | A pin's file changed without a new version | Nothing when the vendor's checksum vouches for the new file, which is then pinned; for grok, which publishes none, check the file, then re-pin it | `main` pins the new file |
 | `guard-review` | A release's help doesn't match the lists in `lib/guard.nix` | Update the lists | A later published run matches |
 | `watcher-auth` | The watcher's GitHub token stopped working (opened by the hourly health check) | Rotate the token | The watcher reads GitHub again |
+| `tooling-outdated` | The CI's own tooling has a newer version that nothing else updates (weekly): a GitHub Ubuntu runner image, a Node LTS line, or the pinned actionlint knowing the labels `.github/actionlint.yaml` names | Do what it says, as an ordinary change | The weekly check finds it current |
 
 **`bump-waiting`.** The nixpkgs bump, the NixOS stable pin
 (`versions/nixpkgs-stable.json`) and the browser pins each wait while

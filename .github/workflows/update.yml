@@ -919,11 +919,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # The only writer of issues here; shares its concurrency group with
-  # health.yml's issue job (dry runs use their own group). GitHub keeps one
-  # waiting job per group: with these two writers none is dropped. Should one
-  # ever be (a re-run of failed jobs outside the update group would be a third
-  # writer), its problems come back on the next run; its evidence too: a pin
+  # The main writer of issues here; shares its concurrency group with
+  # variant-issues above, health.yml's issue job and tooling.yml's weekly
+  # check (dry runs use their own group). GitHub keeps one waiting job per
+  # group, so when more than two are due at once a waiting one is dropped (a
+  # dropped tooling check shows as cancelled and runs the next week). A
+  # dropped writer's problems come back on its next run; its evidence too: a pin
   # on main is a resolver `pass`, the nixpkgs revision on main an `on-main`,
   # and a lost cache-ok comes again with the next publish. A failed or
   # cancelled job anywhere becomes update-failed; otherwise the run counts as

@@ -41,6 +41,7 @@ import { client, REPO, type Client, type Release } from "./gh.ts";
 export const SCHEDULED: [string, string][] = [
   ["health.yml", "backstop-enabled"],
   ["pages.yml", "pages-enabled"],
+  ["tooling.yml", "tooling-enabled"],
 ];
 
 /** {version: first commit on ref's history where `path` had it}. */

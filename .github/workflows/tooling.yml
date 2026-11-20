@@ -1,0 +1,67 @@
+# Weekly: is the project's own CI tooling still the newest? What no update
+# covers (scripts/ci/tooling.ts): GitHub's Ubuntu runner images, Node's LTS
+# line, and when the actionlint workaround can go. Each finding is an issue
+# that closes once the check finds it current. An item it can't decide is
+# named in the summary, writes nothing, and fails the run (after the
+# issues), so a check that stops working shows. The flake's input moves with
+# the update runs, the pinned actions with Dependabot. Only once updates are
+# on (UPDATES), like the other scheduled workflows.
+name: tooling
+on:
+  schedule:
+    - cron: "43 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: vars.UPDATES == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    # Issue writers one at a time (update.yml's issues job, health.yml).
+    concurrency:
+      group: issues
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # Main as it is now: a re-run of an old run mustn't report old pins.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # The pinned actionlint (the flake's nixpkgs) on the workflows with an
+      # empty config: passing means .github/actionlint.yaml can go; failing
+      # on runner labels only means it can't yet.
+      - name: Does actionlint know the labels yet?
+        run: |
+          [ -e .github/actionlint.yaml ] || exit 0
+          : > "$RUNNER_TEMP/empty.yaml"
+          # The workflows the unit check lints (lib/checks.nix).
+          mapfile -t workflows < <(find .github/workflows -name '*.yml' -o -name '*.yaml')
+          out="$RUNNER_TEMP/probe.out" code=0
+          nix run --inputs-from . nixpkgs#actionlint -- -config-file "$RUNNER_TEMP/empty.yaml" -shellcheck= "${workflows[@]}" > "$out" 2>&1 || code=$?
+          labels=$(grep -c '\[runner-label\]$' "$out" || true)
+          others=$(grep '^\.github/workflows/' "$out" | grep -vc '\[runner-label\]$' || true)
+          if [ $code = 0 ]; then echo known
+          elif [ $code = 1 ] && [ "$labels" -gt 0 ] && [ "$others" = 0 ]; then echo unknown
+          else cat "$out" >&2; echo error
+          fi > "$RUNNER_TEMP/probe.txt"
+      - name: Check the tooling and write issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          obs="$RUNNER_TEMP/observations-tooling.json"
+          node scripts/ci/tooling.ts "$RUNNER_TEMP/probe.txt" > "$obs"
+          # As escaped text: the details quote upstream.
+          { echo '<pre>'
+            jq -r '.observations[] | "\(.kind) \(.package // "") \(.version // "") \(.detail)" | @html' "$obs"
+            jq -r '.unknown[] | "unknown \(.item): \(.why)" | @html' "$obs"
+            echo '</pre>'; } >> "$GITHUB_STEP_SUMMARY"
+          node scripts/ci/issues.ts "$obs"
+          jq -e '.unknown == []' "$obs" > /dev/null || { echo "::error::an item couldn't be checked; see the summary"; exit 1; }

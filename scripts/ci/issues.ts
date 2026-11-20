@@ -1,6 +1,6 @@
 // Turn a run's observations into GitHub issues (the issues job: the only
-// writer of issues besides health.yml's issue step; they share a concurrency
-// group).
+// writer of issues besides health.yml's issue step and tooling.yml; they
+// share a concurrency group).
 //
 //   node issues.ts OBSERVATIONS_JSON... [--run-ok]
 //
@@ -37,7 +37,9 @@ export const PROBLEMS = new Set(["test-failed", "combination-failed", "integrity
   "watcher-stalled", "watcher-auth", "update-lag", "guard-review", "bump-waiting",
   "stable-behind", "stable-broken", "stable-unfetchable", "electron-fallback", "downgrade",
   // agent-browser's optional browsers (lib/browserpins.ts, ci/variants.ts).
-  "browser-waiting", "browser-failed"]);
+  "browser-waiting", "browser-failed",
+  // The project's own CI tooling (tooling.ts, weekly).
+  "tooling-outdated"]);
 
 // Positive evidence: the problem kinds an observation closes, and the fields
 // that must match. Evidence only closes what it proves. A resolver `pass`
@@ -103,6 +105,8 @@ export const CLOSES: Record<string, Rule | Rule[]> = {
   // (lib/browserpins.ts): ends its three-day wait.
   "browsers-ready": { kinds: new Set(["browser-waiting"]), match: ["package"] },
   "browser-ok": { kinds: new Set(["browser-failed"]), match: ["package", "channel"], allSystems: true },
+  // The item (runner-image, nodejs, actionlint-labels) is current again.
+  "tooling-ok": { kinds: new Set(["tooling-outdated"]), match: ["package"] },
 };
 // A resolver `pass` closes test failures of its package too (see above).
 const CLOSED_BY_PASS = new Set(["test-failed", "combination-failed"]);
@@ -238,7 +242,7 @@ function render(o: Observation, meta: Meta): string {
   if (o.channel) who += ` (${o.channel})`;
   return [`<!-- t3code-nix: ${sorted(meta)} -->`,
     `**${o.kind}** for ${who}${o.version ? `, version ${inline(o.version)}` : ""}`, "", shown(o.detail ?? ""), "",
-    "Opened and closed by t3code-nix's update workflow."].join("\n");
+    o.kind === "tooling-outdated" ? "Opened and closed by t3code-nix's weekly tooling check." : "Opened and closed by t3code-nix's update workflow."].join("\n");
 }
 /** A downgrade's body: the move, the version it waits for, what to expect. */
 function renderDowngrade(o: Observation, meta: Meta): string {
