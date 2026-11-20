@@ -53,7 +53,7 @@ jobs:
   # watcher can publish before the repository is set up; a dry run always.
   resolve:
     if: inputs.dry_run || vars.UPDATES == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Setup takes a few minutes; update.ts's first pass and the nixpkgs bump
     # end within 20 minutes of its start (BUMP_BY_MS), and a retry pass reads
     # upstream again (about 18 minutes at worst, every source slow): 45; and
@@ -213,20 +213,20 @@ jobs:
         # each stable part's stable and stable-next groups apart. merge-parts.ts
         # writes the whole-suite results the later jobs read.
         include:
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: desktop, kind: test, part: desktop }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: rest1, kind: test, part: rest1 }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: rest2, kind: test, part: rest2 }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: a, kind: stable, part: a, group: stable }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: a-next, kind: stable, part: a, group: next }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: b, kind: stable, part: b, group: stable }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: b-next, kind: stable, part: b, group: next }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: desktop, kind: test, part: desktop }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: rest1, kind: test, part: rest1 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: rest2, kind: test, part: rest2 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: a, kind: stable, part: a, group: stable }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: a-next, kind: stable, part: a, group: next }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: b, kind: stable, part: b, group: stable }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: b-next, kind: stable, part: b, group: next }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: desktop, kind: test, part: desktop }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: rest1, kind: test, part: rest1 }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: rest2, kind: test, part: rest2 }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: a, kind: stable, part: a, group: stable }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: a-next, kind: stable, part: a, group: next }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: b, kind: stable, part: b, group: stable }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: b-next, kind: stable, part: b, group: next }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: desktop, kind: test, part: desktop }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: rest1, kind: test, part: rest1 }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: rest2, kind: test, part: rest2 }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: a, kind: stable, part: a, group: stable }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: a-next, kind: stable, part: a, group: next }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: b, kind: stable, part: b, group: stable }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: b-next, kind: stable, part: b, group: next }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     steps:
@@ -298,7 +298,7 @@ jobs:
   narrow-plan:
     needs: [resolve, test]
     if: always() && needs.resolve.outputs.inputs != '' && needs.test.result != 'cancelled'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       failed: ${{ steps.plan.outputs.failed }}
@@ -351,7 +351,7 @@ jobs:
       matrix:
         set: ${{ fromJSON(needs.narrow-plan.outputs.sets) }}
         system: [x86_64-linux, aarch64-linux]
-    runs-on: ${{ matrix.system == 'aarch64-linux' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ${{ matrix.system == 'aarch64-linux' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -417,7 +417,7 @@ jobs:
   decide:
     needs: [resolve, narrow-plan, narrow]
     if: always() && needs.narrow-plan.outputs.failed == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       final: ${{ steps.decide.outputs.final }}
@@ -474,20 +474,20 @@ jobs:
         # each stable part's stable and stable-next groups apart. merge-parts.ts
         # writes the whole-suite results the later jobs read.
         include:
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: desktop, kind: test, part: desktop }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: rest1, kind: test, part: rest1 }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: rest2, kind: test, part: rest2 }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: a, kind: stable, part: a, group: stable }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: a-next, kind: stable, part: a, group: next }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: b, kind: stable, part: b, group: stable }
-          - { system: x86_64-linux, runner: ubuntu-24.04, leg: b-next, kind: stable, part: b, group: next }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: desktop, kind: test, part: desktop }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: rest1, kind: test, part: rest1 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: rest2, kind: test, part: rest2 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: a, kind: stable, part: a, group: stable }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: a-next, kind: stable, part: a, group: next }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: b, kind: stable, part: b, group: stable }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: b-next, kind: stable, part: b, group: next }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: desktop, kind: test, part: desktop }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: rest1, kind: test, part: rest1 }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: rest2, kind: test, part: rest2 }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: a, kind: stable, part: a, group: stable }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: a-next, kind: stable, part: a, group: next }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: b, kind: stable, part: b, group: stable }
+          - { system: x86_64-linux, runner: ubuntu-26.04, leg: b-next, kind: stable, part: b, group: next }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: desktop, kind: test, part: desktop }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: rest1, kind: test, part: rest1 }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: rest2, kind: test, part: rest2 }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: a, kind: stable, part: a, group: stable }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: a-next, kind: stable, part: a, group: next }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: b, kind: stable, part: b, group: stable }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, leg: b-next, kind: stable, part: b, group: next }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     steps:
@@ -568,7 +568,7 @@ jobs:
     if: >-
       always() && needs.narrow-plan.result == 'success'
       && (needs.narrow-plan.outputs.failed != 'true' || needs.decide.outputs.final != '')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: write
@@ -682,8 +682,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { system: x86_64-linux, runner: ubuntu-24.04 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+          - { system: x86_64-linux, runner: ubuntu-26.04 }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -753,8 +753,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { system: x86_64-linux, runner: ubuntu-24.04 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+          - { system: x86_64-linux, runner: ubuntu-26.04 }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
     steps:
@@ -820,7 +820,7 @@ jobs:
     if: >-
       always() && needs.variants.result != 'skipped'
       && (inputs.dry_run || github.ref == 'refs/heads/main')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     concurrency:
       group: ${{ inputs.dry_run && format('issues-dry-{0}', github.ref) || 'issues' }}
@@ -884,7 +884,7 @@ jobs:
   reconcile:
     needs: [resolve, publish]
     if: always() && needs.resolve.outputs.current == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     concurrency:
       group: ${{ inputs.dry_run && format('reconcile-dry-{0}', github.ref) || 'reconcile' }}
@@ -936,7 +936,7 @@ jobs:
     # run reports only from main (a branch's run is stopped at the gate). A
     # resolve skipped because updates aren't on yet reports nothing.
     if: always() && needs.resolve.result != 'skipped' && (inputs.dry_run || github.ref == 'refs/heads/main') && (needs.resolve.result != 'success' || needs.resolve.outputs.current == 'true')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     concurrency:
       group: ${{ inputs.dry_run && format('issues-dry-{0}', github.ref) || 'issues' }}

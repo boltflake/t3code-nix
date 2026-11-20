@@ -51,7 +51,7 @@ concurrency:
 
 jobs:
   live:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -79,7 +79,7 @@ jobs:
     needs: live
     # Also when the live reads failed: the page is built without them.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     outputs:
       deploy: ${{ steps.build.outputs.deploy }}
@@ -145,7 +145,7 @@ jobs:
     needs: build
     # Not success(): that would also need `live`, which may have failed.
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.build.outputs.deploy == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       pages: write

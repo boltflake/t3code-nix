@@ -2463,7 +2463,7 @@ test("workflow: branch CI runs the suite and NixOS stable in parts, and `tested`
   // (scripts/lib/parts.ts), and fail-fast off.
   const { TEST_PARTS, STABLE_PARTS } = await import("../scripts/lib/parts.ts");
   const legs = (body: string) => [...(matrix(body) ?? "").matchAll(/- \{ system: (\S+), runner: (\S+), part: (\S+) \}/g)].map((m) => m.slice(1).join(" ")).sort();
-  const expected = (parts: readonly string[]) => [["x86_64-linux", "ubuntu-24.04"], ["aarch64-linux", "ubuntu-24.04-arm"]]
+  const expected = (parts: readonly string[]) => [["x86_64-linux", "ubuntu-26.04"], ["aarch64-linux", "ubuntu-26.04-arm"]]
     .flatMap(([s, r]) => parts.map((p) => `${s} ${r} ${p}`)).sort();
   assert.deepEqual(legs(test), expected(TEST_PARTS));
   assert.deepEqual(legs(stable), expected(STABLE_PARTS));
@@ -2610,7 +2610,7 @@ test("workflow: update runs test and final in parts, merged for every job that r
   const wf = readFileSync(join(import.meta.dirname, "..", ".github", "workflows", "update.yml"), "utf8");
   const job = (name: string) => wf.slice(wf.indexOf(`\n  ${name}:\n`) + 1).split(/\n  [a-z-]+:\n/)[0];
   const legsOf = (body: string) => [...body.matchAll(/^ {10}- \{ (system: .*) \}$/gm)].map((m) => m[1]).sort();
-  const expected = [["x86_64-linux", "ubuntu-24.04"], ["aarch64-linux", "ubuntu-24.04-arm"]].flatMap(([s, r]) => [
+  const expected = [["x86_64-linux", "ubuntu-26.04"], ["aarch64-linux", "ubuntu-26.04-arm"]].flatMap(([s, r]) => [
     ...TEST_PARTS.map((p) => `system: ${s}, runner: ${r}, leg: ${p}, kind: test, part: ${p}`),
     ...STABLE_PARTS.flatMap((p) => [`system: ${s}, runner: ${r}, leg: ${p}, kind: stable, part: ${p}, group: stable`,
       `system: ${s}, runner: ${r}, leg: ${p}-next, kind: stable, part: ${p}, group: next`]),

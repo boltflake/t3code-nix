@@ -5781,6 +5781,7 @@ let
     mkdir $out/.github && cp -r ${../.github/workflows} $out/.github/workflows
     cp -r ${../.github/actions} $out/.github/actions
     cp ${../.github/zizmor.yml} $out/.github/zizmor.yml
+    cp ${../.github/actionlint.yaml} $out/.github/actionlint.yaml
     cp ${../.github/dependabot.yml} $out/.github/dependabot.yml
     # test.ts's branch-only check names are checked against it.
     mkdir $out/lib && cp ${./checks.nix} $out/lib/checks.nix
@@ -5826,7 +5827,8 @@ let
         found=$(find .github/actions -name action.yml -o -name action.yaml)
         [ -n "$found" ] || { echo "no composite actions found"; exit 1; }
         mapfile -t actions <<< "$found"
-        actionlint "''${workflows[@]}"
+        # Its config names the runner labels it doesn't know yet.
+        actionlint -config-file .github/actionlint.yaml "''${workflows[@]}"
         zizmor "''${workflows[@]}" "''${actions[@]}" .github/dependabot.yml
         found=$(find scripts/ci -name '*.sh')
         [ -n "$found" ] || { echo "no scripts/ci/*.sh found"; exit 1; }
@@ -5840,8 +5842,9 @@ let
           > $bad/expr.yml
         printf 'on: issues\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "''${{ github.event.issue.title }}"\n' \
           > $bad/title.yml
-        code=0 && actionlint $bad/expr.yml || code=$?
+        code=0 && actionlint $bad/expr.yml > $bad/expr.out || code=$?
         [ $code = 1 ] || { echo "actionlint: exit $code, not 1, on a broken expression"; exit 1; }
+        grep -qF '[expression]' $bad/expr.out || { echo "actionlint didn't report the expression:"; cat $bad/expr.out; exit 1; }
         code=0 && zizmor $bad/title.yml || code=$?
         [ $code = 14 ] || { echo "zizmor: exit $code, not 14, on a template injection"; exit 1; }
         touch $out

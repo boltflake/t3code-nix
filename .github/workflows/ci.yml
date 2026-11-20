@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   one-commit:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,12 +46,12 @@ jobs:
         include:
           # The suite in three parts (scripts/lib/parts.ts), each on a runner
           # of its own, so a push waits for the slowest part.
-          - { system: x86_64-linux, runner: ubuntu-24.04, part: desktop }
-          - { system: x86_64-linux, runner: ubuntu-24.04, part: rest1 }
-          - { system: x86_64-linux, runner: ubuntu-24.04, part: rest2 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, part: desktop }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, part: rest1 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, part: rest2 }
+          - { system: x86_64-linux, runner: ubuntu-26.04, part: desktop }
+          - { system: x86_64-linux, runner: ubuntu-26.04, part: rest1 }
+          - { system: x86_64-linux, runner: ubuntu-26.04, part: rest2 }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, part: desktop }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, part: rest1 }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, part: rest2 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     steps:
@@ -127,10 +127,10 @@ jobs:
         include:
           # Both groups in two parts (scripts/lib/parts.ts): a with the runner
           # smokes and the check on the default checks, b the other checks.
-          - { system: x86_64-linux, runner: ubuntu-24.04, part: a }
-          - { system: x86_64-linux, runner: ubuntu-24.04, part: b }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, part: a }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm, part: b }
+          - { system: x86_64-linux, runner: ubuntu-26.04, part: a }
+          - { system: x86_64-linux, runner: ubuntu-26.04, part: b }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, part: a }
+          - { system: aarch64-linux, runner: ubuntu-26.04-arm, part: b }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 65
     steps:
@@ -171,7 +171,7 @@ jobs:
   tested:
     needs: [one-commit, test, stable]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       statuses: write

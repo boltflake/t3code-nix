@@ -32,7 +32,7 @@ jobs:
     # Not before the first deploy by hand has set the repository up, and
     # only from main: a dispatch on another branch must not deploy it.
     if: github.ref == 'refs/heads/main' && vars.WATCHER_URL != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' && vars.WATCHER_KV_ID != ''
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

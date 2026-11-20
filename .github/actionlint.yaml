@@ -1,0 +1,6 @@
+# GitHub's Ubuntu 26.04 runners, which actionlint (1.7.12, the newest) doesn't
+# list yet. Remove these once a release knows them.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+    - ubuntu-26.04-arm
