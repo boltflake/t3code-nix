@@ -92,10 +92,6 @@ export interface Client {
   createRelease(r: { tag: string; target: string; name: string; body: string }): Promise<Release>;
   /** Mark this release latest, changing nothing else about it. */
   markLatest(r: Release): Promise<void>;
-  /** Actions caches under `ref` whose keys start with `prefix`. */
-  caches(prefix: string, ref: string): Promise<{ id: number; key: string; lastAccessed: string }[]>;
-  /** `key` is for the dry run's record only. */
-  deleteCache(id: number, key: string): Promise<void>;
   /** Writes recorded by a dry run, or null. */
   actions?: Record<string, unknown>[] | null;
 }
@@ -341,19 +337,6 @@ export class GitHub implements Client {
   async markLatest(r: Release) {
     await this.api("PATCH", `releases/${r.id}`, { make_latest: "true" });
   }
-  // Not a plain list: {total_count, actions_caches}.
-  async caches(prefix: string, ref: string) {
-    const out: { id: number; key: string; lastAccessed: string }[] = [];
-    const q = `key=${encodeURIComponent(prefix)}&ref=${encodeURIComponent(ref)}`;
-    for (let page = 1; ; page++) {
-      const batch: any[] = (await this.api("GET", `actions/caches?${q}&per_page=100&page=${page}`)).actions_caches ?? [];
-      out.push(...batch.map((c) => ({ id: c.id, key: c.key, lastAccessed: c.last_accessed_at })));
-      if (batch.length < 100) return out;
-    }
-  }
-  async deleteCache(id: number, _key: string) {
-    await this.api("DELETE", `actions/caches/${id}`);
-  }
 }
 
 export class DryRun implements Client {
@@ -371,7 +354,6 @@ export class DryRun implements Client {
   async runCompleted(id: string) { return this.reader ? this.reader.runCompleted(id) : false; }
   async updateRuns() { return this.reader ? this.reader.updateRuns() : []; }
   async refs(prefix: string) { return this.reader ? this.reader.refs(prefix) : {}; }
-  async caches(prefix: string, ref: string) { return this.reader ? this.reader.caches(prefix, ref) : []; }
   async releases() { return this.reader ? this.reader.releases() : []; }
   async latestRelease() { return this.reader ? this.reader.latestRelease() : null; }
   async releaseByTag(tag: string) { return this.reader ? this.reader.releaseByTag(tag) : null; }
@@ -393,7 +375,6 @@ export class DryRun implements Client {
   async enableWorkflow(workflow: string) { this.record("enable_workflow", { workflow }); }
   async createRef(ref: string, sha: string) { this.record("create_ref", { ref, sha }); }
   async deleteRef(ref: string) { this.record("delete_ref", { ref }); }
-  async deleteCache(id: number, key: string) { this.record("delete_cache", { id, key }); }
 }
 
 /** The client for this run: DryRun when DRY_RUN=true, else the real API. */

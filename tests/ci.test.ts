@@ -19,7 +19,7 @@ import * as issues from "../scripts/ci/issues.ts";
 import * as narrow from "../scripts/ci/narrow.ts";
 import { publish, latestChannelTag } from "../scripts/ci/publish.ts";
 import { moved } from "../scripts/lib/snapshot.ts";
-import { firstPublications, purgeTestCaches, reconcile, stableNote } from "../scripts/ci/reconcile.ts";
+import { firstPublications, reconcile, stableNote } from "../scripts/ci/reconcile.ts";
 import { obs } from "../scripts/update.ts";
 import { writeHeld } from "../scripts/ci/held.ts";
 import { SYSTEMS } from "../scripts/lib/util.ts";
@@ -508,7 +508,7 @@ test("workflow: a hanging test fails its step, below the job's limit (a cancelle
     const jobLimit = Number(/\n    timeout-minutes: (\d+)/.exec(body)?.[1]);
     const stepLimit = Number(new RegExp(`- name: ${step.replace(/[$.{}]/g, "\\$&")}\n(?:\\s+#.*\n)*\\s+timeout-minutes: (\\d+)`).exec(body)?.[1]);
     // Every step limit in the job (the test step and the NixOS-stable step),
-    // with 20 minutes left for setup, the store cache and the uploads.
+    // with 20 minutes left for setup and the uploads.
     const steps = [...body.matchAll(/\n {8}timeout-minutes: (\d+)/g)].map((m) => Number(m[1]));
     const sum = steps.reduce((a, b) => a + b, 0);
     assert.ok(steps.length >= 2, `${job}: the test and NixOS-stable steps have limits`);
@@ -1319,7 +1319,6 @@ test("releases: the CLI writes its observations and fails when a release write f
         if (u.pathname.includes("/matching-refs/tags")) return Response.json(${JSON.stringify([{ ref: "refs/tags/t3code-v0.1.9", object: { sha: repo.head() } }])});
         if (u.pathname.includes("/matching-refs/")) return Response.json([]);
         if (u.pathname.includes("/actions/workflows/")) return Response.json({ state: "active" });
-        if (u.pathname.endsWith("/actions/caches")) { (await import("node:fs")).appendFileSync(${JSON.stringify(join(tmp, "purged"))}, "listed\\n"); return Response.json({ actions_caches: [] }); }
         return Response.json({});
       };`);
     try {
@@ -1333,10 +1332,9 @@ test("releases: the CLI writes its observations and fails when a release write f
   assert.equal(dry.status, 0);
   assert.deepEqual(JSON.parse(dry.stdout).observations.map((o: any) => o.kind), ["tag-ok"]);
   assert.deepEqual(JSON.parse(dry.stdout).dryRun.map((a: any) => a.action), ["create_release", "mark_latest"]);
-  const failed = cli({ DRY_RUN: "false", GITHUB_REF: "refs/heads/main" }, true);
+  const failed = cli({ DRY_RUN: "false" }, true);
   assert.equal(failed.status, 1);
   assert.deepEqual(JSON.parse(failed.stdout).observations.map((o: any) => o.kind), ["tag-ok"], "observations still written");
-  assert.match(readFileSync(join(tmp, "purged"), "utf8"), /listed/, "and the cache purge still ran");
 });
 
 test("reconcile: a disabled pages.yml is enabled too", async () => {
@@ -1349,34 +1347,6 @@ test("reconcile: a disabled pages.yml is enabled too", async () => {
   const o = await reconcile(gh, wf);
   assert.equal(gh.workflows["pages.yml"], "active");
   assert.ok(o.some((x) => x.kind === "pages-enabled"));
-});
-
-test("purgeTestCaches: per system, all but the most recently used cache under this ref go", async () => {
-  const gh = new Fake();
-  const c = (id: number, key: string, lastAccessed: string, ref = "refs/heads/main") => ({ id, key, ref, lastAccessed });
-  gh.cacheList = [
-    c(1, "nix-test-x86_64-linux-aaa", "2026-11-10T00:00:00Z"),
-    c(2, "nix-test-x86_64-linux-bbb", "2026-11-12T00:00:00Z"),
-    c(3, "nix-test-x86_64-linux-ccc", "2026-11-11T00:00:00Z"),
-    c(4, "nix-test-aarch64-linux-aaa", "2026-11-09T00:00:00Z"),
-    c(5, "nix-test-x86_64-linux-ddd", "2026-11-01T00:00:00Z", "refs/heads/other"),
-    c(6, "something-else", "2026-11-01T00:00:00Z"),
-  ];
-  await purgeTestCaches(gh, "refs/heads/main");
-  assert.deepEqual(gh.cacheList.map((x) => x.id), [2, 4, 5, 6]);
-
-  // A dry run records the deletes instead.
-  const dry = new DryRun(gh);
-  gh.cacheList.push(c(7, "nix-test-aarch64-linux-new", "2026-11-13T00:00:00Z"));
-  await purgeTestCaches(dry, "refs/heads/main");
-  assert.deepEqual(dry.actions, [{ action: "delete_cache", id: 4, key: "nix-test-aarch64-linux-aaa" }]);
-  assert.equal(gh.cacheList.length, 5);
-
-  // Housekeeping: a failure is logged, not raised.
-  const logged: string[] = [];
-  gh.caches = async () => { throw new Error("HTTP 403"); };
-  await purgeTestCaches(gh, "refs/heads/main", (m) => logged.push(m));
-  assert.match(logged[0], /^::warning::couldn't purge old test caches: HTTP 403/);
 });
 
 test("gate: only .github/ and scripts/ changes make a definition stale", () => {
@@ -2503,15 +2473,9 @@ test("workflow: branch CI runs the suite and NixOS stable in parts, and `tested`
   for (const job of [test, stable]) assert.match(job, /uses: actions\/checkout@[0-9a-f]{40} # .*\n\s+with:\n\s+fetch-depth: 2\n\s+persist-credentials: false\n/);
   assert.match(stable, /uses: \.\/\.github\/actions\/setup\n\s+with:\n\s+userns: true\n/);
   assert.doesNotMatch(stable, /desktop-tools/, "stable.ts builds its smokes' tools itself");
-  // The same store cache as `test`, restored only, after setup (it needs
-  // setup's Nix) and before stable.ts.
-  const cache = (body: string) => /uses: nix-community\/cache-nix-action@.*\n\s+with:\n((?:\s+[a-z-]+: .*\n)+)/.exec(body)?.[1];
-  assert.equal(cache(stable), cache(test));
-  assert.match(cache(stable) ?? "", /primary-key: nix-test-\$\{\{ matrix\.system \}\}-\$\{\{ hashFiles\('flake\.lock', 'pkgs\/\*\*', 'lib\/\*\*'\) \}\}\n/);
-  assert.match(cache(stable) ?? "", /restore-prefixes-first-match: nix-test-\$\{\{ matrix\.system \}\}-\n/);
-  assert.match(cache(stable) ?? "", /save: false/);
+  // No Nix store cache in either job: builds start from scratch.
+  for (const job of [test, stable]) assert.doesNotMatch(job, /cache-nix-action/);
   const at = (needle: string) => stable.indexOf(needle);
-  assert.ok(at("actions/setup") < at("cache-nix-action@") && at("cache-nix-action@") < at("node scripts/ci/stable.ts"), "setup, the cache, then stable.ts");
   // The step as it was, with its limit; the job leaves 20 minutes over it.
   const step = stable.slice(at("- name: NixOS stable")).split(/\n      - /)[0];
   assert.match(step, /^- name: NixOS stable\n\s+timeout-minutes: 45\n\s+run: \|\n/);
@@ -2639,4 +2603,43 @@ test("workflow: branch CI runs the variants only when what they're built or run 
   assert.match(src, /const save = \(\) => writeJson\(outFile, \{ results, nixCalls \}\);/);
   const imports = [...src.matchAll(/from "\.\.?\/([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(imports.sort(), ["agent-browser-smoke.ts", "lib/util.ts", "stable.ts", "update.ts"].sort());
+});
+
+test("workflow: update runs test and final in parts, merged for every job that reads the results; no store cache", async () => {
+  const { TEST_PARTS, STABLE_PARTS } = await import("../scripts/lib/parts.ts");
+  const wf = readFileSync(join(import.meta.dirname, "..", ".github", "workflows", "update.yml"), "utf8");
+  const job = (name: string) => wf.slice(wf.indexOf(`\n  ${name}:\n`) + 1).split(/\n  [a-z-]+:\n/)[0];
+  const legsOf = (body: string) => [...body.matchAll(/^ {10}- \{ (system: .*) \}$/gm)].map((m) => m[1]).sort();
+  const expected = [["x86_64-linux", "ubuntu-24.04"], ["aarch64-linux", "ubuntu-24.04-arm"]].flatMap(([s, r]) => [
+    ...TEST_PARTS.map((p) => `system: ${s}, runner: ${r}, leg: ${p}, kind: test, part: ${p}`),
+    ...STABLE_PARTS.flatMap((p) => [`system: ${s}, runner: ${r}, leg: ${p}, kind: stable, part: ${p}, group: stable`,
+      `system: ${s}, runner: ${r}, leg: ${p}-next, kind: stable, part: ${p}, group: next`]),
+  ]).sort();
+  for (const [name, set] of [["test", "candidate"], ["final", "final"]]) {
+    const body = job(name);
+    assert.deepEqual(legsOf(body), expected, name);
+    assert.match(body, /\n      fail-fast: false\n/);
+    assert.match(body, /node scripts\/ci\/test\.ts \S+ \$\{\{ matrix\.system \}\} .* --part=\$\{\{ matrix\.part \}\}\n/);
+    assert.match(body, /- name: Test the (final )?candidate\n(?:\s+#.*\n)*\s+timeout-minutes: \d+\n\s+if: matrix\.kind == 'test'\n/);
+    assert.match(body, /if: \$\{\{ !cancelled\(\) && matrix\.kind == 'stable' \}\}/);
+    assert.match(body, /\n {10}tree=\$\(node scripts\/ci\/candidate\.ts tree "\$C"[^\n]*\)\n {10}node scripts\/ci\/stable\.ts \S+ \$\{\{ matrix\.system \}\} "\$R" --next --tree="\$tree" \\\n\s+--part=\$\{\{ matrix\.part \}\} --group=\$\{\{ matrix\.group \}\}\n/);
+    assert.match(body, /- name: Apply the (final )?candidate\n\s+if: matrix\.kind == 'test'\n/);
+    // The tree before the tests: a step that ends after them still leaves it.
+    assert.ok(body.indexOf(`> "$R/tree-part-${set}-`) > 0 && body.indexOf(`> "$R/tree-part-${set}-`) < body.indexOf("node scripts/ci/test.ts "), name);
+    assert.match(body, new RegExp(`name: results-${set}-\\$\\{\\{ matrix\\.system \\}\\}-\\$\\{\\{ matrix\\.leg \\}\\}\\n`));
+    assert.match(body, /desktop-tools: \$\{\{ needs\.resolve\.outputs\.desktop != '' && matrix\.leg == 'desktop' \}\}/);
+  }
+  // Every job that reads the parts' results merges them first, after setup
+  // (Node) and the download.
+  for (const name of ["narrow-plan", "decide", "publish", "cache"]) {
+    const body = job(name);
+    const at = (s: string) => body.indexOf(s);
+    assert.ok(at("download-artifact@") >= 0 && at("download-artifact@") < at("./.github/actions/setup")
+      && at("./.github/actions/setup") < at('node scripts/ci/merge-parts.ts "$RUNNER_TEMP/results"'), name);
+  }
+  assert.match(job("cache"), /pattern: results-\$\{\{ needs\.publish\.outputs\.set \}\}-\$\{\{ matrix\.system \}\}\*\n/);
+  // Builds start from scratch everywhere: no Nix store cache.
+  for (const f of ["update.yml", "ci.yml"]) {
+    assert.doesNotMatch(readFileSync(join(import.meta.dirname, "..", ".github", "workflows", f), "utf8"), /cache-nix-action/, f);
+  }
 });

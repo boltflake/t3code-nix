@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromeLike, plan, unfreeNames } from "../scripts/ci/cache.ts";
-import { agentBrowserFailures, desktopFailures, noFlakesFailures } from "../scripts/ci/test.ts";
+import { agentBrowserFailures, desktopFailures, noFlakesFailures, smokeRuns } from "../scripts/ci/test.ts";
 import { GitHub } from "../scripts/ci/gh.ts";
 import { assess, CRON_KEYS } from "../scripts/ci/health.ts";
 import { groupAlive, stopGroup } from "../scripts/lib/proc.ts";
@@ -192,6 +192,11 @@ test("test.ts: failures are built once more, and only they are", () => {
   assert.equal(builds[1], "--no-link --keep-going -L /nix/store/b.drv^* /nix/store/c.drv^* /nix/store/pi.drv^* /nix/store/t3code-nightly.drv^*");
   // The stable comparison ran once the default's result was saved.
   assert.ok(existsSync(join(tmp, "state", "raw-after-result")));
+  // The manifest is saved before the result, so a result always has its
+  // manifest beside it (the cache job needs both).
+  const src = readFileSync(join(import.meta.dirname, "..", "scripts", "ci", "test.ts"), "utf8");
+  const manifestAt = src.indexOf("rewriteJson(join(outDir, `manifest-${set}-${system}${suffix}.json`), manifest);");
+  assert.ok(manifestAt > 0 && manifestAt < src.indexOf("\n  write();\n"), "manifest, then the result");
   // default-nix-lazy listed default.nix (from a copy) without flakes.
   assert.match(readFileSync(join(tmp, "state", "nix-env"), "utf8"), /^--option experimental-features {2}-qa -f \/.*\/default\.nix --argstr system x86_64-linux\n$/);
 });
@@ -347,13 +352,6 @@ test("gh: lists every page, drops pull requests, and sends the token", async () 
       const jobs = u.searchParams.get("filter") === "all" ? all : all.filter((j) => j.run_attempt === last);
       return Response.json({ total_count: jobs.length, jobs });
     }
-    if (u.pathname.endsWith("/actions/caches") && init.method === "GET") {
-      const page = Number(u.searchParams.get("page"));
-      const actions_caches = page === 1
-        ? Array.from({ length: 100 }, (_, i) => ({ id: i + 1, key: `nix-test-x86_64-linux-${i}`, last_accessed_at: "2026-11-13T01:02:03.123456789Z" }))
-        : [{ id: 101, key: "nix-test-x86_64-linux-last", last_accessed_at: "2026-11-12T00:00:00Z" }];
-      return Response.json({ total_count: 101, actions_caches });
-    }
     return Response.json({ number: 7 });
   }) as typeof fetch;
   try {
@@ -389,15 +387,6 @@ test("gh: lists every page, drops pull requests, and sends the token", async () 
     // ended after run 5 (still in progress here) was made.
     assert.equal(seen.length, asked + 4, "no jobs looked up for other old runs");
 
-    const caches = await gh.caches("nix-test-x86_64-linux-", "refs/heads/main");
-    assert.equal(caches.length, 101);
-    assert.deepEqual(caches.at(-1), { id: 101, key: "nix-test-x86_64-linux-last", lastAccessed: "2026-11-12T00:00:00Z" });
-    const listed = new URL(seen.filter((x) => x.url.includes("/actions/caches"))[0].url);
-    assert.deepEqual([listed.searchParams.get("key"), listed.searchParams.get("ref"), listed.searchParams.get("page")],
-      ["nix-test-x86_64-linux-", "refs/heads/main", "1"]);
-    assert.ok(Number.isFinite(Date.parse(caches[0].lastAccessed)));
-    await gh.deleteCache(7, "nix-test-x86_64-linux-6");
-    assert.deepEqual([seen.at(-1)!.method, seen.at(-1)!.url], ["DELETE", "https://api.github.com/repos/o/r/actions/caches/7"]);
   } finally {
     globalThis.fetch = real;
   }
@@ -1119,3 +1108,9 @@ test("desktop smoke: the folder dialog step fails without the bridge, without a 
   }
 });
 
+
+test("smokeRuns: the desktop smoke's verdict, in the part that runs it; the run's --desktop elsewhere", () => {
+  assert.deepEqual([smokeRuns(undefined, true, false), smokeRuns(undefined, false, true)], [true, false]);
+  assert.deepEqual([smokeRuns("desktop", true, true), smokeRuns("desktop", false, true)], [true, false]);
+  assert.deepEqual([smokeRuns("rest1", false, true), smokeRuns("rest2", false, false), smokeRuns("rest1", true, false)], [true, false, false]);
+});

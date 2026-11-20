@@ -70,18 +70,6 @@ jobs:
         with:
           userns: true
           desktop-tools: true
-      # update.yml's test-job store cache, restored before the suite's builds
-      # (the action needs the Nix that setup installs, so setup's own Node
-      # comes first, as in update.yml). Restore only: a branch's cache would
-      # help only that branch and use up the repo's 10 GB. Restoring here is
-      # fine: branch CI runs vendor binaries at the same trust level as
-      # update.yml's test jobs, and the cache job, which pushes to Cachix,
-      # never restores a store cache.
-      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-test-${{ matrix.system }}-${{ hashFiles('flake.lock', 'pkgs/**', 'lib/**') }}
-          restore-prefixes-first-match: nix-test-${{ matrix.system }}-
-          save: false
       # The desktop smoke's tools (setup's desktop-tools) for this step only.
       # A guard check's note fails the suite only when this commit changes
       # lib/guard.nix's lists: one main already has (a release shipped with
@@ -91,10 +79,10 @@ jobs:
           git diff --quiet HEAD~1 HEAD -- lib/guard.nix || strict=(--strict-guards)
           PATH="$DESKTOP_TOOLS_PATH:$PATH" node scripts/ci/test.ts branch ${{ matrix.system }} results --desktop --agent-browser --part=${{ matrix.part }} "${strict[@]}"
       # agent-browser's optional browsers (scripts/ci/variants.ts), only when
-      # this commit changes what they're built or run from (the globs below,
-      # like the store cache's key). A failure fails the branch only when the
-      # branch made it fail (HEAD~1's same variant passes, gives no result,
-      # or doesn't exist); otherwise it's reported here.
+      # this commit changes what they're built or run from (the globs
+      # below). A failure fails the branch only when the branch made it fail
+      # (HEAD~1's same variant passes, gives no result, or doesn't exist);
+      # otherwise it's reported here.
       - name: agent-browser's optional browsers
         timeout-minutes: 60
         run: |
@@ -160,14 +148,6 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           userns: true
-      # main's update-run test-job cache, as in `test` (restore only). It's
-      # saved after update.yml's test job has run stable.ts too, so it holds
-      # whichever stable paths survived its trim.
-      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-test-${{ matrix.system }}-${{ hashFiles('flake.lock', 'pkgs/**', 'lib/**') }}
-          restore-prefixes-first-match: nix-test-${{ matrix.system }}-
-          save: false
       - name: NixOS stable
         timeout-minutes: 45
         run: |

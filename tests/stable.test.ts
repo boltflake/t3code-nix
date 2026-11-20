@@ -755,3 +755,72 @@ test("a \"not applicable\" twin keeps its marker on the one-at-a-time path, and 
   assert.equal((await stable.runGroup(tmp, "x86_64-linux", "stable-", false, "a")).group.notApplicable, undefined);
   assert.deepEqual((await stable.runGroup(tmp, "x86_64-linux", "stable-", false, "b")).group.notApplicable, ["stable-noread"]);
 });
+
+test("groupArg: one group per job, with --part and --next; given once", () => {
+  assert.equal(stable.groupArg(["--next", "--part=a"]), undefined);
+  assert.equal(stable.groupArg(["--next", "--part=a", "--group=stable"]), "stable");
+  assert.equal(stable.groupArg(["--next", "--part=b", "--group=next"]), "next");
+  assert.throws(() => stable.groupArg(["--next", "--group=next"]), /needs --part and --next/);
+  assert.throws(() => stable.groupArg(["--part=a", "--group=stable"]), /needs --part and --next/);
+  assert.throws(() => stable.groupArg(["--next", "--part=a", "--group=both"]), /stable or next/);
+  assert.throws(() => stable.groupArg(["--next", "--part=a", "--group=equivalence"]), /stable or next/);
+  assert.throws(() => stable.groupArg(["--next", "--part=a", "--group=stable", "--group=next"]), /once/);
+  assert.throws(() => stable.groupArg(["--next", "--part=a", "--group"]), /once/);
+  assert.throws(() => stable.groupArg(["--next", "--part=a", "--group=next", "--branch"]), /not --branch/);
+});
+
+test("main --group: a part's stable group, or its stable-next, alone; part a's stable-next runs the equivalence step", async () => {
+  commit(base);
+  commit({ "versions/codex.json": pin("codex", "2.0.1") }); // behind
+  fakeNix();
+  const built: string[][] = [];
+  const build = stable.nix.build;
+  stable.nix.build = (checks, names) => (built.push(names), build(checks, names));
+  let smoked = 0;
+  stable.smokes.desktop = async () => (smoked++, true);
+  stable.smokes.agentBrowser = async () => (smoked++, true);
+  const run = async (args: string[], file: string) => {
+    rmSync("out", { recursive: true, force: true });
+    built.length = 0; smoked = 0;
+    await stable.main(["candidate", "x86_64-linux", "out", "--next", ...args]);
+    return JSON.parse(readFileSync(`out/${file}`, "utf8"));
+  };
+  // The stable group of part a: no stable-next, no move.
+  const s = await run(["--part=a", "--group=stable"], "stable-candidate-x86_64-linux-a.json");
+  assert.deepEqual(s.stable, { complete: true, failed: [] });
+  assert.equal(s.stableNext, undefined);
+  assert.equal(s.move, undefined);
+  assert.ok(built.flat().every((n) => n.startsWith("stable-") && !n.startsWith("stable-next-")), JSON.stringify(built));
+  assert.ok(smoked > 0, "part a's runner smokes");
+  // Part b: no smokes in either group, and its stable-next tries no move.
+  await run(["--part=b", "--group=stable"], "stable-candidate-x86_64-linux-b.json");
+  assert.equal(smoked, 0);
+  const nb = await run(["--part=b", "--group=next"], "stable-candidate-x86_64-linux-b-next.json");
+  assert.equal(smoked, 0);
+  assert.equal(nb.move, undefined);
+  assert.deepEqual([nb.tree, nb.behind], [s.tree, s.behind]);
+  assert.deepEqual([nb.drvs, nb.base, nb.stable], [undefined, undefined, undefined], "the stable group's evaluations are the stable jobs'");
+  // Part a's stable-next: nothing of the stable group built, its smokes (as
+  // it's behind), then the equivalence step, which goes as far as its cache
+  // comparison (this fake Nix can't answer it).
+  const bin = mkdtempSync(join(tmpdir(), "failing-nix-"));
+  const path = process.env.PATH;
+  try {
+    writeFileSync(join(bin, "nix"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    process.env.PATH = `${bin}:${path}`;
+    await assert.rejects(run(["--part=a", "--group=next"], "stable-candidate-x86_64-linux-a-next.json"), /Command failed: nix derivation show/);
+    // The step failed after the group passed: the group's result stands, with no move.
+    const left = JSON.parse(readFileSync("out/stable-candidate-x86_64-linux-a-next.json", "utf8"));
+    assert.deepEqual([left.stableNext, left.move], [{ complete: true, failed: [] }, undefined]);
+    assert.ok(built.length > 0 && built.flat().every((n) => n.startsWith("stable-next-")), JSON.stringify(built));
+    assert.ok(smoked > 0, "stable-next's smokes in part a, as it's behind");
+  } finally {
+    process.env.PATH = path;
+    rmSync(bin, { recursive: true, force: true });
+  }
+  // Not behind: part a's stable-next tries no move.
+  commit(base);
+  const na = await run(["--part=a", "--group=next"], "stable-candidate-x86_64-linux-a-next.json");
+  assert.deepEqual([na.behind, na.move, na.stable], [false, undefined, undefined]);
+  assert.deepEqual(na.stableNext, { complete: true, failed: [] });
+});

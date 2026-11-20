@@ -14,6 +14,8 @@ import * as candidate from "../scripts/ci/candidate.ts";
 import * as narrow from "../scripts/ci/narrow.ts";
 import * as issues from "../scripts/ci/issues.ts";
 import { branchElectronReported, desktopFailures, electronEvidence, type ElectronEvidence, type SmokeState } from "../scripts/ci/test.ts";
+import { mergeElectron } from "../scripts/ci/merge-parts.ts";
+import { TEST_PARTS, testPart } from "../scripts/lib/parts.ts";
 import { activeChannels, canonical, FALLBACK_FILE, generated, pairOf, runtimeList } from "../scripts/lib/electron-fallback.ts";
 import { electronFallbackChecks, obs, Report } from "../scripts/update.ts";
 import { SYSTEMS } from "../scripts/lib/util.ts";
@@ -165,6 +167,18 @@ test("the evidence: per-system runtime lists, what passed, provisional failures,
   // of the apps, so none passed, whatever the failures say.
   const rest = electronEvidence(checks, [], {}, tmp, () => [], new Set(["codex", "preview-browser-pin"]));
   assert.deepEqual(rest.channels.t3code!.passed, []);
+  // The update runs' parts, merged (merge-parts.ts), give the whole suite's
+  // evidence: each part's failures, its own checks, the smokes in desktop.
+  const notRun = Object.fromEntries(Object.keys(smokes).map((n) => [n, "not-run" as SmokeState]));
+  const parts = TEST_PARTS.map((part) => {
+    const names = Object.keys(checks).filter((n) => testPart(n) === part);
+    return electronEvidence(checks, failed.filter((f) => names.includes(f) || (part === "desktop" && f in smokes)),
+      part === "desktop" ? smokes : notRun, tmp, (drv) => (drv === "/d/p.drv" ? ["/d/p.drv", "/d/w.drv"] : [drv]), new Set(names));
+  });
+  const merged = mergeElectron(parts);
+  const sorted = (ev: any) => Object.fromEntries(Object.entries(ev.channels).map(([c, x]: [string, any]) => [c, { ...x, passed: [...x.passed].sort() }]));
+  assert.deepEqual(sorted(merged), sorted(e));
+  assert.deepEqual([merged.dependsOn, merged.smokes, merged.smokeRan], [e.dependsOn, e.smokes, e.smokeRan]);
 });
 
 test("branch CI: a runtime failure under an active entry is reported unless the branch changed it and the parent passes", async () => {

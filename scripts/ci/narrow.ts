@@ -10,8 +10,9 @@
 //                                                     JSON {ok, tree, observations, guard, move}
 //
 // Result files are RESULTS_DIR/<set>-<system>.json ({set, system, passed,
-// failed, checked, notes}); test.ts also writes manifest-*.json and tree-*.txt there, which
-// are not results. A set passes only when it passed on every system in
+// failed, checked, notes}); beside them, manifest-*.json (test.ts) and
+// tree-*.txt (the workflow, or merge-parts.ts from the parts'), which are not
+// results. A set passes only when it passed on every system in
 // SYSTEMS: a missing result is a failure, never a pass.
 //
 // Rules (plan, "Update, test, publish", job 3):

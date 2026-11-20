@@ -198,23 +198,35 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # The full suite on the whole candidate, per architecture. No secrets, no
-  # write permissions: this is where vendor binaries run outside the sandbox.
-  # The Nix store is cached between runs (private to the repo), so unchanged
-  # packages aren't downloaded again. The key leaves out versions/, so a new
-  # cache is saved only when nixpkgs or the packaging changes, not on every
-  # pin bump (a changed pin is fetched fresh, the rest restored). Only this
-  # job saves it (narrow and final restore it); the reconcile job deletes the
-  # older ones, which needs actions: write, never given to a job like this.
+  # The full suite on the whole candidate, per architecture, in parts. No
+  # secrets, no write permissions: this is where vendor binaries run outside
+  # the sandbox. Every job builds from scratch: no Nix store is cached
+  # between runs.
   test:
     needs: resolve
     if: needs.resolve.outputs.inputs != ''
     strategy:
       fail-fast: false
       matrix:
+        # In parts, each on a runner of its own: the default suite's
+        # (scripts/lib/parts.ts, as in branch CI), and NixOS stable's, with
+        # each stable part's stable and stable-next groups apart. merge-parts.ts
+        # writes the whole-suite results the later jobs read.
         include:
-          - { system: x86_64-linux, runner: ubuntu-24.04 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: desktop, kind: test, part: desktop }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: rest1, kind: test, part: rest1 }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: rest2, kind: test, part: rest2 }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: a, kind: stable, part: a, group: stable }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: a-next, kind: stable, part: a, group: next }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: b, kind: stable, part: b, group: stable }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: b-next, kind: stable, part: b, group: next }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: desktop, kind: test, part: desktop }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: rest1, kind: test, part: rest1 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: rest2, kind: test, part: rest2 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: a, kind: stable, part: a, group: stable }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: a-next, kind: stable, part: a, group: next }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: b, kind: stable, part: b, group: stable }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: b-next, kind: stable, part: b, group: next }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     steps:
@@ -235,46 +247,49 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           userns: true
-          desktop-tools: ${{ needs.resolve.outputs.desktop != '' }}
-      # Before the store cache, so its key hashes the tree being tested.
+          desktop-tools: ${{ needs.resolve.outputs.desktop != '' && matrix.leg == 'desktop' }}
+      # The default suite tests the working tree; stable.ts unpacks the tree
+      # it's given (candidate.ts tree writes its objects).
       - name: Apply the candidate
+        if: matrix.kind == 'test'
         run: node scripts/ci/candidate.ts apply "$RUNNER_TEMP/candidate"
-      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-test-${{ matrix.system }}-${{ hashFiles('flake.lock', 'pkgs/**', 'lib/**') }}
-          restore-prefixes-first-match: nix-test-${{ matrix.system }}-
-          gc-max-store-size-linux: 4G
       - name: Test the candidate
         # A hang fails the step (the job's own limit would cancel it, and
         # narrowing skips a cancelled test job): below the job's limit.
         timeout-minutes: 80
+        if: matrix.kind == 'test'
         env:
           DESKTOP: ${{ needs.resolve.outputs.desktop }}
           BROWSER: ${{ needs.resolve.outputs.browser }}
         run: |
           C="$RUNNER_TEMP/candidate" R="$RUNNER_TEMP/results"
-          # The desktop smoke's tools (setup's desktop-tools), only when it runs.
-          PATH="${DESKTOP:+$DESKTOP_TOOLS_PATH:}$PATH" \
-            node scripts/ci/test.ts candidate ${{ matrix.system }} "$R" ${DESKTOP:+"$DESKTOP"} ${BROWSER:+"$BROWSER"}
-          node scripts/ci/candidate.ts tree "$C" > "$R/tree-candidate-${{ matrix.system }}.txt"
-      # NixOS stable, apart from the default (stable.ts): its own step and
-      # time limit, after the default's result is written. Running out of
-      # time leaves no result file: stable incomplete. Stable-next and the
-      # equivalence step too, since the candidate can publish. Its smokes'
-      # tools come from nixpkgs-stable (stable.ts builds them).
+          # The tree first: it doesn't depend on the tests, and a step that
+          # ends after them still leaves it beside their result.
+          mkdir -p "$R"
+          node scripts/ci/candidate.ts tree "$C" > "$R/tree-part-candidate-${{ matrix.system }}-${{ matrix.part }}.txt"
+          # The desktop smoke's tools (setup's desktop-tools), in the desktop leg.
+          PATH="${DESKTOP_TOOLS_PATH:+$DESKTOP_TOOLS_PATH:}$PATH" \
+            node scripts/ci/test.ts candidate ${{ matrix.system }} "$R" ${DESKTOP:+"$DESKTOP"} ${BROWSER:+"$BROWSER"} --part=${{ matrix.part }}
+      # NixOS stable's legs (stable.ts): a part's stable or stable-next
+      # group (part a's with the equivalence step, since the candidate can
+      # publish). Running out of time leaves no result file: stable
+      # incomplete. Its smokes' tools come from nixpkgs-stable (stable.ts
+      # builds them).
       - name: NixOS stable
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.kind == 'stable' }}
         timeout-minutes: 45
         run: |
           C="$RUNNER_TEMP/candidate" R="$RUNNER_TEMP/results"
-          node scripts/ci/stable.ts candidate ${{ matrix.system }} "$R" --next \
-            --tree="$(node scripts/ci/candidate.ts tree "$C")"
-      # Also when the stable step failed or ran out of time: the default's
-      # results stand on their own (a missing stable file is incomplete).
+          # Its own assignment, so a failed lookup stops the step.
+          tree=$(node scripts/ci/candidate.ts tree "$C")
+          node scripts/ci/stable.ts candidate ${{ matrix.system }} "$R" --next --tree="$tree" \
+            --part=${{ matrix.part }} --group=${{ matrix.group }}
+      # Also when the step failed or ran out of time (a part's missing file
+      # leaves its suite incomplete).
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
-          name: results-candidate-${{ matrix.system }}
+          name: results-candidate-${{ matrix.system }}-${{ matrix.leg }}
           path: ${{ runner.temp }}/results
           retention-days: 7
 
@@ -307,6 +322,9 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           nix: false
+      # The parts' results as the whole suite's (merge-parts.ts).
+      - name: The parts' results, merged
+        run: node scripts/ci/merge-parts.ts "$RUNNER_TEMP/results"
       # Also main's NixOS-stable evidence (stable-broken, stable-ok) when the
       # candidate's stable derivations are main's, on every run.
       - id: plan
@@ -358,17 +376,10 @@ jobs:
         with:
           userns: true
           desktop-tools: ${{ needs.resolve.outputs.desktop != '' }}
-      # Before the store cache, so its key hashes the tree being tested.
       - name: Apply ${{ matrix.set }}
         env:
           SET: ${{ matrix.set }}
         run: '[ "$SET" = main ] || node scripts/ci/candidate.ts apply "$RUNNER_TEMP/candidate" "$SET"'
-      # Restore only: the test job saves it.
-      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-test-${{ matrix.system }}-${{ hashFiles('flake.lock', 'pkgs/**', 'lib/**') }}
-          restore-prefixes-first-match: nix-test-${{ matrix.system }}-
-          save: false
       - name: Test ${{ matrix.set }} alone
         # A hang fails the step (the job's own limit would cancel it, and
         # narrowing skips a cancelled test job): below the job's limit.
@@ -430,6 +441,9 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           nix: false
+      # The parts' results as the whole suite's (merge-parts.ts).
+      - name: The parts' results, merged
+        run: node scripts/ci/merge-parts.ts "$RUNNER_TEMP/results"
       - id: decide
         run: |
           mkdir -p "$RUNNER_TEMP/obs"
@@ -455,9 +469,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # In parts, each on a runner of its own: the default suite's
+        # (scripts/lib/parts.ts, as in branch CI), and NixOS stable's, with
+        # each stable part's stable and stable-next groups apart. merge-parts.ts
+        # writes the whole-suite results the later jobs read.
         include:
-          - { system: x86_64-linux, runner: ubuntu-24.04 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: desktop, kind: test, part: desktop }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: rest1, kind: test, part: rest1 }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: rest2, kind: test, part: rest2 }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: a, kind: stable, part: a, group: stable }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: a-next, kind: stable, part: a, group: next }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: b, kind: stable, part: b, group: stable }
+          - { system: x86_64-linux, runner: ubuntu-24.04, leg: b-next, kind: stable, part: b, group: next }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: desktop, kind: test, part: desktop }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: rest1, kind: test, part: rest1 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: rest2, kind: test, part: rest2 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: a, kind: stable, part: a, group: stable }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: a-next, kind: stable, part: a, group: next }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: b, kind: stable, part: b, group: stable }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm, leg: b-next, kind: stable, part: b, group: next }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     steps:
@@ -482,23 +512,18 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           userns: true
-          desktop-tools: ${{ needs.resolve.outputs.desktop != '' }}
-      # Before the store cache, so its key hashes the tree being tested.
+          desktop-tools: ${{ needs.resolve.outputs.desktop != '' && matrix.leg == 'desktop' }}
       - name: Apply the final candidate
+        if: matrix.kind == 'test'
         env:
           FINAL: ${{ needs.decide.outputs.final }}
           ELECTRON: ${{ needs.decide.outputs.electron }}
         run: node scripts/ci/candidate.ts apply "$RUNNER_TEMP/candidate" "$FINAL" --electron="$ELECTRON"
-      # Restore only: the test job saves it.
-      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-test-${{ matrix.system }}-${{ hashFiles('flake.lock', 'pkgs/**', 'lib/**') }}
-          restore-prefixes-first-match: nix-test-${{ matrix.system }}-
-          save: false
       - name: Test the final candidate
         # A hang fails the step (the job's own limit would cancel it, and
         # narrowing skips a cancelled test job): below the job's limit.
         timeout-minutes: 80
+        if: matrix.kind == 'test'
         env:
           FINAL: ${{ needs.decide.outputs.final }}
           ELECTRON: ${{ needs.decide.outputs.electron }}
@@ -506,28 +531,32 @@ jobs:
           BROWSER: ${{ needs.resolve.outputs.browser }}
         run: |
           C="$RUNNER_TEMP/candidate" R="$RUNNER_TEMP/results"
-          # The desktop smoke's tools (setup's desktop-tools), only when it runs.
-          PATH="${DESKTOP:+$DESKTOP_TOOLS_PATH:}$PATH" \
-            node scripts/ci/test.ts final ${{ matrix.system }} "$R" ${DESKTOP:+"$DESKTOP"} ${BROWSER:+"$BROWSER"}
-          node scripts/ci/candidate.ts tree "$C" "$FINAL" --electron="$ELECTRON" > "$R/tree-final-${{ matrix.system }}.txt"
-      # NixOS stable with stable-next and the equivalence step, as in the
-      # test job: the final can publish.
+          # The tree first: it doesn't depend on the tests, and a step that
+          # ends after them still leaves it beside their result.
+          mkdir -p "$R"
+          node scripts/ci/candidate.ts tree "$C" "$FINAL" --electron="$ELECTRON" > "$R/tree-part-final-${{ matrix.system }}-${{ matrix.part }}.txt"
+          # The desktop smoke's tools (setup's desktop-tools), in the desktop leg.
+          PATH="${DESKTOP_TOOLS_PATH:+$DESKTOP_TOOLS_PATH:}$PATH" \
+            node scripts/ci/test.ts final ${{ matrix.system }} "$R" ${DESKTOP:+"$DESKTOP"} ${BROWSER:+"$BROWSER"} --part=${{ matrix.part }}
+      # NixOS stable's legs, as in the test job: the final can publish.
       - name: NixOS stable
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.kind == 'stable' }}
         timeout-minutes: 45
         env:
           FINAL: ${{ needs.decide.outputs.final }}
           ELECTRON: ${{ needs.decide.outputs.electron }}
         run: |
           C="$RUNNER_TEMP/candidate" R="$RUNNER_TEMP/results"
-          node scripts/ci/stable.ts final ${{ matrix.system }} "$R" --next \
-            --tree="$(node scripts/ci/candidate.ts tree "$C" "$FINAL" --electron="$ELECTRON")"
-      # Also when the stable step failed or ran out of time: the default's
-      # results stand on their own (a missing stable file is incomplete).
+          # Its own assignment, so a failed lookup stops the step.
+          tree=$(node scripts/ci/candidate.ts tree "$C" "$FINAL" --electron="$ELECTRON")
+          node scripts/ci/stable.ts final ${{ matrix.system }} "$R" --next --tree="$tree" \
+            --part=${{ matrix.part }} --group=${{ matrix.group }}
+      # Also when the step failed or ran out of time (a part's missing file
+      # leaves its suite incomplete).
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
-          name: results-final-${{ matrix.system }}
+          name: results-final-${{ matrix.system }}-${{ matrix.leg }}
           path: ${{ runner.temp }}/results
           retention-days: 7
 
@@ -580,6 +609,9 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           nix: false
+      # The parts' results as the whole suite's (merge-parts.ts).
+      - name: The parts' results, merged
+        run: node scripts/ci/merge-parts.ts "$RUNNER_TEMP/results"
       - id: verdict
         env:
           SET: ${{ needs.narrow-plan.outputs.failed == 'true' && 'final' || 'candidate' }}
@@ -637,10 +669,10 @@ jobs:
 
   # Push the allowlisted free packages after checking each matches what the
   # tests built. It builds exactly the published tree (base + final inputs)
-  # from scratch: it never restores the test jobs' store cache, so nothing a
-  # vendor binary could have touched reaches Cachix. Vendor code runs only
-  # inside the Nix build sandbox. A dry run records what it would push.
-  # Needs the CACHIX_CACHE variable.
+  # from scratch, like every job, so nothing a vendor binary could have
+  # touched reaches Cachix. Vendor code runs only inside the Nix build
+  # sandbox. A dry run records what it would push. Needs the CACHIX_CACHE
+  # variable.
   cache:
     needs: [resolve, publish]
     if: >-
@@ -665,7 +697,7 @@ jobs:
           path: ${{ runner.temp }}/candidate
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: results-${{ needs.publish.outputs.set }}-${{ matrix.system }}
+          pattern: results-${{ needs.publish.outputs.set }}-${{ matrix.system }}*
           path: ${{ runner.temp }}/results
           merge-multiple: true
       - uses: ./.github/actions/setup
@@ -675,6 +707,9 @@ jobs:
           name: ${{ vars.CACHIX_CACHE }}
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
+      # The parts' results as the whole suite's (merge-parts.ts).
+      - name: The parts' results, merged
+        run: node scripts/ci/merge-parts.ts "$RUNNER_TEMP/results"
       - name: Push the allowlisted packages that match the tested build
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
@@ -836,10 +871,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # Repairs every run, and deletes the test jobs' older store caches (the
-  # purge needs actions: write, which the test jobs never get). Runs the
-  # dispatched revision's script against main's history, so a branch's dry
-  # run exercises its own reconcile.
+  # Repairs every run (re-enabling a workflow needs actions: write, which
+  # the test jobs never get). Runs the dispatched revision's script against
+  # main's history, so a branch's dry run exercises its own reconcile.
   # Never two at once: the release step reads "latest" and then moves it,
   # and two tag repairs would race. Only this workflow runs reconcile, and
   # its real runs on main sit in one run-level group (update), with one

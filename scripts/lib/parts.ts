@@ -1,7 +1,8 @@
-// Branch CI runs the default suite and NixOS stable in parts, each on a
-// runner of its own, so a push waits for the slowest part instead of the
-// whole. Which part a check belongs to is decided here, once, for test.ts
-// and stable.ts; the update runs give no part and run everything.
+// Branch CI and the update runs' test and final jobs run the default suite
+// and NixOS stable in parts, each on a runner of its own, so they wait for
+// the slowest part instead of the whole. Which part a check belongs to is
+// decided here, once, for test.ts and stable.ts; given no part (the update
+// runs' narrowing), they run everything.
 //
 // - The default suite (test.ts) in three: `desktop` (the T3 Code desktop
 //   apps, `t3code*`, and their desktop smokes), `rest1` (the agent-browser
@@ -11,9 +12,10 @@
 //   browsers); every other check goes to rest1 or rest2 by a hash of its
 //   name, so adding a check moves no other.
 // - NixOS stable (stable.ts) in two: `a` (the checks the runner smokes need,
-//   the desktop app and agent-browser, the smokes themselves, and the check
-//   that moving the snapshot leaves the default checks alone) and `b` (every
-//   other check), for both the stable and the stable-next group.
+//   the desktop app and agent-browser, and the smokes themselves; in branch
+//   CI also the check that moving the snapshot leaves the default checks
+//   alone) and `b` (every other check), for both the stable and the
+//   stable-next group (in the update runs, each group a job of its own).
 import { createHash } from "node:crypto";
 
 export const TEST_PARTS = ["desktop", "rest1", "rest2"] as const;

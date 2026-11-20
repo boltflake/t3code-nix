@@ -74,9 +74,4 @@ export class Fake implements Client {
     if (this.releaseList.find((x) => x.tag === r.tag)?.prerelease) throw new Error("PATCH releases: HTTP 422 a prerelease can't be latest");
     this.marked = r.tag;
   }
-  cacheList: { id: number; key: string; ref: string; lastAccessed: string }[] = [];
-  async caches(prefix: string, ref: string) {
-    return this.cacheList.filter((c) => c.key.startsWith(prefix) && c.ref === ref).map(({ id, key, lastAccessed }) => ({ id, key, lastAccessed }));
-  }
-  async deleteCache(id: number, _key: string) { this.cacheList = this.cacheList.filter((c) => c.id !== id); }
 }

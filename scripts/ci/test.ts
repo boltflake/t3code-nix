@@ -3,8 +3,9 @@
 //
 //   node test.ts SET SYSTEM OUT_DIR [--desktop] [--agent-browser] [--strict-guards] [--part=PART]
 //
-// With --part (branch CI), only that part of the suite (scripts/lib/parts.ts:
-// desktop, rest1 or rest2), its result files named SET-SYSTEM-PART.
+// With --part (branch CI, and the update runs' test and final jobs), only
+// that part of the suite (scripts/lib/parts.ts: desktop, rest1 or rest2),
+// its result files named SET-SYSTEM-PART (merge-parts.ts joins them).
 // The flake is evaluated once: one `nix eval` gives every check's output and
 // .drv. All checks then build from their .drv paths in one `nix build
 // --keep-going` (builds in parallel, no second evaluation: with a candidate
@@ -28,7 +29,7 @@
 // Exits 0 whatever the tests say; only a broken runner or Nix fails it.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { narHashes, nixCalls, readJson, rewriteJson, ROOT, run, tryRun, writeJson } from "../lib/util.ts";
+import { narHashes, nixCalls, readJson, rewriteJson, ROOT, run, tryRun } from "../lib/util.ts";
 import { desktopSmoke } from "../desktop-smoke.ts";
 import { partArg, TEST_PARTS, testPart } from "../lib/parts.ts";
 import { agentBrowserSmoke } from "../agent-browser-smoke.ts";
@@ -154,7 +155,7 @@ export function electronEvidence(checks: Record<string, Check>, failed: string[]
     const forcedApplicable = !!checks[r.forced] && !checks[r.forced].na;
     const runtime = runtimeList(channel, autoIsNixpkgs, forcedApplicable).filter((n) => checks[n] || Object.values(r.smokes).includes(n));
     const bundled = bundledList(channel);
-    // A part (branch CI) vouches only for the checks it ran.
+    // A part vouches only for the checks it ran.
     const ok = (n: string) => (n in smokes ? smokes[n] === "pass" : !!checks[n] && (ran?.has(n) ?? true) && !failed.includes(n));
     channels[channel] = {
       runtime,
@@ -354,6 +355,16 @@ async function branchReported(e: ElectronEvidence, failed: string[], checks: Rec
 export const failedOnNotes = (strict: boolean, names: string[], out: (name: string) => string) =>
   strict ? names.filter((n) => notesOf([out(n)]).notes.length > 0) : [];
 
+/** Whether the desktop smoke runs for this result: in the whole suite or
+ * the desktop part, whether it ran; in another part, whether the run asked
+ * for it (--desktop), since the desktop part runs it. Each part then
+ * confirms its own provisional failures, as the whole suite would: on the
+ * channels its own failures depend on rather than every part's, which
+ * always includes each failure's own (a check could differ only if it also
+ * read another channel's fallback entry). */
+export const smokeRuns = (part: string | undefined, ran: boolean, desktop: boolean) =>
+  part === undefined || part === "desktop" ? ran : desktop;
+
 export async function main(argv: string[]): Promise<void> {
   const positional = argv.filter((a) => !a.startsWith("--"));
   if (positional.length !== 3) {
@@ -395,7 +406,7 @@ export async function main(argv: string[]): Promise<void> {
   const electron = electronEvidence(checks, failed, smokes, ROOT, undefined, part === undefined ? undefined : new Set(names));
   // Only where it can matter: a fallback needs the smoke to have run, and
   // branch CI never uses one.
-  if (set !== "branch" && electron.smokeRan) electron.confirmed = await confirmProvisional(electron.dependsOn, system);
+  if (set !== "branch" && smokeRuns(part, electron.smokeRan, argv.includes("--desktop"))) electron.confirmed = await confirmProvisional(electron.dependsOn, system);
   if (Object.keys(electron.dependsOn).length) {
     console.log(`depend on the desktop app: ${Object.keys(electron.dependsOn).join(", ")}; pass on bundled Electron: ${electron.confirmed.join(", ") || "none"}`);
   }
@@ -410,8 +421,10 @@ export async function main(argv: string[]): Promise<void> {
   const suffix = part === undefined ? "" : `-${part}`;
   const write = () => rewriteJson(join(outDir, `${set}-${system}${suffix}.json`),
     { set, system, passed: failed.length === 0, failed, checked, notes, electron, ...(reported.length ? { reported } : {}), nixCalls });
+  // The manifest first: a saved result always has its manifest beside it
+  // (the cache job needs both).
+  rewriteJson(join(outDir, `manifest-${set}-${system}${suffix}.json`), manifest);
   write();
-  writeJson(join(outDir, `manifest-${set}-${system}${suffix}.json`), manifest);
   // Last, once the default's result is saved: the one runner step that
   // evaluates NixOS stable (bounded; a stall changes nothing).
   if (has("rest2") && !failed.includes("default-nix-no-flakes")) {

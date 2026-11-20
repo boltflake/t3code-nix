@@ -1,15 +1,20 @@
 // The NixOS-stable groups for one set and system, apart from the default
 // checks: their own evaluation, their own workflow step and time limit (a step
 // that runs out leaves no result file, which narrowing reads as incomplete).
-// The update runs run them after the default checks, in the same job; branch
-// CI, in jobs of their own (its parts) beside them.
+// Branch CI and the update runs' test and final jobs run them in jobs of
+// their own (parts) beside the default checks'; the narrowing, in the same
+// job after them.
 //
-//   node stable.ts SET SYSTEM OUT_DIR [--next] [--branch] [--tree=HASH] [--parent=REV] [--part=PART]
+//   node stable.ts SET SYSTEM OUT_DIR [--next] [--branch] [--tree=HASH] [--parent=REV] [--part=PART] [--group=GROUP]
 //
-// With --part (branch CI), only that part's checks (scripts/lib/parts.ts: a,
-// with the runner smokes and the check on the default checks, or b) are
-// built, in both groups, and its result is OUT_DIR/stable-SET-SYSTEM-PART.json;
-// `branch` then covers that part's checks.
+// With --part, only that part's checks (scripts/lib/parts.ts: a, with the
+// runner smokes, or b) are built, and its result is
+// OUT_DIR/stable-SET-SYSTEM-PART.json. Branch CI builds both groups in a
+// part (part a also checks the default checks against a moved snapshot);
+// `branch` then covers that part's checks. The update runs build one group
+// per job (--group=stable, or --group=next into
+// OUT_DIR/stable-SET-SYSTEM-PART-next.json, where part a also runs the
+// equivalence step); merge-parts.ts writes the whole file from them.
 // The tested tree is HASH (the update workflow's candidate tree, exactly what
 // publish would commit), or else HEAD plus the working tree's changes.
 //
@@ -52,7 +57,7 @@ import { agentBrowserSmoke } from "../agent-browser-smoke.ts";
 import { desktopSmoke } from "../desktop-smoke.ts";
 import { compare } from "../lib/nixcache.ts";
 import { current, moved, pinHashes } from "../lib/snapshot.ts";
-import { nixCalls, run, tryRun, writeJson } from "../lib/util.ts";
+import { nixCalls, rewriteJson, run, tryRun } from "../lib/util.ts";
 import { partArg, STABLE_PARTS, stablePart, type StablePart } from "../lib/parts.ts";
 
 /** `notApplicable`: forced Electron twins (and their smokes) with no usable
@@ -344,22 +349,42 @@ export function parentOutcomes(parentSrc: string, system: string, prefix: Prefix
   };
 }
 
+/** `--group=stable|next` (update runs, with --part and --next): one of the
+ * two groups per job, so they build side by side. Without it, both in one. */
+export function groupArg(argv: string[]): "stable" | "next" | undefined {
+  const args = argv.filter((a) => a === "--group" || a.startsWith("--group="));
+  if (args.length === 0) return undefined;
+  const g = args.length === 1 ? args[0].slice("--group=".length) : "";
+  if (g !== "stable" && g !== "next") throw new Error("--group must be given once, as stable or next");
+  if (!argv.some((a) => a.startsWith("--part=")) || !argv.includes("--next")) throw new Error(`--group=${g} needs --part and --next`);
+  if (argv.includes("--branch")) throw new Error("--group is for the update runs, not --branch");
+  return g;
+}
+
 export async function main(argv: string[]): Promise<void> {
   const [set, system, outDir] = argv.filter((a) => !a.startsWith("--"));
   if (!set || !system || !outDir) {
-    console.error("usage: stable.ts SET SYSTEM OUT_DIR [--next] [--branch] [--tree=HASH] [--parent=REV] [--part=PART]");
+    console.error("usage: stable.ts SET SYSTEM OUT_DIR [--next] [--branch] [--tree=HASH] [--parent=REV] [--part=PART] [--group=GROUP]");
     process.exit(2);
   }
   mkdirSync(outDir, { recursive: true });
   const part = partArg(argv, STABLE_PARTS);
+  const only = groupArg(argv);
   const tested = argv.find((a) => a.startsWith("--tree="))?.slice(7) || workingTree();
   const src = unpack(tested);
   const result: Record<string, unknown> = { set, system, tree: tested };
+  // Atomically: a step killed mid-write leaves no file, not half of one.
+  const file = join(outDir, `stable-${set}-${system}${part === undefined ? "" : `-${part}${only === "next" ? "-next" : ""}`}.json`);
+  const save = () => rewriteJson(file, { ...result, nixCalls });
   try {
-    const stable = await runGroup(src, system, "stable-", true, part);
-    result.stable = stable.group;
-    result.drvs = digest(stable.drvs);
-    if (set !== "main") {
+    // A stable-next job builds stable-next only: the stable group's digests
+    // come from the stable jobs.
+    const stable = only === "next" ? null : await runGroup(src, system, "stable-", true, part);
+    if (stable) {
+      result.stable = stable.group;
+      result.drvs = digest(stable.drvs);
+    }
+    if (stable && set !== "main") {
       const base = unpack(run("git", ["rev-parse", "HEAD^{tree}"]));
       try {
         const b = nix.drvs(base, groupAttr(system, "stable-"));
@@ -371,12 +396,19 @@ export async function main(argv: string[]): Promise<void> {
     let next: { group: Group; drvs: Drvs } | null = null;
     const behind = !current(tested);
     result.behind = behind;
-    if (argv.includes("--next")) {
+    if (argv.includes("--next") && only !== "stable") {
       next = await runGroup(src, system, "stable-next-", behind, part);
       result.stableNext = next.group;
       // Only for a set that can publish: nothing reads branch CI's move, and
-      // its own check on the default checks is below.
-      if (behind && !argv.includes("--branch") && next.group.complete && !next.group.failed.length) result.move = await equivalence(tested, src, system, next.drvs);
+      // its own check on the default checks is below. In parts, part a's
+      // stable-next job runs it (it covers the whole tree); merge-parts.ts
+      // keeps the move only when stable-next passed in every part.
+      if (behind && !argv.includes("--branch") && (part === undefined || (only === "next" && part === "a")) && next.group.complete && !next.group.failed.length) {
+        // The groups' results first: a step that fails or runs out of time
+        // in the equivalence step still leaves them (with no move).
+        save();
+        result.move = await equivalence(tested, src, system, next.drvs);
+      }
     }
     if (argv.includes("--branch")) {
       const parentSrc = unpack(run("git", ["rev-parse", `${argv.find((a) => a.startsWith("--parent="))?.slice(9) || "HEAD~1"}^{tree}`]));
@@ -394,7 +426,7 @@ export async function main(argv: string[]): Promise<void> {
           try { changed = defaultsChanged(src, m, system); } finally { rmSync(m, { recursive: true, force: true }); }
         }
         result.branch = [
-          ...await branchFailures(stable.group, stable.drvs, ps, parentOutcomes(parentSrc, system, "stable-", ps, smokesOf, pe.failed)),
+          ...await branchFailures(stable!.group, stable!.drvs, ps, parentOutcomes(parentSrc, system, "stable-", ps, smokesOf, pe.failed)),
           ...(next ? await branchFailures(next.group, next.drvs, pn, parentOutcomes(parentSrc, system, "stable-next-", pn, smokesOf, pne.failed)) : []),
           ...(changed.length ? [`equivalence (moving the snapshot changes ${changed.join(", ")})`] : []),
         ];
@@ -405,8 +437,8 @@ export async function main(argv: string[]): Promise<void> {
   } finally {
     rmSync(src, { recursive: true, force: true });
   }
-  writeJson(join(outDir, `stable-${set}-${system}${part === undefined ? "" : `-${part}`}.json`), { ...result, nixCalls });
-  console.log(`stable on ${system} (${set}): ${JSON.stringify(result.stable)}${result.stableNext ? ` next ${JSON.stringify(result.stableNext)}` : ""}`);
+  save();
+  console.log(`stable on ${system} (${set}): ${result.stable ? JSON.stringify(result.stable) : "(stable-next only)"}${result.stableNext ? ` next ${JSON.stringify(result.stableNext)}` : ""}`);
   if (result.branch) console.log(`branch: ${JSON.stringify(result.branch)}`);
 }
 

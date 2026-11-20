@@ -4,8 +4,7 @@
 //
 // HISTORY_REF (default HEAD) is main's history; the workflow runs the
 // dispatched revision's script against origin/main, so a branch's dry run
-// exercises its own reconcile. Environment: DRY_RUN, and GITHUB_REF (the
-// branch whose caches are purged; no purge without it).
+// exercises its own reconcile. Environment: DRY_RUN.
 //
 // - Every latest-channel t3code version on main's history has its tag t3code-v<version>
 //   at the commit that first published it. A missing tag is created there; a
@@ -22,7 +21,6 @@
 //   main pins now, so after a rollback upstream it moves back with main.
 //   Reconcile is the only writer of releases, and its job's concurrency group
 //   keeps two reconciles from overlapping.
-// - Older Nix store caches of the test jobs are deleted (purgeTestCaches).
 //
 // The reads (tags, candidate refs, the scheduled workflows' states, the
 // releases and GitHub's Latest-marked one, each leftover run) start together; each
@@ -34,7 +32,7 @@ import { join } from "node:path";
 import { AGENT_TOOLS, BROWSER_PINS } from "../lib/packages.ts";
 import { differing, pinsOf } from "../lib/snapshot.ts";
 import { electronInfo } from "../lib/electron-fallback.ts";
-import { SYSTEMS, early, git, releaseNotes, shownVersion, tryRun } from "../lib/util.ts";
+import { early, git, releaseNotes, shownVersion, tryRun } from "../lib/util.ts";
 import { compareVersions, obs, type Observation } from "../update.ts";
 import { client, REPO, type Client, type Release } from "./gh.ts";
 
@@ -322,26 +320,9 @@ export async function reconcile(gh: Client, workflowsDir = ".github/workflows", 
   return observations;
 }
 
-/** The test jobs' Nix store caches (update.yml): only the test job saves
- * one, and a new key (nixpkgs or the packaging changed) leaves the old one
- * behind, where its 4 GB could get the current one evicted. For each system,
- * every cache under `ref` but the one used most recently is deleted, one at
- * a time. Housekeeping: a failure is logged, never fails the run. */
-export async function purgeTestCaches(gh: Client, ref: string, log = console.error): Promise<void> {
-  try {
-    for (const system of SYSTEMS) {
-      const caches = (await gh.caches(`nix-test-${system}-`, ref))
-        .sort((a, b) => Date.parse(b.lastAccessed) - Date.parse(a.lastAccessed));
-      for (const old of caches.slice(1)) await gh.deleteCache(old.id, old.key);
-    }
-  } catch (e: any) {
-    log(`::warning::couldn't purge old test caches: ${e?.message ?? e}`);
-  }
-}
-
 if (import.meta.main) {
   const gh = client();
-  // A failure still writes what was observed and runs the purge, then fails.
+  // A failure still writes what was observed, then fails.
   const observations: Observation[] = [];
   let failure: unknown = null;
   try {
@@ -349,7 +330,6 @@ if (import.meta.main) {
   } catch (e) {
     failure = e;
   }
-  if (process.env.GITHUB_REF) await purgeTestCaches(gh, process.env.GITHUB_REF);
   console.log(JSON.stringify({ observations, dryRun: gh.actions ?? null }, null, 2));
   if (failure) {
     console.error(`reconcile: ${(failure as any)?.stack ?? failure}`);
