@@ -16,7 +16,8 @@ export const sourceUrl = (repo: string, commit: string) => `https://raw.githubus
 /** The one complete record the file pins; anything unexpected fails, so a
  * changed layout can never mix entries. */
 export function parseBrowser(text: string, source: string): BrowserPin {
-  const versions = [...text.matchAll(/^const VERSION = "([0-9]+(?:\.[0-9]+){3})";$/gm)].map((m) => m[1]);
+  // Exported or not (t3code exports it since v0.1.11-nightly.20261118.4877).
+  const versions = [...text.matchAll(/^(?:export )?const VERSION = "([0-9]+(?:\.[0-9]+){3})";$/gm)].map((m) => m[1]);
   if (versions.length !== 1) fail(`${source}: expected one VERSION, found ${versions.length}`);
   const version = versions[0];
   // The download URL must be the one these assets describe.

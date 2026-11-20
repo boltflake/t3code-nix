@@ -38,6 +38,16 @@ test("browser: one complete record, from upstream's own hashes", () => {
   });
 });
 
+test("browser: VERSION exported (t3code since v0.1.11-nightly.20261118.4877) reads the same", () => {
+  const exported = file().replace('\nconst VERSION = ', '\nexport const VERSION = ');
+  assert.ok(exported.includes("export const VERSION"));
+  assert.deepEqual(parseBrowser(exported, SRC), parseBrowser(file(), SRC));
+  // Still exactly one, exported or not.
+  assert.throws(() => parseBrowser(exported + 'const VERSION = "158.0.0.1";\n', SRC), /expected one VERSION, found 2/);
+  // A whole line only: an indented or commented-out one isn't another.
+  assert.deepEqual(parseBrowser(exported + '  // const VERSION = "158.0.0.1";\n  const VERSION = "158.0.0.2";\n', SRC).version, "157.0.8103.38");
+});
+
 test("browser: a changed layout fails instead of mixing entries", () => {
   assert.throws(() => parseBrowser(file("157.0"), SRC), /expected one VERSION/);
   assert.throws(() => parseBrowser(file() + 'const VERSION = "158.0.0.1";\n', SRC), /expected one VERSION/);
