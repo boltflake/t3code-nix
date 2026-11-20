@@ -65,19 +65,19 @@ export const t3AssetPage = (tag: string, after: string) =>
   `query { repository(owner: "pingdotgg", name: "t3code") { release(tagName: ${JSON.stringify(tag)}) { releaseAssets(first: 100, after: ${JSON.stringify(after)}) { ${ASSETS} } } } }`;
 
 /** Fetch the rest of each release's assets (up to ASSET_MAX_PAGES pages;
- * GitHub allows 1000 assets): only for releases `matters` keeps (the ones a
- * channel could pick, not skipped previews), each tag once, and at most
+ * GitHub allows 1000 assets): for the given releases (decisive()'s, the ones
+ * a channel could pick, not skipped previews), each tag once, and at most
  * `budget` requests (the watcher's per-run request limit). `run` sends one
  * GraphQL query and returns its data. A page that doesn't come back, or a
  * budget that runs out, is an error (the caller decides what it costs),
  * never a release that silently looks incomplete. */
 export async function fillAssets(releases: any[], run: (query: string) => Promise<any>,
-  { matters = () => true, budget = Infinity, until = () => false, enough = () => false }:
-  { matters?: (r: any) => boolean; budget?: number; until?: (r: any) => boolean; enough?: (r: any) => boolean } = {}): Promise<void> {
+  { budget = Infinity, until = () => false, enough = () => false }:
+  { budget?: number; until?: (r: any) => boolean; enough?: (r: any) => boolean } = {}): Promise<void> {
   const done = new Set<string>();
   let used = 0;
   for (const r of releases) {
-    if (!matters(r) || done.has(r?.tagName)) continue;
+    if (done.has(r?.tagName)) continue;
     done.add(r?.tagName);
     let info = r?.releaseAssets?.pageInfo;
     // `enough`: the release is already decided (complete): no more pages.

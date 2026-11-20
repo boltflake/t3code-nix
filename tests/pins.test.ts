@@ -457,6 +457,39 @@ test("prefetch: the SRI hash of the downloaded bytes, retried like any read", as
   assert.equal(n, 2);
 });
 
+test("update: the nightly pins take the nightly (a prerelease), never the newer latest-channel release", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pins-test-"));
+  const env = process.env.GH_TOKEN;
+  process.env.GH_TOKEN = "test";
+  try {
+    const repo = "pingdotgg/t3code";
+    const release = (tag: string, prerelease: boolean) => {
+      const v = tag.slice(1), dl = `https://github.com/${repo}/releases/download/${tag}`;
+      const names = [`t3-${v}-linux-x64.tar.gz`, `t3-${v}-linux-arm64.tar.gz`, `T3-Code-${v}-amd64.deb`, `T3-Code-${v}-arm64.deb`];
+      const assets: any[] = names.map((name, i) => ({ id: i + 1, name, digest: `sha256:${hex("abcd"[i])}`, browser_download_url: `${dl}/${name}` }));
+      assets.push({ id: 9, name: "SHA256SUMS", digest: null, browser_download_url: `${dl}/SHA256SUMS` });
+      routes[`${dl}/SHA256SUMS`] = names.map((n, i) => `${hex("abcd"[i])}  ${n}`).join("\n") + "\n";
+      routes[`https://api.github.com/repos/${repo}/releases/tags/${tag}`] = { tag_name: tag, draft: false, prerelease, assets };
+      routes[`https://api.github.com/repos/${repo}/git/ref/tags/${tag}`] = { object: { type: "commit", sha: COMMIT } };
+      return { tagName: tag, isPrerelease: prerelease, isDraft: false, createdAt: "2026-11-12T00:00:00Z", releaseAssets: { nodes: [...names, "SHA256SUMS"].map((name) => ({ name })) } };
+    };
+    routes[`https://raw.githubusercontent.com/${repo}/${COMMIT}/LICENSE`] = "MIT";
+    for (const name of ["t3code", "t3code-nightly"]) {
+      writeFileSync(join(dir, `${name}.json`), JSON.stringify({ name, version: "0.1.9", assets: {},
+        browser: { source: sourceUrl(repo, COMMIT) }, speech: { checked: catalogUrl(repo, COMMIT), fromCatalog: true } }));
+    }
+    const latest = release("v0.2.0", false), nightly = release("v0.1.10-nightly.20261112.4564", true);
+    const doc = { data: { repository: { latestRelease: latest, releases: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [latest, nightly] } } } };
+    const r = new Report(dir);
+    await resolveT3code(r, new Set(), false, new Set(["t3code", "t3code-nightly"]), new Date("2026-11-13T00:00:00Z"), async () => doc);
+    assert.deepEqual(r.observations.filter((o) => o.kind === "resolve-failed"), []);
+    assert.deepEqual(r.changed.map((c) => [c.name, c.to]).sort(), [["t3code", "0.2.0"], ["t3code-nightly", "0.1.10-nightly.20261112.4564"]]);
+  } finally {
+    if (env === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = env;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("update: a t3code release whose SHA256SUMS lists only the CLI archives still pins the desktop app", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pins-test-"));
   const env = process.env.GH_TOKEN;

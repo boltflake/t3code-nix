@@ -12,8 +12,8 @@
 //   unknown  anything else; a newer unknown release raises a no-match issue,
 //            so a renamed channel can't freeze updates silently
 //
-// The nightly channel is whichever is newer of the newest nightly and the
-// latest channel's release. A nightly sorts below its own vX.Y.Z version.
+// Each channel publishes only its own releases: the nightly channel only
+// nightlies, never a latest-channel release, however much newer.
 
 export interface Release {
   tagName: string;
@@ -49,19 +49,11 @@ export function classify({ tagName, isPrerelease, isDraft }: Release): Kind {
   return "unknown";
 }
 
-// A sortable key for a latest-channel or nightly tag, or null.
-export function versionKey(tagName: string): number[] | null {
-  const n = NIGHTLY.exec(tagName);
-  if (n) return [+n[1], +n[2], +n[3], 0, +n[4], +n[5]];
-  const s = LATEST_CHANNEL_TAG.exec(tagName);
-  if (s) return [+s[1], +s[2], +s[3], 1, 0, 0];
-  return null;
-}
-
+// Orders two nightly tags (only nightlies are ever compared).
 export function compareTags(a: string, b: string): number {
-  const ka = versionKey(a);
-  const kb = versionKey(b);
-  if (!ka || !kb) throw new Error(`not a latest-channel or nightly tag: ${!ka ? a : b}`);
+  const ka = NIGHTLY.exec(a)?.slice(1).map(Number);
+  const kb = NIGHTLY.exec(b)?.slice(1).map(Number);
+  if (!ka || !kb) throw new Error(`not a nightly tag: ${!ka ? a : b}`);
   for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return ka[i] - kb[i];
   return 0;
 }
@@ -89,8 +81,7 @@ export function isComplete(release: Release): boolean {
 //   latest      GitHub's latestRelease, the authoritative pointer for the
 //               latest channel, so a rollback upstream is followed; null if
 //               it's still missing files
-//   nightly     the newest complete nightly, or the latest channel's release
-//               if that's newer
+//   nightly     the newest complete nightly
 //   unknown     [{ tagName, createdAt }] releases fitting no rule that are
 //               newer than GitHub's latest release, so a renamed channel is
 //               noticed even while nightlies keep coming
@@ -128,8 +119,7 @@ export function select(repository: Repository): Picked {
     if (classify(r) !== "nightly" || !isComplete(r)) continue;
     if (!nightly || compareTags(r.tagName, nightly) > 0) nightly = r.tagName;
   }
-  if (latestChannel && (!nightly || compareTags(latestChannel, nightly) > 0)) nightly = latestChannel;
-  // Only incomplete nightlies newer than the final pick (the latest channel's included) matter.
+  // Only incomplete nightlies newer than the pick matter.
   for (const r of all) {
     if (classify(r) !== "nightly" || isComplete(r)) continue;
     if (!nightly || compareTags(r.tagName, nightly) > 0) {
@@ -159,20 +149,8 @@ export function decisive(repository: Repository): Release[] {
     .sort((a, b) => compareTags(b.tagName, a.tagName));
   return [...(githubLatest && classify(githubLatest) === "latest" ? [githubLatest] : []), ...nightlies];
 }
-export const lastDecisive = (r: Release) => classify(r) === "nightly" && isComplete(r);
+const lastDecisive = (r: Release) => classify(r) === "nightly" && isComplete(r);
 
-/** fillAssets' rules for decisive(repository): a complete release needs no
- * more pages (enough); nightlies at or below a complete latest-channel
- * release can't change the picks (it wins both channels), so they're skipped
- * (matters is asked when the loop reaches each one, after that release was
- * filled); and
- * the first complete nightly ends it (until). */
-export function fillRules(repository: Repository) {
-  const githubLatest = repository.latestRelease ?? null;
-  return {
-    enough: (r: Release) => isComplete(r),
-    until: lastDecisive,
-    matters: (r: Release) => !(classify(r) === "nightly" && githubLatest && classify(githubLatest) === "latest" && isComplete(githubLatest)
-      && compareTags(r.tagName, githubLatest.tagName) <= 0),
-  };
-}
+/** fillAssets' rules for decisive(): a complete release needs no more pages
+ * (enough), and the first complete nightly ends it (until). */
+export const fillRules = { enough: isComplete, until: lastDecisive };

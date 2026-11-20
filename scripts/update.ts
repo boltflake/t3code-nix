@@ -305,7 +305,7 @@ export async function fetchT3code(fetchJson: FetchJson = getJson): Promise<Repos
   }
   // The deciding releases' assets past the first page, before the channel
   // rules look for the required files.
-  await fillAssets(decisive(repository!), gql, fillRules(repository!));
+  await fillAssets(decisive(repository!), gql, fillRules);
   return repository!;
 }
 
@@ -342,7 +342,7 @@ export async function resolveT3code(report: Report, held: Set<string>, retry: bo
     try {
       const previous = currentPin(name, report.versionsDir);
       const pin = await buildGithubPin(name, "pingdotgg/t3code", tag, assets,
-        { prerelease: tag.includes("-nightly."), partialSums: true, previous });
+        { prerelease: channel === "nightly", partialSums: true, previous });
       // The license URL names the tag's commit (see buildGithubPin).
       const commit = /^https:\/\/raw\.githubusercontent\.com\/pingdotgg\/t3code\/([0-9a-f]{40})\/LICENSE$/.exec(pin.licenses?.LICENSE?.url ?? "")?.[1]
         ?? fail(`${name} ${tag}: can't tell the release's commit`);

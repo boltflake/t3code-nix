@@ -286,23 +286,22 @@ test("issues: a downgrade closes on a pass at or above the pulled version, not b
   assert.equal(night.issueList[0].state, "open");
   await issues.apply([obs("pass", "t3code-nightly", "0.2.0-nightly.6")], night, hours(2));
   assert.equal(night.issueList[0].state, "closed");
-  // A pulled latest-channel release on the nightly pin: a same-version nightly is below it.
-  const promoted = new Fake();
-  await issues.apply([down("t3code-nightly", "0.2.0", "0.1.10-nightly.9")], promoted, now);
-  await issues.apply([obs("pass", "t3code-nightly", "0.2.0-nightly.6")], promoted, hours(1));
-  assert.equal(promoted.issueList[0].state, "open", "waits for 0.2.0 or a higher base");
-  await issues.apply([obs("pass", "t3code-nightly", "0.2.1-nightly.1")], promoted, hours(2));
-  assert.equal(promoted.issueList[0].state, "closed");
+  // A release ordered against a prerelease of its own base: 0.2.0-nightly.6 is below 0.2.0.
+  const ordered = new Fake();
+  await issues.apply([down("t3code-nightly", "0.2.0", "0.1.10-nightly.9")], ordered, now);
+  await issues.apply([obs("pass", "t3code-nightly", "0.2.0-nightly.6")], ordered, hours(1));
+  assert.equal(ordered.issueList[0].state, "open", "waits for 0.2.0 or a higher base");
+  await issues.apply([obs("pass", "t3code-nightly", "0.2.1-nightly.1")], ordered, hours(2));
+  assert.equal(ordered.issueList[0].state, "closed");
 });
 
-test("issues: one pull on the latest channel opens an issue per T3 Code pin, each titled with the pull", async () => {
+test("issues: one pull on the latest channel opens an issue per pin it moved, each titled with the pull", async () => {
+  // The latest channel's two pins; the nightly pins carry nightlies only.
   const gh = new Fake();
-  await issues.apply(["t3code", "t3", "t3code-nightly", "t3-nightly"].map((p) => down(p, "0.2.0", "0.1.9")), gh, now);
-  assert.deepEqual(gh.issueList.map((i) => i.title), ["t3code", "t3", "t3code-nightly", "t3-nightly"].map((p) => `downgrade: ${p} (0.2.0 pulled)`));
-  // The latest channel back; the nightly pins at a same-version nightly stay open.
-  await issues.apply([obs("pass", "t3code", "0.2.0"), obs("pass", "t3", "0.2.0"), obs("pass", "t3code-nightly", "0.2.0-nightly.1"),
-    obs("pass", "t3-nightly", "0.2.0-nightly.1")], gh, hours(1));
-  assert.deepEqual(await states(gh), ["closed", "closed", "open", "open"]);
+  await issues.apply(["t3code", "t3"].map((p) => down(p, "0.2.0", "0.1.9")), gh, now);
+  assert.deepEqual(gh.issueList.map((i) => i.title), ["t3code", "t3"].map((p) => `downgrade: ${p} (0.2.0 pulled)`));
+  await issues.apply([obs("pass", "t3code", "0.2.0"), obs("pass", "t3", "0.2.0")], gh, hours(1));
+  assert.deepEqual(await states(gh), ["closed", "closed"]);
 });
 
 test("issues: a downgrade reopens on a new move, starting over; a hand-closed one with the move standing reopens", async () => {

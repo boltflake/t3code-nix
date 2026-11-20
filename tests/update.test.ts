@@ -386,13 +386,13 @@ test("pages until a nightly turns up", async () => {
   assert.ok(repo.releases!.nodes.some((n) => n.tagName === "v0.1.10-nightly.20261112.9"));
 });
 
-test("a nightly older than the latest channel's release still ends the paging", async () => {
+test("a nightly older than the latest channel's release ends the paging, and is the nightly channel's pick", async () => {
   process.env.GH_TOKEN = "test";
   let calls = 0;
   const page = doc([rel("v0.1.9-nightly.20261110.3", true, "2026-11-10T00:00:00Z")], true);
   const repo = await u.fetchT3code(async () => { calls++; return page; });
   assert.equal(calls, 1);
-  assert.equal(select(repo).nightly, "v0.1.9");
+  assert.equal(select(repo).nightly, "v0.1.9-nightly.20261110.3");
 });
 
 test("GraphQL needs a token", async () => {
@@ -903,21 +903,18 @@ test("a `tags` package at its pin's version (same version, new bytes) is still r
   }
 });
 
-test("fillRules: a complete release isn't paged further; nightlies at or below a complete latest-channel release aren't paged at all", async () => {
+test("fillRules: a complete release isn't paged further; a nightly below the latest channel's release still is (it's the nightly channel's own)", async () => {
   const { fillAssets } = await import("../shared/sources.ts");
-  const { fillRules, decisive, select: pick } = await import("../shared/channels.ts");
+  const { fillRules, decisive } = await import("../shared/channels.ts");
   const more = (r: any) => ({ ...r, releaseAssets: { nodes: [...r.releaseAssets.nodes], pageInfo: { hasNextPage: true, endCursor: "x" } } });
   const latestChannelRelease = more(rel("v0.3.0", false, "2026-11-13T00:00:00Z")); // complete on page 1, with more pages
-  const oldNightly = more(rel("v0.2.0-nightly.20261112.1", true, "2026-11-12T00:00:00Z", false)); // below the latest channel's
-  const repo = { latestRelease: latestChannelRelease, releases: { nodes: [oldNightly, latestChannelRelease] } };
   const asked: string[] = [];
-  await fillAssets(decisive(repo as any), async (q) => { asked.push(q); throw new Error("an unneeded page"); }, fillRules(repo as any));
+  const repo = { latestRelease: latestChannelRelease, releases: { nodes: [latestChannelRelease] } };
+  await fillAssets(decisive(repo as any), async (q) => { asked.push(q); throw new Error("an unneeded page"); }, fillRules);
   assert.deepEqual(asked, []);
-  assert.deepEqual([pick(repo as any).latest, pick(repo as any).nightly], ["v0.3.0", "v0.3.0"]);
-  // A nightly above the latest channel's is still looked at.
-  const newNightly = more(rel("v0.3.1-nightly.20261114.1", true, "2026-11-14T00:00:00Z", false));
-  const repo2 = { latestRelease: latestChannelRelease, releases: { nodes: [newNightly, latestChannelRelease] } };
-  await assert.rejects(fillAssets(decisive(repo2 as any), async () => { throw new Error("needed page"); }, fillRules(repo2 as any)), /needed page/);
+  const oldNightly = more(rel("v0.2.0-nightly.20261112.1", true, "2026-11-12T00:00:00Z", false)); // below the latest channel's
+  const repo2 = { latestRelease: latestChannelRelease, releases: { nodes: [oldNightly, latestChannelRelease] } };
+  await assert.rejects(fillAssets(decisive(repo2 as any), async () => { throw new Error("needed page"); }, fillRules), /needed page/);
 });
 
 test("a release repeated on the next list page (one created between pages) is judged by its filled copy", async () => {

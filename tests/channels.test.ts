@@ -59,14 +59,15 @@ test("classification", () => {
   assert.equal(classify({ tagName: "v0.2.0", isPrerelease: true }), "unknown");
 });
 
-test("a nightly sorts below its own vX.Y.Z; nightly channel never lags the latest channel", () => {
-  assert.ok(compareTags("v0.1.9-nightly.20261111.4515", "v0.1.9") < 0);
-  assert.ok(compareTags("v0.1.10-nightly.20261112.4564", "v0.1.9") > 0);
+test("the nightly channel keeps its nightly; nightlies order by version, then date and number", () => {
+  assert.ok(compareTags("v0.1.10-nightly.20261112.4564", "v0.1.9-nightly.20261113.1") > 0);
+  assert.ok(compareTags("v0.1.10-nightly.20261112.4564", "v0.1.10-nightly.20261112.4580") < 0);
+  assert.throws(() => compareTags("v0.1.10-nightly.20261112.4564", "v0.1.10"), /not a nightly tag: v0\.1\.10/);
   const picked = select({
     latestRelease: rel("v0.2.0", false, "2026-12-02T00:00:00Z"),
     releases: { nodes: [rel("v0.2.0-nightly.20261201.9", true, "2026-12-01T00:00:00Z")] },
   });
-  assert.equal(picked.nightly, "v0.2.0");
+  assert.equal(picked.nightly, "v0.2.0-nightly.20261201.9");
 });
 
 test("a preview with a lower version than the latest channel's is ignored", () => {
@@ -75,7 +76,7 @@ test("a preview with a lower version than the latest channel's is ignored", () =
     releases: { nodes: [rel("v0.1.9-preview.20261111.4536", true, "2026-11-11T18:00:00Z")] },
   });
   assert.equal(picked.latest, "v0.1.9");
-  assert.equal(picked.nightly, "v0.1.9");
+  assert.equal(picked.nightly, null);
   assert.deepEqual(picked.unknown, []);
 });
 
@@ -84,7 +85,7 @@ test("an incomplete release is not picked, and is reported", () => {
     latestRelease: rel("v0.1.9", false, "2026-11-11T00:00:00Z"),
     releases: { nodes: [rel("v0.1.10-nightly.20261112.1", true, "2026-11-12T00:00:00Z", false)] },
   });
-  assert.equal(picked.nightly, "v0.1.9");
+  assert.equal(picked.nightly, null);
   assert.deepEqual(tags(picked.incomplete), ["v0.1.10-nightly.20261112.1"]);
 });
 
@@ -105,13 +106,14 @@ test("an unknown latestRelease is always reported", () => {
   assert.deepEqual(tags(picked.unknown), ["v1.0.0-release"]);
 });
 
-test("an incomplete nightly older than the latest channel's release is ignored", () => {
+test("nightly never takes the latest channel's release, however much newer; its own incomplete nightly still counts", () => {
   const picked = select({
     latestRelease: rel("v1.0.0", false, "2026-12-01T00:00:00Z"),
-    releases: { nodes: [rel("v1.0.0-nightly.20261112.1", true, "2026-11-12T00:00:00Z", false)] },
+    releases: { nodes: [rel("v1.0.0-nightly.20261112.1", true, "2026-11-12T00:00:00Z", false), rel("v0.9.0-nightly.20261101.1", true, "2026-11-01T00:00:00Z")] },
   });
-  assert.equal(picked.nightly, "v1.0.0");
-  assert.deepEqual(picked.incomplete, []);
+  assert.equal(picked.latest, "v1.0.0");
+  assert.equal(picked.nightly, "v0.9.0-nightly.20261101.1");
+  assert.deepEqual(picked.incomplete, [{ tagName: "v1.0.0-nightly.20261112.1", createdAt: "2026-11-12T00:00:00Z", channel: "nightly" }]);
 });
 
 test("channels: upstream's update-feed release is skipped, and a release needs every file", () => {

@@ -478,6 +478,8 @@ test("watcher: a release whose required files are past the first 100 assets is s
   w.assetPages["v0.2.0"] = { pageInfo: { hasNextPage: false, endCursor: null }, nodes: files("0.2.0") };
   const { state } = await run(A, env(new FakeKV()), t0, f);
   assert.equal(state.entries["t3code/latest"]?.version, "0.2.0");
+  // Nightly keeps its own, older nightly: never the latest channel's release.
+  assert.equal(state.entries["t3code/nightly"]?.version, "0.1.10-nightly.20261112.4580");
 });
 
 test("watcher: skipped previews' assets aren't paged; a budget or page failure costs only t3code's result", async () => {

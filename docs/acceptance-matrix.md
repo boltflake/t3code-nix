@@ -91,7 +91,7 @@ Checked against upstream on 2026-11-12.
 ## T3 Code: ✅ x86_64 · 🔲 aarch64 · pins [versions/t3code.json](../versions/t3code.json), [t3.json](../versions/t3.json) and their `-nightly` twins
 
 - **Latest:** the GitHub GraphQL `latestRelease` of `pingdotgg/t3code` (the latest channel, named after upstream's desktop update channel).
-- **Nightly:** whichever is newer of the newest `vX.Y.Z-nightly.<date>.<n>` prerelease and the latest channel's version. Previews (`-preview.`), `android-*` and drafts are skipped on purpose. A nightly sorts below its own `vX.Y.Z` version.
+- **Nightly:** the newest `vX.Y.Z-nightly.<date>.<n>` prerelease, never a latest-channel release. Previews (`-preview.`), `android-*` and drafts are skipped on purpose.
 - **Completeness:** a release counts only once all five assets below are listed.
 - **Electron:** the desktop pins record the exact Electron upstream bundles (`apps/desktop/package.json` at the release's commit; `null` when it isn't a plain X.Y.Z), which the build checks against the `.deb`'s program. `electron = "auto"` (the default) runs the app on nixpkgs' `electron_N-bin` of that major when it's usable and at least as new, copied and renamed so the app runs packaged; both runtimes are built and smoke-tested, and a release whose nixpkgs runtime alone fails ships on bundled (`ci/electron-fallback.json`, `lib/electron.nix`). Which one each Desktop app package runs is recorded in `ci/electron-runtime.json` (evaluated from the package in the update run's resolve job, best effort), which the status page and the release notes name; the `electron-runtime` check fails an entry that describes its tree and isn't what the package evaluates to.
 

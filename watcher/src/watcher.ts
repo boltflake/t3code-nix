@@ -199,7 +199,7 @@ export const github: Source = {
         appendPage(repo, more.t3?.releases?.nodes ?? []);
         repo.releases!.pageInfo = more.t3?.releases?.pageInfo;
       }
-      await fillAssets(decisive(repo), (q) => graphql(f, env, now, q), { ...fillRules(repo), budget: ASSET_BUDGET });
+      await fillAssets(decisive(repo), (q) => graphql(f, env, now, q), { ...fillRules, budget: ASSET_BUDGET });
     } catch (e: any) {
       const err = e instanceof SourceError ? e : new SourceError("parse", String(e?.message ?? e));
       const soft: SoftError = { error: new SourceError(err.kind, `t3code not read this run: ${err.message.slice(0, 200)}`, err.retryAt), unread: "t3code/" };

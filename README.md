@@ -726,9 +726,8 @@ A problem in T3 Code itself, one that also happens without Nix, belongs
 **Channels.** The latest channel (`"latest"`, upstream's name for its
 non-nightly releases) is the default. For nightly, set
 `programs.t3code.channel = "nightly"`, or use the `-nightly` packages.
-Nightly follows whichever is newer: T3 Code's newest nightly build, or the
-latest channel's release. So when a latest-channel release is newer than
-the newest nightly, nightly gets that release until the next nightly.
+Nightly gets T3 Code's nightly builds only, never a latest-channel
+release, even one newer than the newest nightly.
 These are T3 Code's own release channels; the libraries underneath are a
 separate choice (see [NixOS stable](#nixos-stable)).
 

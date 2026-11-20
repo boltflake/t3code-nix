@@ -81,10 +81,10 @@ Each run's summary has the details.
 **`downgrade`.** When upstream pulls a release (deletes it, or marks it a
 draft or prerelease again), `main` follows its pointer back to the earlier
 version, after the usual tests. Each pin that moved back gets its own
-issue, titled with the pulled version, so a T3 Code pull that moves its four
-pins opens four. A move between two versions with the same numbers and
-different suffixes (two nightlies of one version, say) can't be ordered, so
-it opens no issue.
+issue, titled with the pulled version, so a pull on T3 Code's latest
+channel opens two (the app and the CLI). A move between two versions with
+the same numbers and different suffixes (two nightlies of one version,
+say) can't be ordered, so it opens no issue.
 
 **`integrity`.** grok publishes no checksum, so when its file changes
 without a new version, the updater keeps the old pin. After checking the

@@ -170,10 +170,9 @@ in
       default = "latest";
       description = ''
         T3 Code's release channel: `"latest"` (upstream's non-nightly
-        releases) or `"nightly"` (the newer of the newest nightly and the
-        latest channel's release). Picks the default `package` and the CLI
-        that `cli.enable` installs. Only the latest channel is in the binary
-        cache.
+        releases) or `"nightly"` (upstream's nightly builds only). Picks the
+        default `package` and the CLI that `cli.enable` installs. Only the
+        latest channel is in the binary cache.
       '';
     };
 
