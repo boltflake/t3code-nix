@@ -331,6 +331,30 @@ let
         touch $out
       '';
 
+  # fx's updater stays off however its settings ask: the wrapper's
+  # FX_AUTO_UPGRADE=0 outranks ~/.fx/settings.json's auto_upgrade (fx's
+  # documented precedence), which `fx config set` writes. fx reports where
+  # each value comes from (`config list --show-origin`, offline); the last
+  # line for a key is the one it uses (`config get` doesn't count the
+  # environment, so it can't show this). The whole listing goes to the log
+  # first, so a renamed key or format still shows what fx said.
+  fx-upgrade-off = runCommand "fx-upgrade-off" { } ''
+    used() {
+      home=$(mktemp -d) && mkdir -m 700 $home/.fx
+      echo '{"auto_upgrade":true,"update_channel":"dev"}' > $home/.fx/settings.json
+      HOME=$home timeout 30 "$1" config list --show-origin | tee /dev/stderr | grep -P '\tauto_upgrade=' | tail -n 1
+    }
+    # Unwrapped, the settings file wins, so the comparison means something.
+    # Each in an assignment of its own: fx failing stops the build.
+    control=$(used ${packages.fx}/libexec/fx/fx)
+    [ "$control" = "$(printf 'file:~/.fx/settings.json\tauto_upgrade=true')" ] \
+      || { echo "control: fx uses auto_upgrade from: $control"; exit 1; }
+    got=$(used ${packages.fx}/bin/fx)
+    [ "$got" = "$(printf 'env:FX_AUTO_UPGRADE\tauto_upgrade=false')" ] \
+      || { echo "wrapped: fx uses auto_upgrade from: $got"; exit 1; }
+    touch $out
+  '';
+
   # boat's update check stays off: both runs send boat's requests to a
   # recorder on loopback (BOAT_API_URL; a proxy can't see them, boat uses
   # rustls with its own roots), signed out, with a fresh config whose last
@@ -3133,6 +3157,12 @@ let
       "codex"
       "update"
     ]
+    # Not a command since codex 0.171.0, so its next word is the command.
+    [
+      packages.codex
+      "codex"
+      "stdio-to-uds update"
+    ]
     [
       packages.codex
       "codex"
@@ -4265,7 +4295,12 @@ let
     [
       packages.codex
       "codex"
-      "stdio-to-uds update"
+      "tcp-tunnel update"
+    ]
+    [
+      packages.codex
+      "codex"
+      "git-credential update"
     ]
     [
       packages.codex
@@ -6324,6 +6359,7 @@ in
     speech-model-pin
     acp-runtimes
     boat-self-update-off
+    fx-upgrade-off
     agent-tools-separate
     agent-browser-browsers
     agent-browser-stable-chromium

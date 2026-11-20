@@ -127,8 +127,8 @@ let
   # setup` only allows Chrome's sandbox and installs libraries with apt;
   # `uninstall` and `service uninstall` remove upstream's own copy;
   # `environment link` links another machine's T3 Code (see "T3 Code over
-  # SSH"); the rest handle pairing, sessions, projects, threads, themes,
-  # traces and policies.
+  # SSH"); the rest handle pairing, sessions, T3 Connect devices, projects,
+  # threads, themes, traces and policies.
   t3Commands = [
     "help"
     "serve"
@@ -143,6 +143,10 @@ let
     "auth session issue"
     "auth session list"
     "auth session revoke"
+    "auth connect-device"
+    "auth connect-device list"
+    "auth connect-device approve"
+    "auth connect-device revoke"
     "environment"
     "environment link"
     "environment list"
@@ -260,6 +264,8 @@ let
       "acp"
       "ask"
       "balance"
+      "completion"
+      "config"
       "credits"
       "doctor"
       "help"
@@ -334,6 +340,7 @@ let
       "whoami"
     ];
     "muse" = [
+      "acp"
       "attach"
       "auth"
       "config"
@@ -545,8 +552,8 @@ let
   codexHiddenCommands = [
     "cloud-tasks"
     "execpolicy"
+    "git-credential"
     "responses-api-proxy"
-    "stdio-to-uds"
     "tcp-tunnel"
   ];
   # codex's command line as clap parses it, for refuseCodex. The options

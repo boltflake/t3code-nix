@@ -42,7 +42,10 @@ stdenv.mkDerivation (
       runHook preInstall
       install -Dm755 fx $out/libexec/fx/fx
       # fx downloads and installs updates in the background unless told not
-      # to (fx.sh/docs/configure-fx/configuration: FX_AUTO_UPGRADE=0).
+      # to (fx.sh/docs/configure-fx/configuration: FX_AUTO_UPGRADE=0). The
+      # variable outranks ~/.fx/settings.json, so `fx config set auto_upgrade
+      # true` (or update_channel) can't bring the updater back
+      # (fx-upgrade-off).
       makeWrapper $out/libexec/fx/fx $out/bin/fx \
         ${guard.refuse { name = "fx"; }} \
         --set FX_AUTO_UPGRADE 0

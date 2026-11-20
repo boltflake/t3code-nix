@@ -50,6 +50,7 @@
     "relay-client"
     "completions"
     "boat-self-update-off"
+    "fx-upgrade-off"
     "agent-tools-separate"
     "agent-browser-browsers"
     # The desktop app on each Electron (lib/electron.nix), forced.
