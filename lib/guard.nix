@@ -183,6 +183,7 @@ let
     "policy"
     "policy show"
     "policy check"
+    "policy settings"
     "policy templates"
     "triage"
     "connect"
