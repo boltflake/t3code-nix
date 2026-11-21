@@ -295,7 +295,21 @@ function strip(h: Delivery[]): string {
   if (exactGaps.length) {
     label += `: median ${duration(median(exactGaps))}, slowest ${duration(exactGaps.at(-1)!)}; exact times only`;
   } else label += "; no exact delivery times";
-  return `<svg class="strip" viewBox="0 0 ${n * 9 - 3} 16" width="${n * 9 - 3}" height="16" role="img" aria-label="${escape(label)}">${oldestFirst.map((d, i) => bar(d, i * 9)).join("")}</svg>`;
+  return `<svg class="strip" viewBox="0 0 ${n * 9 - 3} 16" width="${n * 9 - 3}" height="16" role="img" aria-label="${escape(label)}">${oldestFirst.map((d, i) => tipped(d, i * 9)).join("")}</svg>`;
+}
+
+/** A strip bar, with its delivery for the script's card: the version,
+ * the time it took and its band, and when it was published. A clear rect
+ * over the bar's slot, gap included, makes short bars easy to hit. Hidden
+ * from screen readers: the strip is one image with its summary as its
+ * name, and the details list has each delivery. */
+function tipped(d: Delivery, x: number): string {
+  const known = d.gap !== null && d.released;
+  const approx = known && KIND[d.released!.kind].why;
+  const [band, took, note] = !known ? ["none", "Not known", "delivery time"]
+    : approx ? ["approx", `~${roughly(d.gap!)}`, `approximate: ${KIND[d.released!.kind].label}`]
+    : [tone(d.gap!), duration(d.gap!), "to deliver"];
+  return `<g aria-hidden="true" data-v="${escape(d.shown)}" data-d="${escape(took)}" data-note="${escape(note)}" data-band="${band}" data-at="${escape(d.published.at)}"><rect class="hit" x="${x - 1.5}" width="9" height="16"/>${bar(d, x)}</g>`;
 }
 
 /** Why the version shown isn't a delivery, in a sentence. */
@@ -479,6 +493,7 @@ ${activity(list, live)}${sections}
 <p><a class="hit" href="${repoUrl}">t3code-nix on GitHub</a></p>
 </footer>
 </div>
+<div class="tip" id="tip" aria-hidden="true"></div>
 <script>${SCRIPT}</script>
 </body>
 </html>
@@ -689,6 +704,30 @@ a.hit { display: inline-block; padding-block: .125rem; margin-block: -.125rem; }
 .none-text { color: var(--muted); }
 .band-mark { width: 6px; height: 16px; flex: none; }
 .strip { display: block; overflow: visible; }
+.strip .hit { fill: transparent; }
+/* The bar under the pointer grows, springing up from its base. */
+.strip g > :not(.hit) { transform-box: fill-box; transform-origin: 50% 100%; transition: transform .2s cubic-bezier(.3, 1.8, .5, 1), filter .2s; }
+.strip g.on > :not(.hit) { transform: scale(1.5, 1.35); filter: drop-shadow(0 1px 2px rgb(0 0 0 / .35)); }
+.tip { position: fixed; left: 0; top: 0; z-index: 10; pointer-events: none; min-width: 13rem; max-width: min(21rem, calc(100vw - 1rem)); padding: .625rem .75rem;
+  background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: .625rem; box-shadow: 0 10px 28px rgb(0 0 0 / .22), 0 2px 6px rgb(0 0 0 / .1);
+  font-size: .8125rem; line-height: 1.4; visibility: hidden; opacity: 0; transform: translateY(6px) scale(.94); transform-origin: var(--ax, 50%) 100%;
+  transition: opacity .14s, transform .22s cubic-bezier(.3, 1.6, .5, 1), visibility 0s .14s; }
+.tip.below { transform: translateY(-6px) scale(.94); transform-origin: var(--ax, 50%) 0; }
+.tip.show { visibility: visible; opacity: 1; transform: none; transition: opacity .14s, transform .22s cubic-bezier(.3, 1.6, .5, 1), visibility 0s; }
+.tip.show.glide { transition: opacity .14s, transform .22s cubic-bezier(.3, 1.6, .5, 1), visibility 0s, left .14s ease-out, top .14s ease-out; }
+.tip::after { content: ""; position: absolute; left: var(--ax, 50%); bottom: -6px; width: 10px; height: 10px; margin-left: -5px; background: var(--surface);
+  border: solid var(--line); border-width: 0 1px 1px 0; transform: rotate(45deg); }
+.tip.below::after { bottom: auto; top: -6px; border-width: 1px 0 0 1px; }
+.tip-head { display: flex; align-items: center; gap: .5rem; }
+.tip-v { font: 600 .8125rem/1.3 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; overflow-wrap: anywhere; }
+.tip-tag { margin-left: auto; flex: none; padding: 0 .4rem; border-radius: 999px; background: var(--move-bg); color: var(--move); font-size: .6875rem; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+.tip-d { display: flex; align-items: baseline; gap: .375rem; margin-top: .375rem; }
+.tip-d strong { font-size: 1.0625rem; }
+.tip-note, .tip-t { color: var(--muted); }
+.tip-dot { width: .625rem; height: .625rem; flex: none; align-self: center; border-radius: 2px; }
+.tip-dot.good { background: var(--ok); } .tip-dot.fair { background: var(--held); } .tip-dot.slow { background: var(--slow); }
+.tip-dot.approx { background: repeating-linear-gradient(45deg, var(--approx) 0 1px, transparent 1px 3px); border: 1px solid var(--approx); } .tip-dot.none { border: 1.5px solid var(--approx); border-radius: 50%; }
+.tip-t { margin-top: .125rem; font-size: .75rem; }
 
 .st { width: 1rem; height: 1rem; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .st.ok { color: var(--ok); } .st.found, .st.testing { color: var(--move); } .st.held, .st.stale { color: var(--held); } .st.none { color: var(--none); }
@@ -924,6 +963,66 @@ let pageState = () => {};
   if (local) {
     for (const t of all("time:not(.rel)")) setText(t, exact(t.dateTime));
     for (const t of all("time.rel")) t.title = exact(t.dateTime);
+  }
+  // The strip's card: the bar under the pointer (or tapped) grows, and a
+  // card over it shows that delivery; moving along the strip slides the
+  // card from bar to bar. A tap elsewhere, a scroll, a resize or Escape
+  // closes it. The details list has the same, for keyboards and screen
+  // readers.
+  const tip = $("#tip");
+  if (tip) {
+    let on = null;
+    const add = (tag, cls, parent, text) => {
+      const e = d.createElement(tag);
+      e.className = cls;
+      if (text) e.textContent = text;
+      parent.appendChild(e);
+      return e;
+    };
+    const barOf = (t) => (t && t.closest ? t.closest(".strip g[data-at]") : null);
+    const hide = () => {
+      if (on) on.classList.remove("on");
+      on = null;
+      tip.classList.remove("show");
+    };
+    const show = (g) => {
+      if (g === on) return;
+      if (on) on.classList.remove("on");
+      on = g;
+      g.classList.add("on");
+      const at = g.getAttribute("data-at");
+      tip.textContent = "";
+      const head = add("div", "tip-head", tip);
+      add("span", "tip-v", head, g.getAttribute("data-v"));
+      if (g === g.parentNode.lastElementChild) add("span", "tip-tag", head, "Latest");
+      const took = add("div", "tip-d", tip);
+      add("span", "tip-dot " + g.getAttribute("data-band"), took);
+      add("strong", "", took, g.getAttribute("data-d"));
+      add("span", "tip-note", took, g.getAttribute("data-note"));
+      add("div", "tip-t", tip, "Published " + ago(at) + " \u00b7 " + exact(at));
+      // Over the bar, or under it when there's no room; inside the window.
+      // It glides only from another bar, never in from where it last was.
+      tip.classList.toggle("glide", tip.classList.contains("show"));
+      const b = g.querySelector(".hit").getBoundingClientRect();
+      const w = tip.offsetWidth, h = tip.offsetHeight, vw = d.documentElement.clientWidth;
+      const cx = b.left + b.width / 2, left = Math.min(Math.max(8, cx - w / 2), vw - w - 8);
+      const below = b.top - h - 12 < 8;
+      tip.classList.toggle("below", below);
+      tip.style.left = left + "px";
+      tip.style.top = (below ? b.bottom + 12 : b.top - h - 12) + "px";
+      tip.style.setProperty("--ax", cx - left + "px");
+      tip.classList.add("show");
+    };
+    d.addEventListener("pointerover", (e) => { const g = barOf(e.target); if (g) show(g); });
+    // A mouse leaving the bar closes the card, unless it went to another
+    // bar; a touch keeps it open until the next tap.
+    d.addEventListener("pointerout", (e) => {
+      if (on && e.pointerType !== "touch" && barOf(e.target) === on && !barOf(e.relatedTarget)) hide();
+    });
+    d.addEventListener("pointerdown", (e) => { if (!barOf(e.target)) hide(); });
+    d.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+    addEventListener("scroll", hide, { passive: true });
+    addEventListener("resize", hide);
   }
   // This page's own id counts as a try.
   if (id && !tries(id).length) remember(id);

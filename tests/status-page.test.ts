@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import vm from "node:vm";
-import { escape, html, minifyCss, minifyJs, SCRIPT, SCRIPT_HASH, STYLE } from "../scripts/status-page.ts";
+import { escape, html, minifyCss, minifyJs, SCRIPT, SCRIPT_HASH, STYLE, utc } from "../scripts/status-page.ts";
 import type { Delivery, Row, StableView } from "../scripts/status.ts";
 import type { Live, PinState } from "../scripts/status-live.ts";
 
@@ -84,7 +84,13 @@ test("page: the style and script, minified without changing a rule or a statemen
 });
 
 test("page: every title's text is also on the page", () => {
-  const page = html([row("codex"), row("grok", { released: { at: "2026-11-13T09:00:00.000Z", kind: "uploaded" }, gap: 3 * 3600 })], "o/r",
+  // Each delivery its own version and time, and the two rows' differing, so
+  // a tooltip on the wrong bar or row shows.
+  const dv = (shown: string, at: string, gap: number): Delivery => ({ ...d(gap, "published", shown), published: pub(at) });
+  const page = html([
+    row("codex", { history: [dv("1.0", "2026-11-13T12:00:00.000Z", 480), dv("0.9", "2026-11-12T08:30:00.000Z", 3 * 3600), dv("0.8", "2026-11-10T17:05:00.000Z", 9 * 3600)] }),
+    row("grok", { released: { at: "2026-11-13T09:00:00.000Z", kind: "uploaded" }, gap: 3 * 3600, history: [dv("2.1", "2026-11-11T06:00:00.000Z", 600), dv("2.0", "2026-11-09T22:40:00.000Z", 7200)] }),
+  ], "o/r",
     live({ codex: { state: "testing", version: "1.1", since: "2026-11-13T11:56:00.000Z", link: "https://github.com/o/r/actions/runs/9" }, grok: { state: "up-to-date" } }), "x", null,
     { median: 412, count: 9, since: "2026-10-14T12:00:00.000Z", until: "2026-11-13T12:00:00.000Z" });
   // What a sighted reader sees: no screen-reader-only text, nothing hidden,
@@ -96,7 +102,22 @@ test("page: every title's text is also on the page", () => {
   const titles = [...body.matchAll(/title="([^"]*)"/g)].map((m) => m[1]);
   assert.ok(titles.length >= 2, String(titles.length));
   for (const t of titles) assert.ok(visible.includes(t), `only in a title: ${t}`);
-  assert.ok(!body.includes("<title>"), "no SVG tooltips: their labels are aria-labels");
+  // The strip's card shows each bar's delivery: it's in that package's own
+  // details list too, for readers who can't hover.
+  let tipCount = 0;
+  for (const li of body.split(/<li class="pkg/).slice(1)) {
+    const strip = li.match(/<svg class="strip"[\s\S]*?<\/svg>/)?.[0] ?? "";
+    const bars = [...strip.matchAll(/<g aria-hidden="true" data-v="([^"]*)" data-d="([^"]*)" data-note="([^"]*)" data-band="(\w+)" data-at="([^"]+)"><rect class="hit"/g)];
+    assert.equal(bars.length, [...strip.matchAll(/<g /g)].length);
+    const hist = [...li.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => text(m[1].replace(/<wbr>/g, "")).trim());
+    for (const [, v, took, , band, at] of bars) {
+      assert.match(band, /^(good|fair|slow)$/, "exact times in this fixture");
+      const want = `${v} ${took} ${utc(at)}`;
+      assert.ok(hist.includes(want), `only in a card: ${want}`);
+      tipCount++;
+    }
+  }
+  assert.equal(tipCount, 5);
 });
 
 test("page: groups, headings, names and the header row", () => {
@@ -254,6 +275,16 @@ test("page: the delivery column, the strip and the details", () => {
   const strip = rowOf(page, "codex").match(/<svg class="strip"[^>]*>[\s\S]*?<\/svg>/)![0];
   assert.match(strip, /aria-label="Last 3 deliveries: median 3 h, slowest 9 h; exact times only"/);
   assert.deepEqual([...strip.matchAll(/class="b-(\w+)"[^>]*height="(\d+)"/g)].map((m) => [m[1], m[2]]), [["slow", "16"], ["fair", "10"], ["good", "5"]]);
+  // Each bar carries its delivery for the card, oldest first like the bars;
+  // a clear rect over its slot is the hover target.
+  const g = (x: string, t: string, band: string) => `<g aria-hidden="true" data-v="1" data-d="${t}" data-note="to deliver" data-band="${band}" data-at="2026-11-10T00:00:00.000Z"><rect class="hit" x="${x}" width="9" height="16"/><rect class="b-${band}"`;
+  for (const [x, t, band] of [["-1.5", "9 h", "slow"], ["7.5", "3 h", "fair"], ["16.5", "8 min", "good"]]) assert.ok(strip.includes(g(x, t, band)), t);
+  // Approximate and unknown: the words the card shows.
+  const oddRow = rowOf(page, "antigravity");
+  assert.ok(oddRow.includes('data-d="~1 min" data-note="approximate: first seen" data-band="approx"'));
+  assert.ok(oddRow.includes('data-d="Not known" data-note="delivery time" data-band="none"'));
+  // One card for the page, hidden from screen readers.
+  assert.equal(page.match(/<div class="tip" id="tip" aria-hidden="true"><\/div>/g)?.length, 1);
   const odd = rowOf(page, "antigravity").match(/<svg class="strip"[^>]*>[\s\S]*?<\/svg>/)![0];
   assert.match(odd, /aria-label="Last 2 deliveries; no exact delivery times"/);
   assert.ok(odd.includes('class="b-none"') && odd.includes('class="b-approx"'));
@@ -383,6 +414,27 @@ interface Opts {
   /** The reader's locale and time zone (default en-GB and UTC, which write
    * times as the page does); null: no Intl.DateTimeFormat. */
   reader?: { locale: string; zone: string } | null;
+  /** Where the strip's bars sit in the window (default 300 px down). */
+  barTop?: number;
+}
+/** A stub element for the strip's card: its text is its children's, joined
+ * with "|". */
+function node(o: Record<string, any> = {}): any {
+  const classes = new Set<string>();
+  const props: Record<string, string> = {};
+  return {
+    className: "", children: [] as any[], _text: "", parentNode: null, offsetWidth: 200, offsetHeight: 80, ...o,
+    classes, props, style: { props, setProperty(k: string, v: string) { props[k] = v; } },
+    classList: { add: (c: string) => classes.add(c), remove: (c: string) => classes.delete(c), contains: (c: string) => classes.has(c), toggle: (c: string, on: boolean) => (on ? classes.add(c) : classes.delete(c)) },
+    appendChild(c: any) { c.parentNode = this; this.children.push(c); return c; },
+    get textContent(): string { return this.children.length ? this.children.map((c: any) => c.textContent).join("|") : this._text; },
+    set textContent(v: string) { this.children = []; this._text = v; },
+    get lastElementChild() { return this.children.at(-1); },
+    getAttribute(a: string) { return this.attrs?.[a] ?? null; },
+    closest(q: string) { return q === ".strip g[data-at]" ? (this.isBar ? this : this.parentNode?.isBar ? this.parentNode : null) : null; },
+    querySelector(q: string) { return q === ".hit" ? this.children.find((c: any) => c.className === "hit") : null; },
+    getBoundingClientRect() { return this.rect; },
+  };
 }
 /** Runs SCRIPT against a stub DOM. Replies are "A" (id A) or "A@<iso>" (id A
  * checked then), an Error (the fetch fails) or "hang" (never answers). */
@@ -399,10 +451,19 @@ function run(o: Opts = {}) {
   const rels = [time("rel", "2026-11-13T11:59:30.000Z", "13 Nov 2026, 11:59 UTC"), time("rel", "2026-11-13T09:00:00.000Z", "13 Nov 2026, 09:00 UTC")];
   if (checkedEl) rels.push(checkedEl);
   const exactTime = time("", "2026-11-13T09:00:00.000Z", "13 Nov 2026, 09:00 UTC");
+  // The strip's card and two bars, the second the newest.
+  const tip = node();
+  const svg = node();
+  const bars = ["2026-11-13T09:00:00.000Z", "2026-11-13T11:52:00.000Z"].map((at, i) => {
+    const g = svg.appendChild(node({ isBar: true, attrs: { "data-v": `1.${i}`, "data-d": i ? "8 min" : "~3 h", "data-note": i ? "to deliver" : "approximate: file uploaded", "data-band": i ? "good" : "approx", "data-at": at } }));
+    g.appendChild(node({ className: "hit", rect: { left: 100 + 9 * i, width: 9, top: o.barTop ?? 300, bottom: (o.barTop ?? 300) + 16 } }));
+    g.appendChild(node());
+    return g;
+  });
   // The footer's exact check time, when there is one.
   const foot = time("", checkedEl?.dateTime ?? "", checkedEl?.title ?? "");
   const times = [...rels, exactTime, ...(checkedEl ? [foot] : [])];
-  const els: Record<string, any> = { ".stale-note": el(), ".at-last": el(), ".stale-icon": el(), ".status-line": el(), "#checked-exact": foot };
+  const els: Record<string, any> = { ".stale-note": el(), ".at-last": el(), ".stale-icon": el(), ".status-line": el(), "#checked-exact": foot, "#tip": tip };
   const leads = [el({ hidden: false })];
   const state = { details: false, selection: "", hidden: o.hidden ?? false, focused: o.focused ?? true, reloads: 0, fetches: 0, aborted: 0, urls: [] as string[], caches: [] as (string | undefined)[] };
   const store = o.store ?? new Map<string, string>();
@@ -421,12 +482,13 @@ function run(o: Opts = {}) {
   };
   class FixedDate extends Date { static now() { return now; } }
   const document = {
-    documentElement: { dataset: { id: "A" } },
+    documentElement: { dataset: { id: "A" }, clientWidth: 1000 },
     get hidden() { return state.hidden; },
     hasFocus: () => state.focused,
     querySelector: (q: string) => (q === "#checked" ? checkedEl : q === "details[open]" ? (state.details ? {} : null) : els[q] ?? null),
     querySelectorAll: (q: string) => (q === "time" ? times : q === "time.rel" ? times.filter((t) => t.cls === "rel") : q === "time:not(.rel)" ? times.filter((t) => t.cls !== "rel")
       : q === ".lead:not(.stale-icon)" ? leads : []),
+    createElement: () => node(),
     addEventListener: (t: string, fn: () => void) => { (listeners[t] ??= []).push(fn); },
   };
   // The reader's defaults: an undefined locale or a missing time zone is theirs.
@@ -458,7 +520,7 @@ function run(o: Opts = {}) {
   });
   const flush = () => new Promise((r) => setImmediate(r));
   return {
-    state, els, leads, rels, checkedEl, exactTime, foot, store, intervals, timeouts, delays, flush,
+    state, els, leads, rels, checkedEl, exactTime, tip, bars, listeners, foot, store, intervals, timeouts, delays, flush,
     /** Answers the oldest hanging check. */
     answer: async (r: string) => {
       const h = hung.shift();
@@ -547,6 +609,8 @@ test("script: exact times in the reader's own time zone, or UTC without Intl", a
   assert.equal(ny.exactTime.textContent, "13 Nov 2026, 4:00 AM EST");
   assert.deepEqual(ny.rels.map((t) => t.title), ["13 Nov 2026, 6:59 AM EST", "13 Nov 2026, 4:00 AM EST", "13 Nov 2026, 6:50 AM EST"], "the hover text too");
   assert.equal(ny.foot.textContent, "13 Nov 2026, 6:50 AM EST", "the footer's check time");
+  for (const f of ny.listeners.pointerover) (f as any)({ target: ny.bars[1].children[0] });
+  assert.ok(ny.tip.textContent.endsWith("|Published 8 minutes ago · 13 Nov 2026, 6:52 AM EST"), "the strip's card");
   await ny.minute();
   ny.hide();
   await ny.minute();
@@ -572,7 +636,56 @@ test("script: exact times in the reader's own time zone, or UTC without Intl", a
   const none = run({ reader: null });
   assert.equal(none.exactTime.textContent, "13 Nov 2026, 09:00 UTC", "no Intl.DateTimeFormat: UTC as built");
   assert.equal(none.exactTime.writes, 0);
+  for (const f of none.listeners.pointerover) (f as any)({ target: none.bars[1].children[1] });
+  assert.ok(none.tip.textContent.endsWith("|Published 8 minutes ago · 13 Nov 2026, 11:52 UTC"));
   for (const p of [tokyo, berlin, none]) { await p.flush(); p.hide(); }
+});
+
+test("script: the strip's card", async () => {
+  const p = run();
+  const fire = (t: string, e: Record<string, any>) => { for (const f of p.listeners[t] ?? []) (f as any)(e); };
+  const [old, latest] = p.bars;
+  assert.ok(!p.tip.classes.has("show"), "closed at first");
+  // The pointer on the newest bar: it grows, and the card opens over it.
+  fire("pointerover", { target: latest.children[0], pointerType: "mouse" });
+  assert.ok(latest.classes.has("on") && p.tip.classes.has("show") && !p.tip.classes.has("below"));
+  assert.ok(!p.tip.classes.has("glide"), "opens in place");
+  assert.equal(p.tip.textContent, "1.1|Latest||8 min|to deliver|Published 8 minutes ago · 13 Nov 2026, 11:52 UTC");
+  assert.equal(p.tip.children[1].children[0].className, "tip-dot good");
+  // Centred on the bar (109 + 4.5), 12 px over it; the arrow on the bar.
+  assert.equal(p.tip.style.props["--ax"], "100px");
+  assert.equal(p.tip.style.left, "13.5px");
+  assert.equal(p.tip.style.top, "208px");
+  // Along to the older bar: the card moves, no "Latest", the first bar shrinks.
+  fire("pointerout", { target: latest.children[0], relatedTarget: old.children[1], pointerType: "mouse" });
+  assert.ok(p.tip.classes.has("show"), "still open between bars");
+  fire("pointerover", { target: old.children[1], pointerType: "mouse" });
+  assert.ok(old.classes.has("on") && !latest.classes.has("on"));
+  assert.ok(p.tip.classes.has("glide"), "glides from bar to bar");
+  assert.equal(p.tip.textContent, "1.0||~3 h|approximate: file uploaded|Published 3 hours ago · 13 Nov 2026, 09:00 UTC");
+  // A mouse leaving the strip closes it.
+  fire("pointerout", { target: old.children[0], relatedTarget: null, pointerType: "mouse" });
+  assert.ok(!p.tip.classes.has("show") && !old.classes.has("on"));
+  // A tap opens it and keeps it open; a tap elsewhere closes it.
+  fire("pointerover", { target: old.children[0], pointerType: "touch" });
+  fire("pointerdown", { target: old.children[0], pointerType: "touch" });
+  fire("pointerout", { target: old.children[0], relatedTarget: null, pointerType: "touch" });
+  assert.ok(p.tip.classes.has("show"));
+  fire("pointerdown", { target: p.tip, pointerType: "touch" });
+  assert.ok(!p.tip.classes.has("show"));
+  // Escape, a scroll and a resize close it too.
+  for (const close of [() => fire("keydown", { key: "Escape" }), () => fire("scroll", {}), () => fire("resize", {})]) {
+    fire("pointerover", { target: latest.children[0], pointerType: "mouse" });
+    assert.ok(p.tip.classes.has("show"));
+    close();
+    assert.ok(!p.tip.classes.has("show") && !latest.classes.has("on"));
+  }
+  // No room over the bar: under it.
+  const low = run({ barTop: 50 });
+  for (const f of low.listeners.pointerover) (f as any)({ target: low.bars[0].children[0] });
+  assert.ok(low.tip.classes.has("below"));
+  assert.equal(low.tip.style.top, "78px");
+  for (const x of [p, low]) { await x.flush(); x.hide(); }
 });
 
 test("script: a newer check time waits for a redraw; an older one is ignored", async () => {
