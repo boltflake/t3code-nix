@@ -31,6 +31,11 @@
 // gate stops such a run before any job; this is the last line.
 // 4. Delete the candidate ref, and start pages.yml (the status page).
 //
+// A push the ruleset turns down saying `tested` is missing (GitHub can check
+// a push before a status posted a moment earlier shows up) is tried again, a
+// few seconds apart and longer each time (PUSH_WAIT_MS): PUSH_TRIES pushes in
+// all. The rejection the last push gets is handled as below.
+//
 // A rejected push: fetch main. If main moved, re-dispatch the workflow
 // (attempt + 1, at most 3 in a row); the new run tests against the new main,
 // and a tested candidate is never rebased. If main didn't move, the rejection
@@ -38,7 +43,7 @@
 //
 // Prints {observations, dryRun}. With DRY_RUN=true nothing is pushed or
 // posted; the steps are recorded instead.
-import { Failed, git, shownVersion, tryRun } from "../lib/util.ts";
+import { Failed, git, shownVersion, timing, tryRun } from "../lib/util.ts";
 import { differing, moved, SNAPSHOT } from "../lib/snapshot.ts";
 import { obs, type Observation } from "../update.ts";
 import { load, tree, type Input } from "./candidate.ts";
@@ -46,6 +51,11 @@ import { client, type Client } from "./gh.ts";
 import { parseChannels, type Channel } from "../lib/electron-fallback.ts";
 
 export const MAX_ATTEMPTS = 3;
+/** Pushes to main per run when the ruleset doesn't see `tested` yet. */
+export const PUSH_TRIES = 4;
+/** The wait between those pushes: this, then twice it, and so on. */
+export const PUSH_WAIT_MS = 5000;
+const STATUS_LAG = 'Required status check "tested" is expected';
 const BOT = ["-c", "user.name=github-actions[bot]", "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com"];
 
 export function latestChannelTag(inputs: Input[], final: string[]): string | null {
@@ -121,7 +131,13 @@ export async function publish(dir: string, final: string[], expectedTree: string
       git(...BOT, "tag", "-a", tag, "-m", `T3 Code ${tag.replace(/^t3code-v/, "")}`, sha);
       push.push(`refs/tags/${tag}`);
     }
-    result = tryRun("git", push);
+    for (let i = 1; ; i++) {
+      result = tryRun("git", push);
+      if (result.status === 0 || i >= PUSH_TRIES || !result.stderr.includes(STATUS_LAG)) break;
+      // stderr: stdout is the JSON the job reads.
+      console.warn(`publish: push ${i} turned down before GitHub saw \`tested\`; pushing again in ${PUSH_WAIT_MS * i / 1000} s`);
+      await timing.sleep(PUSH_WAIT_MS * i);
+    }
   } finally {
     // Ours to remove, whatever happened; if this fails, reconcile removes it
     // once this run has finished.

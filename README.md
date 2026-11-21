@@ -1123,13 +1123,9 @@ off by default because nix-ld changes how every unpatched program on the
 system starts. It's also best effort: this flake doesn't pin what T3 Code
 downloads.
 
-### Unsupported systems
+### Supported systems
 
-Linux only, on x86_64 and aarch64. On macOS, `nix run
-github:swsammy/t3code-nix` stops with "t3code-nix supports Linux only; see
-README". T3 Code has its own macOS install (see
-[its README](https://github.com/pingdotgg/t3code#readme)), and this flake
-doesn't package it. Other systems have no packages.
+`x86_64-linux` and `aarch64-linux`.
 
 ## Maintainer notes
 

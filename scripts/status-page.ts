@@ -3,9 +3,10 @@
 // another site (its Content-Security-Policy says so: the script is allowed
 // by its hash, and it may fetch only the site's own live.json). The output
 // depends only on its inputs, so it stays deterministic: dates are written
-// out in UTC, and the script turns the relative ones into "2 hours ago" in
-// the browser, says when the data is out of date, and offers or makes a
-// reload when the site has newer data (see SCRIPT).
+// out in UTC, and the script turns the relative ones into "2 hours ago" and
+// the exact ones into the reader's own time zone in the browser, says when
+// the data is out of date, and offers or makes a reload when the site has
+// newer data (see SCRIPT).
 import { createHash } from "node:crypto";
 import { AGENT_TOOLS, BROWSER_PINS, NIXPKGS_PINS, PROVIDERS, T3, UNFREE } from "./lib/packages.ts";
 import type { Browser, Delivery, Row, StableView } from "./status.ts";
@@ -65,7 +66,8 @@ export function utc(iso: string): string {
 /** A time the script shows as "2 hours ago" (the exact time stays in
  * the title, and in the details or the footer). */
 const rel = (iso: string) => `<time class="rel" datetime="${escape(iso)}" title="${escape(utc(iso))}">${escape(utc(iso))}</time>`;
-/** A time shown exactly, never rewritten. */
+/** A time shown exactly; the script rewrites it once, in the reader's
+ * time zone. */
 const exact = (iso: string) => `<time datetime="${escape(iso)}">${escape(utc(iso))}</time>`;
 
 /** A version, allowed to wrap after a "-" or "." (long nightly versions). */
@@ -122,6 +124,14 @@ const fullName = (n: string) => {
   return x.product ? `${x.product}, ${x.channel}` : x.title;
 };
 
+/** "Codex", or "T3 Code desktop app nightly": a name that stands alone. */
+const titleOf = (n: string) => {
+  const x = nameOf(n);
+  // "Desktop app" -> "desktop app"; "CLI and server" keeps its capitals.
+  const product = x.product?.replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase());
+  return product ? `T3 Code ${product}${x.channel === "Nightly" ? " nightly" : ""}` : x.title;
+};
+
 /** What a state says: "Testing 0.168.0", "Held: tests failed",
  * "New version 1.4.16". */
 function says(s: PinState): string {
@@ -162,18 +172,28 @@ function statusLine(checked: string | null): string {
   return `<p class="status-line">${time}<span class="live-status" role="status"><span class="stale-note" hidden>Out of date</span><span class="newer" hidden>Newer data · <a href="" class="reload hit">Reload</a></span></span></p>`;
 }
 
-function hero(list: Row[], by: Map<string, Row>, live: Live | null, delivery: DeliveryFigure | null): string {
+/** The latest change shown here: the packages whose versions arrived in
+ * the newest commit that changed one of them, with their versions (a
+ * browser pin by name only: its browsers are in its row), when, and the
+ * commit. */
+export function latestLine(list: Row[], repo: string): string {
+  const newest = list.filter((r) => r.published).sort((a, b) => (a.published!.at < b.published!.at ? 1 : a.published!.at > b.published!.at ? -1 : 0))[0]?.published;
+  if (!newest) return "";
+  const order = new Map(pageOrder(list).map((n, i) => [n, i]));
+  const names = list.filter((r) => r.published?.commit === newest.commit).sort((a, b) => order.get(a.name)! - order.get(b.name)!)
+    .map((r) => `<strong>${escape(titleOf(r.name))}</strong>${r.browsers ? "" : ` ${version(r.version)}`}`);
+  const said = names.length > 3 ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more` : names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
+  return `<p class="latest">Latest update: ${said} · ${rel(newest.at)} · <a class="hit" href="https://github.com/${escape(repo)}/commit/${escape(newest.commit)}">commit ${escape(newest.commit.slice(0, 7))}<span class="sr">, the latest update</span></a></p>\n`;
+}
+
+function hero(list: Row[], by: Map<string, Row>, live: Live | null, delivery: DeliveryFigure | null, repo: string): string {
   if (!live) {
-    const newest = list.map((r) => r.published?.at).filter((a): a is string => !!a).sort().at(-1);
     const latest = by.get("t3code")?.version, nightly = by.get("t3code-nightly")?.version;
-    const parts = [
-      ...(latest ? [`T3 Code ${escape(latest)}${nightly ? ` (Nightly ${escape(nightly)})` : ""}`] : []),
-      ...(newest ? [`last update ${rel(newest)}`] : []),
-    ];
+    const parts = latest ? [`T3 Code ${escape(latest)}${nightly ? ` (Nightly ${escape(nightly)})` : ""}`] : [];
     return `<section class="hero plain" aria-labelledby="headline">
 <div class="hero-main"><div class="hero-text">
 <h2 id="headline">${list.length} packages</h2>
-${parts.length ? `<p class="counts">${parts.join(" · ")}</p>\n` : ""}<p class="note">Upstream status isn't available; these are the versions on <code>main</code>.</p>
+${parts.length ? `<p class="counts">${parts.join(" · ")}</p>\n` : ""}${latestLine(list, repo)}<p class="note">Upstream status isn't available; these are the versions on <code>main</code>.</p>
 ${statusLine(null)}
 </div></div>
 ${figure(delivery)}
@@ -189,7 +209,7 @@ ${figure(delivery)}
   return `<section class="hero" aria-labelledby="headline">
 <div class="hero-main"><span class="lead">${icon(lead, LABEL[lead])}</span><span class="lead stale-icon" hidden>${icon("stale", LABEL.stale)}</span><div class="hero-text">
 <h2 id="headline">${escape(title)}<span class="at-last" hidden> at the last check</span></h2>
-${counts.length ? `<p class="counts">${counts.join(`<span class="dot" aria-hidden="true"> · </span>`)}</p>\n` : ""}${statusLine(live.checked)}
+${counts.length ? `<p class="counts">${counts.join(`<span class="dot" aria-hidden="true"> · </span>`)}</p>\n` : ""}${latestLine(list, repo)}${statusLine(live.checked)}
 </div></div>
 ${figure(delivery)}
 </section>`;
@@ -373,10 +393,6 @@ const pageOrder = (list: Row[]) => {
 
 /** The NixOS stable line: current, or behind with what differs. */
 function stableLine(v: StableView, repo: string): string {
-  const titleOf = (n: string) => {
-    const x = nameOf(n);
-    return x.product ? `T3 Code ${x.product.toLowerCase()}${x.channel === "Nightly" ? " nightly" : ""}` : x.title;
-  };
   if (v.current) return `<p class="card-note">NixOS stable has the same versions as main.</p>`;
   const each = v.differing.map((d) =>
     // The same shown version on both sides: main has a newer build of it
@@ -452,7 +468,7 @@ ${ul(c.names, 4).replace('<ul class="pkgs"', '<ul class="pkgs kids"')}
 <nav aria-label="Project"><a href="${repoUrl}#quick-start">Install</a><a href="${repoUrl}/releases">Releases</a><a href="${repoUrl}">Repository</a></nav>
 </header>
 <main>
-${hero(list, by, live, delivery)}
+${hero(list, by, live, delivery, repo)}
 ${activity(list, live)}${sections}
 </main>
 <footer>
@@ -536,6 +552,8 @@ h1 { font-size: 1.25rem; line-height: 1.75rem; font-weight: 500; color: var(--mu
 #headline { font-size: 1.75rem; line-height: 2.25rem; font-weight: 600; letter-spacing: -.02em; }
 .counts { display: flex; flex-wrap: wrap; align-items: center; column-gap: .375rem; row-gap: .25rem; margin-top: .5rem; color: var(--muted); font-size: .875rem; line-height: 1.25rem; }
 .count-item { display: inline-flex; align-items: center; gap: .375rem; color: var(--text); font-weight: 500; }
+.latest { margin-top: .5rem; font-size: .875rem; line-height: 1.25rem; color: var(--muted); overflow-wrap: anywhere; }
+.latest strong { color: var(--text); font-weight: 500; }
 .note { margin-top: .5rem; color: var(--muted); font-size: .875rem; line-height: 1.25rem; }
 .status-line { display: flex; flex-wrap: wrap; align-items: center; row-gap: .25rem; margin-top: .75rem; color: var(--muted); font-size: .875rem; line-height: 1.25rem; }
 .status-line.is-stale .checked-text { color: var(--held); }
@@ -743,11 +761,34 @@ export const SCRIPT = `(() => {
     const [unit, n] = units.find(([, n]) => s >= n);
     return f.format(-Math.floor(s / n), unit);
   };
-  const exact = (iso) => {
+  const utc = (iso) => {
     const t = new Date(iso), two = (n) => String(n).padStart(2, "0");
     const M = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     return t.getUTCDate() + " " + M[t.getUTCMonth()] + " " + t.getUTCFullYear() + ", " + two(t.getUTCHours()) + ":" + two(t.getUTCMinutes()) + " UTC";
   };
+  // Exact times in the reader's own time zone, in the page's English: the
+  // date as the page writes it, the clock as the reader's English locale
+  // writes it, or else British English with the reader's 12- or 24-hour
+  // clock ("13 Nov 2026, 3:50 PM EST", "13 Nov 2026, 17:50 CET"). Without
+  // Intl, UTC as the page was built.
+  const local = (() => {
+    try {
+      const own = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions();
+      const english = /^en(-|$)/i.test(own.locale);
+      const date = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "numeric", year: "numeric" });
+      const clock = new Intl.DateTimeFormat(english ? own.locale : "en-GB",
+        { hour: "numeric", minute: "2-digit", timeZoneName: "short", ...(english || !own.hourCycle ? {} : { hourCycle: own.hourCycle }) });
+      const M = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const f = (iso) => {
+        const t = new Date(iso), p = {};
+        for (const x of date.formatToParts(t)) p[x.type] = x.value;
+        return Number(p.day) + " " + M[Number(p.month) - 1] + " " + p.year + ", " + clock.format(t);
+      };
+      f(new Date(0).toISOString());
+      return f;
+    } catch { return null; }
+  })();
+  const exact = local || utc;
   const checkedEl = $("#checked");
   // The newest check time this tab knows; the page shows it at redraws.
   let checked = checkedEl ? checkedEl.dateTime : null;
@@ -816,6 +857,12 @@ export const SCRIPT = `(() => {
       if (first) { first = false; redraw(); } else settle();
     }
   };
+  // Once, on start: every exact time, and the exact time each relative one
+  // shows on hover, in the reader's zone.
+  if (local) {
+    for (const t of all("time:not(.rel)")) setText(t, exact(t.dateTime));
+    for (const t of all("time.rel")) t.title = exact(t.dateTime);
+  }
   const reloadLink = $(".reload");
   // "Reload": a real reload, not a navigation the cache could answer.
   if (reloadLink) reloadLink.addEventListener("click", (e) => { e.preventDefault(); location.reload(); });

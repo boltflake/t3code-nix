@@ -128,12 +128,29 @@ test("page: the headline card, with and without the live view", () => {
   const fig = html(list, "o/r", live({}), "x", null, { median: 412, count: 42, since: "2026-10-14T12:00:00.000Z", until: "2026-11-13T12:00:00.000Z" });
   assert.ok(fig.includes('<p class="figure-value">7 min</p>\n<p class="figure-label">Median delivery, last 30 days</p>\n</div>'));
   // Without the live view: the versions, the note, no icons, no checked time.
-  const t3 = [row("t3code", { version: "0.1.9" }), row("t3code-nightly", { version: "0.2.0-n.1", published: pub("2026-11-13T13:00:00.000Z") })];
+  const t3 = [row("t3code", { version: "0.1.9", published: pub("2026-11-13T13:00:00.000Z") }), row("t3code-nightly", { version: "0.2.0-n.1", published: pub("2026-11-13T13:00:00.000Z") })];
   const plain = html(t3, "o/r", null, "x");
-  assert.match(plain, /<h2 id="headline">2 packages<\/h2>\n<p class="counts">T3 Code 0\.1\.9 \(Nightly 0\.2\.0-n\.1\) · last update <time class="rel" datetime="2026-11-13T13:00:00\.000Z"/);
+  assert.match(plain, /<h2 id="headline">2 packages<\/h2>\n<p class="counts">T3 Code 0\.1\.9 \(Nightly 0\.2\.0-n\.1\)<\/p>\n<p class="latest">Latest update: <strong>T3 Code desktop app<\/strong> 0\.<wbr>1\.<wbr>9 and <strong>T3 Code desktop app nightly<\/strong> 0\.<wbr>2\.<wbr>0-<wbr>n\.<wbr>1 · <time class="rel" datetime="2026-11-13T13:00:00\.000Z"/);
   assert.ok(plain.includes("Upstream status isn&#39;t available; these are the versions on <code>main</code>.") || plain.includes("Upstream status isn't available; these are the versions on <code>main</code>."));
   assert.ok(!/<svg class="st /.test(plain.slice(plain.indexOf("<main>"), plain.indexOf("<footer>"))), "no state icons anywhere");
   assert.ok(!plain.includes('id="checked"') && plain.includes('class="live-status"'), "the status line without a checked time");
+});
+
+test("page: the latest update, in the headline card", () => {
+  const at = (t: string, c: string) => ({ at: t, commit: c.repeat(40) });
+  const latest = (list: Row[]) => text(html(list, "o/r", live({}), "x").replace(/<wbr>/g, "").match(/<p class="latest">.*?<\/p>/)![0]).trim();
+  // The newest commit's packages, in the page's order, with their versions.
+  const list = [row("grok", { version: "2", published: at("2026-11-13T14:00:00.000Z", "b") }), row("codex", { published: at("2026-11-13T12:00:00.000Z", "a") }),
+    row("claude-code", { version: "3", published: at("2026-11-13T14:00:00.000Z", "b") })];
+  assert.equal(latest(list), "Latest update: Claude Code 3 and Grok Build 2 · 13 Nov 2026, 14:00 UTC · commit bbbbbbb , the latest update");
+  assert.ok(html(list, "o/r", live({}), "x").includes('href="https://github.com/o/r/commit/' + "b".repeat(40) + '"'));
+  // More than three: the first three and a count; a browser pin by name only.
+  const many = ["antigravity", "codex", "fx", "grok", "pi"].map((n) => row(n));
+  assert.equal(latest(many), "Latest update: Antigravity 1.0, Codex 1.0, fx 1.0 and 2 more · 13 Nov 2026, 12:00 UTC · commit ccccccc , the latest update");
+  assert.match(latest([row("t3-nightly", { version: "2" })]), /^Latest update: T3 Code CLI and server nightly 2 · /, "an initialism keeps its capitals");
+  assert.match(latest([row("browser-unstable", { browsers: [], channel: "nixos-unstable" })]), /^Latest update: Browsers \(unstable\) · /);
+  // Nothing published: no line.
+  assert.ok(!html([row("codex", { published: null })], "o/r", live({}), "x").includes('class="latest"'));
 });
 
 test("page: needs attention and updates underway", () => {
@@ -330,6 +347,9 @@ test("styles: contrast of every text pair, icon and bar, in both schemes", () =>
 interface Opts {
   now?: number; replies?: (string | Error | "hang")[]; checked?: string | null; hidden?: boolean; focused?: boolean;
   storage?: "ok" | "throws" | "read-throws" | "malformed" | "fails-later" | "fails-first"; store?: Map<string, string>; dateHeader?: string | null;
+  /** The reader's locale and time zone (default en-GB and UTC, which write
+   * times as the page does); null: no Intl.DateTimeFormat. */
+  reader?: { locale: string; zone: string } | null;
 }
 /** Runs SCRIPT against a stub DOM. Replies are "A" (id A) or "A@<iso>" (id A
  * checked then), an Error (the fetch fails) or "hang" (never answers). */
@@ -346,8 +366,9 @@ function run(o: Opts = {}) {
   const rels = [time("rel", "2026-11-13T11:59:30.000Z", "13 Nov 2026, 11:59 UTC"), time("rel", "2026-11-13T09:00:00.000Z", "13 Nov 2026, 09:00 UTC")];
   if (checkedEl) rels.push(checkedEl);
   const exactTime = time("", "2026-11-13T09:00:00.000Z", "13 Nov 2026, 09:00 UTC");
-  const times = [...rels, exactTime];
-  const foot = { dateTime: checkedEl?.dateTime ?? "", textContent: checkedEl?.title ?? "" };
+  // The footer's exact check time, when there is one.
+  const foot = time("", checkedEl?.dateTime ?? "", checkedEl?.title ?? "");
+  const times = [...rels, exactTime, ...(checkedEl ? [foot] : [])];
   const els: Record<string, any> = { ".stale-note": el(), ".at-last": el(), ".stale-icon": el(), ".newer": el(), ".status-line": el(), ".reload": el(), "#checked-exact": foot };
   const leads = [el({ hidden: false })];
   const state = { details: false, selection: "", hidden: o.hidden ?? false, focused: o.focused ?? true, reloads: 0, fetches: 0, aborted: 0, urls: [] as string[] };
@@ -371,11 +392,17 @@ function run(o: Opts = {}) {
     get hidden() { return state.hidden; },
     hasFocus: () => state.focused,
     querySelector: (q: string) => (q === "#checked" ? checkedEl : q === "details[open]" ? (state.details ? {} : null) : els[q] ?? null),
-    querySelectorAll: (q: string) => (q === "time" ? times : q === "time.rel" ? times.filter((t) => t.cls === "rel") : q === ".lead:not(.stale-icon)" ? leads : []),
+    querySelectorAll: (q: string) => (q === "time" ? times : q === "time.rel" ? times.filter((t) => t.cls === "rel") : q === "time:not(.rel)" ? times.filter((t) => t.cls !== "rel")
+      : q === ".lead:not(.stale-icon)" ? leads : []),
     addEventListener: (t: string, fn: () => void) => { (listeners[t] ??= []).push(fn); },
   };
+  // The reader's defaults: an undefined locale or a missing time zone is theirs.
+  const reader = o.reader === undefined ? { locale: "en-GB", zone: "UTC" } : o.reader;
+  const DateTimeFormat = reader && function (locale?: string, opts: Intl.DateTimeFormatOptions = {}) {
+    return new Intl.DateTimeFormat(locale ?? reader.locale, { timeZone: reader.zone, ...opts });
+  };
   vm.runInNewContext(SCRIPT, {
-    document, sessionStorage: storage, location: { reload: () => { state.reloads++; } }, Intl, Date: FixedDate, Math, Number, JSON, String, Array,
+    document, sessionStorage: storage, location: { reload: () => { state.reloads++; } }, Intl: { RelativeTimeFormat: Intl.RelativeTimeFormat, ...(DateTimeFormat ? { DateTimeFormat } : {}) }, Date: FixedDate, Math, Number, JSON, String, Array,
     getSelection: () => state.selection,
     addEventListener: (t: string, fn: () => void) => { (listeners[t] ??= []).push(fn); },
     setInterval: (fn: () => unknown, ms: number) => { intervals.push([fn, ms]); },
@@ -423,7 +450,8 @@ test("script: wording, one interval, checks on start, every minute visible, ever
   assert.equal(p.state.fetches, 1, "a check on start");
   assert.match(p.state.urls[0], /^live\.json\?t=\d+$/, "the tiny file, past any cache");
   assert.deepEqual(p.rels.map((t) => t.textContent), ["just now", "3 hours ago", "10 minutes ago"], "drawn once on start; under a minute is just now");
-  assert.equal(p.exactTime.textContent, "13 Nov 2026, 09:00 UTC", "an exact time is never touched");
+  assert.equal(p.exactTime.textContent, "13 Nov 2026, 09:00 UTC", "an exact time is drawn once, in the reader's zone");
+  assert.equal(p.exactTime.writes, 0, "the same text: not rewritten");
   await p.minute();
   assert.equal(p.state.fetches, 2, "visible: every minute");
   p.hide();
@@ -467,6 +495,40 @@ test("script: times stand still while someone reads, move while nobody's there, 
   p.hide();
   await p.minute();
   assert.equal(p.rels[0].textContent, "11 minutes ago");
+});
+
+test("script: exact times in the reader's own time zone, or UTC without Intl", async () => {
+  const ny = run({ reader: { locale: "en-US", zone: "America/New_York" }, replies: ["A", "A@2026-11-13T11:55:00.000Z"] });
+  await ny.flush();
+  assert.equal(ny.exactTime.textContent, "13 Nov 2026, 4:00 AM EST");
+  assert.deepEqual(ny.rels.map((t) => t.title), ["13 Nov 2026, 6:59 AM EST", "13 Nov 2026, 4:00 AM EST", "13 Nov 2026, 6:50 AM EST"], "the hover text too");
+  assert.equal(ny.foot.textContent, "13 Nov 2026, 6:50 AM EST", "the footer's check time");
+  await ny.minute();
+  ny.hide();
+  await ny.minute();
+  assert.deepEqual([ny.checkedEl!.title, ny.foot.textContent], ["13 Nov 2026, 6:55 AM EST", "13 Nov 2026, 6:55 AM EST"], "a newer check time, in the same zone");
+  // Another locale's clock and zone name; the date by the zone, not by UTC
+  // (23:30 UTC is the next day in Berlin).
+  const tokyo = run({ reader: { locale: "en-GB", zone: "Asia/Tokyo" } });
+  assert.equal(tokyo.exactTime.textContent, "13 Nov 2026, 18:00 GMT+9");
+  const berlin = run({ reader: { locale: "en-GB", zone: "Europe/Berlin" }, checked: "2026-11-13T23:30:00.000Z" });
+  assert.equal(berlin.checkedEl!.title, "14 Nov 2026, 00:30 CET");
+  // A reader outside English: the page's English, with their 12- or 24-hour
+  // clock, never their digits or script.
+  const cairo = run({ reader: { locale: "ar-EG", zone: "Africa/Cairo" } });
+  assert.match(cairo.exactTime.textContent, /^13 Nov 2026, 11:00 am [A-Za-z0-9+:]+$/);
+  const seoul = run({ reader: { locale: "ko-KR", zone: "Asia/Seoul" } });
+  assert.match(seoul.exactTime.textContent, /^13 Nov 2026, 6:00 pm [A-Za-z0-9+:]+$/);
+  const paris = run({ reader: { locale: "de-DE", zone: "Europe/Paris" } });
+  assert.match(paris.exactTime.textContent, /^13 Nov 2026, 10:00 [A-Za-z0-9+:]+$/);
+  // September as the page writes it ("Sep", not en-GB's "Sept").
+  const sep = run({ reader: { locale: "en-GB", zone: "UTC" }, checked: "2026-09-13T09:00:00.000Z" });
+  assert.equal(sep.checkedEl!.title, "13 Sep 2026, 09:00 UTC");
+  for (const p of [cairo, seoul, paris, sep]) { await p.flush(); p.hide(); }
+  const none = run({ reader: null });
+  assert.equal(none.exactTime.textContent, "13 Nov 2026, 09:00 UTC", "no Intl.DateTimeFormat: UTC as built");
+  assert.equal(none.exactTime.writes, 0);
+  for (const p of [tokyo, berlin, none]) { await p.flush(); p.hide(); }
 });
 
 test("script: a newer check time waits for a redraw; an older one is ignored", async () => {

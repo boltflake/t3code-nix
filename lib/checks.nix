@@ -3077,7 +3077,7 @@ let
         if ${stdenv.shell} ${lib.escapeShellArgs stub.args} 2>err; then
           echo "the stub succeeded"; exit 1
         fi
-        grep -qxF 't3code-nix supports Linux only; see README' err
+        grep -qxF 't3code-nix supports Linux only (x86_64-linux, aarch64-linux)' err
       '';
 
   # Every self-update or self-install command must be refused before the

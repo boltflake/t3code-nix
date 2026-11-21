@@ -22,7 +22,7 @@ import { moved } from "../scripts/lib/snapshot.ts";
 import { firstPublications, reconcile, stableNote } from "../scripts/ci/reconcile.ts";
 import { obs } from "../scripts/update.ts";
 import { writeHeld } from "../scripts/ci/held.ts";
-import { SYSTEMS } from "../scripts/lib/util.ts";
+import { SYSTEMS, timing } from "../scripts/lib/util.ts";
 
 const GIT_ENV = { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t",
   GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
@@ -753,6 +753,91 @@ test("publish: rejected although main didn't move is a failure", async () => {
   chmodSync(hook, 0o755);
   const dir = repo.candidate({ grok: "2" });
   await assert.rejects(publish(dir, ["grok"], candidate.tree(dir, "grok"), new Fake(), env()), /didn't move/);
+});
+
+// The ruleset turns down the first `n` pushes to main as GitHub does when it
+// doesn't see the `tested` status yet (any push to main counts, and the
+// hook runs in the bare repository); returns how many pushes it has seen.
+function statusLag(repo: Repo, n: number) {
+  const hook = join(repo.origin, "hooks", "pre-receive");
+  writeFileSync(hook, `#!/bin/sh
+while read old new ref; do
+  [ "$ref" = refs/heads/main ] || continue
+  echo x >> tries
+  [ $(wc -l < tries) -le ${n} ] && { echo '- Required status check "tested" is expected.' >&2; exit 1; }
+done
+exit 0
+`);
+  chmodSync(hook, 0o755);
+  const tries = join(repo.origin, "tries");
+  return () => existsSync(tries) ? readFileSync(tries, "utf8").split("\n").filter(Boolean).length : 0;
+}
+
+/** Runs f with timing.sleep recording its waits (and calling onSleep) instead of sleeping. */
+async function withoutSleep<T>(f: (waits: number[]) => Promise<T>, onSleep = () => {}): Promise<T> {
+  const real = timing.sleep, waits: number[] = [];
+  timing.sleep = async (ms) => { waits.push(ms); onSleep(); };
+  try { return await f(waits); } finally { timing.sleep = real; }
+}
+
+const tagged = (repo: Repo, tag: string) => git(repo.work, "ls-remote", "origin", `refs/tags/${tag}^{}`).split("\t")[0];
+
+test("publish: a push turned down before GitHub sees `tested` is tried again", async () => {
+  const repo = new Repo({ t3code: "0.1.9" });
+  const tries = statusLag(repo, 2);
+  const dir = repo.candidate({ t3code: "0.2.0" });
+  const tree = candidate.tree(dir, "t3code");
+  const gh = new Fake();
+  const candidateRef = () => git(repo.work, "ls-remote", "origin", "refs/heads/bot/candidate/42");
+  const [o, waits] = await withoutSleep(async (w) => [await publish(dir, ["t3code"], tree, gh, env()), w] as const,
+    () => assert.ok(candidateRef(), "the candidate ref outlives the waits"));
+  assert.equal(tries(), 3);
+  assert.deepEqual(waits, [5000, 10000]);
+  const main = repo.originMain();
+  assert.equal(git(repo.work, "rev-parse", `${main}^{tree}`), tree);
+  assert.equal(tagged(repo, "t3code-v0.2.0"), main, "the tag goes with it");
+  assert.equal(gh.statuses.length, 1, "the status is posted once");
+  assert.equal(o[0].kind, "published");
+  assert.equal(git(repo.work, "ls-remote", "origin", "refs/heads/bot/candidate/42"), "");
+});
+
+test("publish: a status that never shows up fails after four pushes", async () => {
+  const repo = new Repo({ t3code: "0.1.9" });
+  const before = repo.originMain();
+  const tries = statusLag(repo, 99);
+  const dir = repo.candidate({ t3code: "0.2.0" });
+  await withoutSleep(async (waits) => {
+    await assert.rejects(publish(dir, ["t3code"], candidate.tree(dir, "t3code"), new Fake(), env()), /didn't move/);
+    assert.deepEqual(waits, [5000, 10000, 15000]);
+  });
+  assert.equal(tries(), 4);
+  assert.equal(repo.originMain(), before);
+  assert.equal(git(repo.work, "ls-remote", "origin", "refs/tags/t3code-v0.2.0"), "", "no tag without main");
+  assert.equal(git(repo.work, "ls-remote", "origin", "refs/heads/bot/candidate/42"), "");
+});
+
+test("publish: main moving during a wait re-dispatches, as before", async () => {
+  const repo = new Repo({ grok: "1" });
+  statusLag(repo, 1);
+  const dir = repo.candidate({ grok: "2" });
+  const gh = new Fake();
+  const o = await withoutSleep(() => publish(dir, ["grok"], candidate.tree(dir, "grok"), gh, env()), () => repo.otherCommitOnOrigin());
+  assert.equal(git(repo.work, "log", "-1", "--format=%s", repo.originMain()), "someone else");
+  assert.deepEqual(gh.dispatches, [["update.yml", "main", { attempt: "1" }]]);
+  assert.deepEqual(o.map((x) => x.kind), ["redispatched"]);
+});
+
+test("publish: any other rejection isn't tried again", async () => {
+  const repo = new Repo({ grok: "1" });
+  const hook = join(repo.origin, "hooks", "pre-receive");
+  writeFileSync(hook, '#!/bin/sh\nwhile read old new ref; do [ "$ref" = refs/heads/main ] && { echo x >> tries; echo "main is protected" >&2; exit 1; }; done\nexit 0\n');
+  chmodSync(hook, 0o755);
+  const dir = repo.candidate({ grok: "2" });
+  await withoutSleep(async (waits) => {
+    await assert.rejects(publish(dir, ["grok"], candidate.tree(dir, "grok"), new Fake(), env()), /didn't move/);
+    assert.deepEqual(waits, []);
+  });
+  assert.equal(readFileSync(join(repo.origin, "tries"), "utf8"), "x\n");
 });
 
 test("publish: a dry run writes nothing", async () => {

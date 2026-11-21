@@ -10,6 +10,6 @@ derivation {
   builder = "/bin/sh";
   args = [
     "-c"
-    "echo 't3code-nix supports Linux only; see README' >&2; exit 1"
+    "echo 't3code-nix supports Linux only (x86_64-linux, aarch64-linux)' >&2; exit 1"
   ];
 }
