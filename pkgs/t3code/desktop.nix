@@ -1,5 +1,6 @@
 # The T3 Code desktop app from upstream's .deb, without providers (see
-# wrap.nix). Its libraries are re-pointed at nixpkgs.
+# wrap.nix). Its libraries are re-pointed at nixpkgs, those it opens at run
+# time put on its RUNPATH, and its bundled Vulkan loader replaced by nixpkgs'.
 #
 # Electron (lib/electron.nix):
 #
@@ -101,7 +102,11 @@ let
   '';
   binName = "t3code${ch.suffix}";
 
-  # Opened with dlopen at run time, so autoPatchelf can't see them.
+  # Opened with dlopen at run time, so autoPatchelf can't see them. They go
+  # in front of the program's RUNPATH (runtimeDependencies below), not in an
+  # LD_LIBRARY_PATH: that would be inherited by everything the app starts,
+  # agent shells included, and break host programs that load these newer
+  # libraries against the host's older glibc.
   runtimeLibs = [
     libGL
     vulkan-loader
@@ -156,6 +161,8 @@ stdenv.mkDerivation {
     libxshmfence
   ]
   ++ runtimeLibs;
+  # Put in front of the RUNPATH of the app's executables.
+  runtimeDependencies = map lib.getLib runtimeLibs;
   # The musl variants of the native add-ons are never loaded on glibc.
   autoPatchelfIgnoreMissingDeps = [ "libc.musl-*.so.1" ];
 
@@ -204,6 +211,10 @@ stdenv.mkDerivation {
       else
         ''
           cp -r "''${app[0]}" $out/libexec/${binName}
+          # nixpkgs' Vulkan loader, which finds NixOS's drivers, in place of
+          # the bundled one, as nixpkgs' Electron has it: the transcription
+          # add-on (libggml-vulkan.so) links libvulkan.so.1 from this folder.
+          ln -sf ${lib.getLib vulkan-loader}/lib/libvulkan.so.1 $out/libexec/${binName}/libvulkan.so.1
         ''
     }
     ${versions.dropMusl "$out/libexec/${binName}"}
@@ -220,7 +231,6 @@ stdenv.mkDerivation {
     # file chooser, Electron opens GTK's own dialog, and GLib aborts the app
     # when it finds no schemas ("No GSettings schemas are installed").
     makeWrapper $out/libexec/${binName}/t3code $out/bin/${binName} \
-      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtimeLibs} \
       --prefix XDG_DATA_DIRS : ${glib.getSchemaDataDirPath gtk3}:${glib.getSchemaDataDirPath gsettings-desktop-schemas} \
       --set T3CODE_DISABLE_AUTO_UPDATE 1 \
       --set T3CODE_DESKTOP_LAUNCHER_PATH ${binName}
