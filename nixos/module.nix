@@ -67,13 +67,14 @@ let
     else
       base.override { inherit (cfg.cli) allowUpstreamService; };
 
-  # Whether anything the module installs bundles claude-code: the app, or
-  # the CLI (the server's, or cli.enable's), which is the full t3 when the
-  # app is a package of another kind.
-  claudeBundled = builtins.any (p: lib.getName p == "claude-code") (
+  # The providers bundled by what the module installs: the app, or the CLI
+  # (the server's, or cli.enable's), which is the full t3 when the app is a
+  # package of another kind.
+  bundled = lib.unique (
     lib.optionals cfg.enable (app.providers or [ ])
     ++ lib.optionals (srv.enable || cfg.cli.enable) (cli.providers or [ ])
   );
+  claudeBundled = builtins.any (p: lib.getName p == "claude-code") bundled;
 
   # agent-browser with the module's browser and browserChannel, where set. A
   # package whose `browser` is a package keeps it (the package decides), and
@@ -294,6 +295,15 @@ in
           browser either way.
         '';
       };
+    };
+
+    providersOnPath = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether the providers T3 Code bundles also go on `PATH`, at low
+        priority, so your own package of the same command wins.
+      '';
     };
 
     cli.enable = lib.mkEnableOption ''
@@ -613,7 +623,9 @@ in
             serverHome = srv.home;
             serverUsers = srv.users;
           }
-        );
+        )
+        # The bundled providers, for the terminal.
+        ++ lib.optionals ((cfg.enable || srv.enable) && cfg.providersOnPath) (map lib.lowPrio bundled);
     }
 
     # cli.enable installs the CLI alongside the app; on its own it would do

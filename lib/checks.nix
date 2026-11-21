@@ -1158,12 +1158,48 @@ let
       failedAssertion =
         c: builtins.any (a: !a.assertion && lib.hasPrefix "programs.t3code:" a.message) c.assertions;
       names = map lib.getName;
+      # The providers among the installed packages, as sorted derivations, so
+      # another build of the same name doesn't pass.
+      allProviders = names packages.t3code.providers;
+      providersInstalled =
+        c: builtins.filter (p: builtins.elem (lib.getName p) allProviders) c.environment.systemPackages;
+      sortedDrvs = ps: lib.sort lib.lessThan (map (p: p.drvPath) ps);
+      onPath = c: sortedDrvs (providersInstalled c);
+      # The app of another kind, with the CLI: the CLI's providers.
+      otherCli = system self.nixosModules.default {
+        enable = true;
+        package = pkgs.hello;
+        cli.enable = true;
+      };
+      offPath = system self.nixosModules.default {
+        enable = true;
+        providersOnPath = false;
+      };
       cached = c: builtins.elem example.url c.nix.settings.substituters;
       keyed = c: builtins.elem example.publicKey c.nix.settings.trusted-public-keys;
     in
     conditions "module-eval" {
       "enable installs this flake's t3code" =
         builtins.elem packages.t3code real.environment.systemPackages;
+      "the bundled providers go on PATH, at low priority, so the owner's own win" =
+        onPath real == sortedDrvs packages.t3code.providers
+        && builtins.all (p: (p.meta.priority or 5) > 5) (providersInstalled real);
+      "only the selected providers go on PATH, as the app bundles them" =
+        onPath picked == sortedDrvs (lib.concatMap (p: p.providers) (installed picked "t3code"))
+        && names (providersInstalled picked) == [ "codex" ];
+      "a server-only host puts its server's providers on PATH, also when the app's package has none" =
+        onPath serverOnly == sortedDrvs packages.t3.providers
+        && onPath otherPackage == sortedDrvs packages.t3.providers;
+      "with an app package that has no providers, cli.enable's t3 puts its providers on PATH and gets claude's policy" =
+        onPath otherCli == sortedDrvs packages.t3.providers && policy otherCli != null;
+      "cli.enable alone puts no providers on PATH either" = onPath cliAlone == [ ];
+      "providersOnPath = false keeps them inside T3 Code, and the option adds nothing else" =
+        onPath offPath == [ ]
+        && builtins.elem packages.t3code offPath.environment.systemPackages
+        &&
+          lib.subtractLists (sortedDrvs (providersInstalled real)) (
+            sortedDrvs real.environment.systemPackages
+          ) == sortedDrvs offPath.environment.systemPackages;
       "cli.enable alone warns that it does nothing; with enable, it doesn't" =
         builtins.any (lib.hasPrefix "programs.t3code.cli.enable installs") cliAlone.warnings
         && !builtins.any (lib.hasPrefix "programs.t3code.cli.enable") real.warnings;
