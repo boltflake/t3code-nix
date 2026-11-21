@@ -5,8 +5,9 @@
 // depends only on its inputs, so it stays deterministic: dates are written
 // out in UTC, and the script turns the relative ones into "2 hours ago" and
 // the exact ones into the reader's own time zone in the browser, says when
-// the data is out of date, and reloads when the site has newer data (see
-// SCRIPT).
+// the data is out of date, reloads when the site has newer data, and
+// strikes each version changed since the reader's last visit with a bolt
+// (see SCRIPT).
 import { createHash } from "node:crypto";
 import { AGENT_TOOLS, BROWSER_PINS, NIXPKGS_PINS, PROVIDERS, T3, UNFREE } from "./lib/packages.ts";
 import type { Browser, Delivery, Row, StableView } from "./status.ts";
@@ -341,7 +342,7 @@ function row(r: Row, repo: string, live: Live | null, level: 3 | 4): string {
     const when = [since(s), s.state === "found" && s.wait ? escape(s.wait) : ""].filter(Boolean).join(" · ");
     stateCell = `<div class="cell state ${CLASS[s.state]}"><span class="lbl">State </span><span><span class="state-words">${icon(CLASS[s.state])}<span>${linked}${extra}</span></span>${when ? `<span class="sub">${when}</span>` : ""}</span></div>`;
   }
-  return `<li class="pkg" id="pkg-${escape(r.name)}">
+  return `<li class="pkg" id="pkg-${escape(r.name)}" data-v="${escape(r.browsers ? r.browsers.map((b) => `${b.name} ${b.version}`).join(", ") : r.version)}">
 <div class="cell who">${heading} <code class="attr">${escape(r.name)}</code>${unfree}${desc ? `<p class="desc">${text(desc)}</p>` : ""}</div>
 ${stateCell}<div class="meta"><div class="cell ver"><span class="lbl">On main </span>${ver}</div>
 <div class="cell dlv"><span class="lbl">Delivery </span>${deliveryCell(r)}</div>
@@ -364,7 +365,7 @@ function browserList(list: Browser[], from: string): string {
   }).join("")}</ul>`;
 }
 
-const COLS = (live: boolean) => `<div class="cols${live ? "" : " no-state"}" aria-hidden="true"><span>Package</span>${live ? "<span>State</span>" : ""}<span>On <code>main</code></span><span>Delivery</span><span>Recent deliveries</span><span></span></div>`;
+const COLS = (live: boolean) => `<div class="cols${live ? "" : " no-state"}" aria-hidden="true"><span>Package</span>${live ? "<span>State</span>" : ""}<span class="col-ver">On <code>main</code></span><span>Delivery</span><span>Recent deliveries</span><span></span></div>`;
 
 /** Alphabetical by title, whatever the case; then by package name. */
 const byTitle = (titles: Record<string, { title: string }>) => (a: string, b: string) =>
@@ -507,11 +508,11 @@ export const STYLE = `
 :root { color-scheme: light dark;
   --page: #F6F8FA; --surface: #FFFFFF; --hover: #F1F4F8; --text: #17202A; --muted: #526071; --link: #2457C5; --focus: #2457C5; --line: #DCE2E9;
   --ok: #17663F; --ok-bg: #EAF5EE; --move: #2457A7; --move-bg: #EDF3FF; --held: #815600; --held-bg: #FFF4D6; --none: #526071; --none-bg: #EEF1F5;
-  --slow: #A52B32; --approx: #7B8796; --flake: #4A78CF; --bolt: #FFD23F; }
+  --slow: #A52B32; --approx: #7B8796; --flake: #4A78CF; --bolt: #FFD23F; --bolt-edge: #B87A00; }
 @media (prefers-color-scheme: dark) { :root {
   --page: #10151D; --surface: #151B24; --hover: #1D2632; --text: #E8EDF4; --muted: #AAB6C7; --link: #9BBDFF; --focus: #9BBDFF; --line: #303B49;
   --ok: #88D9A6; --ok-bg: #172E23; --move: #A5C5FF; --move-bg: #1C2B43; --held: #F1CC75; --held-bg: #352B16; --none: #B7C2D1; --none-bg: #252E3A;
-  --slow: #FFADB4; --approx: #69788D; --flake: #8FB2EE; } }
+  --slow: #FFADB4; --approx: #69788D; --flake: #8FB2EE; --bolt-edge: #7A5200; } }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--page); color: var(--text); font: 400 1rem/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
@@ -661,6 +662,27 @@ a.hit { display: inline-block; padding-block: .125rem; margin-block: -.125rem; }
 .state-words a { text-decoration-color: currentColor; }
 .state-words a:hover { text-decoration-thickness: 2px; }
 .ver, .dlv { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* The bolt (the end of SCRIPT): lightning drawn over the On main column,
+   clipped to it, onto each version changed since the reader last saw it; the
+   version flashes and keeps a small bolt for as long as the page is open. */
+.zap { position: absolute; pointer-events: none; overflow: visible; z-index: 20; }
+.zap path, .zap line { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.zap .edge { stroke: var(--bolt-edge); stroke-width: 5; }
+.zap .glow { stroke: var(--bolt); stroke-width: 11; filter: url(#mark-blur); opacity: .75; }
+.zap .main { stroke: var(--bolt); stroke-width: 3; }
+.zap .core { stroke: #FFFFFF; stroke-width: 1.2; }
+.zap .spark { stroke: var(--bolt); stroke-width: 2; }
+.zap .halo { fill: var(--bolt); filter: url(#mark-blur); }
+.zapped .ver { animation: zap-text 1.4s cubic-bezier(.2, .8, .3, 1); }
+@keyframes zap-text {
+  0% { text-shadow: 0 0 2px #FFFFFF, 0 0 10px var(--bolt), 0 0 22px var(--bolt); transform: translateX(0); }
+  4% { transform: translateX(-2px); } 8% { transform: translateX(2px); } 12% { transform: translateX(-1px); } 16% { transform: translateX(0); }
+  100% { text-shadow: 0 0 0 transparent; } }
+.zap-tag { display: inline-flex; vertical-align: -2px; margin-left: .375rem; width: .875rem; height: .875rem; }
+.zap-tag svg { width: 100%; height: 100%; overflow: visible; }
+.zap-tag path { fill: var(--bolt); stroke: var(--bolt-edge); stroke-width: 6; stroke-linejoin: round; paint-order: stroke; }
+.zap-tag.pop { animation: zap-pop .55s cubic-bezier(.3, 1.8, .5, 1) both; }
+@keyframes zap-pop { 0% { transform: scale(0) rotate(-25deg); opacity: 0; } 100% { transform: scale(1) rotate(0); opacity: 1; } }
 .dlv { display: flex; align-items: center; gap: .375rem; white-space: nowrap; }
 /* A chip may wrap rather than spill into the next column. */
 .dlv .reason { white-space: normal; }
@@ -726,20 +748,22 @@ footer { margin-top: 3rem; color: var(--muted); font-size: .875rem; line-height:
   .state .lbl, .recent .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .more { margin: 0; }
 }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } .zapped .ver, .zap-tag.pop { animation: none; } }
 @media (forced-colors: active) {
   .st { color: CanvasText; }
   .b-good, .b-fair, .b-slow { fill: CanvasText; }
   .b-approx { stroke: CanvasText; } .hatch-line { fill: CanvasText; } .hatch-bg { fill: Canvas; }
   .b-none { stroke: CanvasText; }
   .mark .flake path { stroke: CanvasText; } .mark .bolt { fill: CanvasText; stroke: Canvas; } .mark .strike, .mark .glow, .mark .energy { display: none; }
+  .zap { display: none; } .zap-tag path { fill: CanvasText; stroke: Canvas; }
 }
 `;
 
 // ---- Script ------------------------------------------------------------
 
 // Nothing changes by itself while someone is in the window, except the
-// out-of-date switch turning on and a reload for newer data. "Nobody in the
+// out-of-date switch turning on, a reload for newer data and the bolt (at
+// the end of the script, with its own comment). "Nobody in the
 // window": the tab hidden, or the window unfocused for 2 minutes (a moment
 // in the find bar doesn't count). Then, once a minute, the relative times
 // are redrawn with the newest check time, and once more when someone comes
@@ -754,7 +778,11 @@ footer { margin-top: 3rem; color: var(--muted); font-size: .875rem; line-height:
 // compared either way round, so a clock set back can't stop checks or
 // tries. The tab remembers its tries, and its own id as
 // one; if storage can't be trusted, it never reloads by itself.
-const SOURCE = `(() => {
+const SOURCE = `// Told whether the page is current (see the bolt, below): true after a
+// check of live.json that started since the tab last came back and didn't
+// reload, false when it reloads.
+let pageState = () => {};
+(() => {
   const d = document, id = d.documentElement.dataset.id;
   const $ = (q) => d.querySelector(q), all = (q) => d.querySelectorAll(q);
   const IDS = "t3code-nix-reloaded";
@@ -774,7 +802,10 @@ const SOURCE = `(() => {
   };
   const f = new Intl.RelativeTimeFormat("en", { numeric: "always" });
   const units = [["year", 31536e3], ["month", 2592e3], ["week", 604800], ["day", 86400], ["hour", 3600], ["minute", 60]];
-  let skew = 0, busy = false, lastCheck = 0, stale = false, first = true;
+  // returns: how often the tab has come back, so a check that started
+  // before can't say the page is current; leaving: a reload has started,
+  // and no check after that says the page is current.
+  let skew = 0, busy = false, lastCheck = 0, stale = false, first = true, returns = 0, leaving = false;
   const now = () => Date.now() + skew;
   // hasFocus() too, so a missed focus event can't leave a reader "away".
   const hasFocus = () => typeof d.hasFocus !== "function" || d.hasFocus();
@@ -853,12 +884,16 @@ const SOURCE = `(() => {
     const t = tries(x).filter((at) => since(at) < 3600e3);
     if (broken || t.length >= 3 || t.some((at) => since(at) < 10 * 60e3)) return;
     remember(x);
-    if (!broken) location.reload();
+    if (broken) return;
+    leaving = true;
+    pageState(false);
+    location.reload();
   };
   const check = async () => {
     if (busy) return;
     busy = true;
     lastCheck = Date.now();
+    const back = returns;
     const ctrl = typeof AbortController === "function" ? new AbortController() : null;
     const timer = ctrl ? setTimeout(() => ctrl.abort(), 15e3) : null;
     try {
@@ -878,6 +913,10 @@ const SOURCE = `(() => {
       // back to the tab (it may have been frozen for hours) draw everything,
       // with the clock the Date header corrected.
       if (first) { first = false; redraw(); } else settle();
+      // Not reloading: as current as it can be, for now. Unless the tab came
+      // back while this was out, which skipped the return's own check: that
+      // check runs now, and draws everything as a return's check does.
+      if (!leaving && !d.hidden) { if (back === returns) pageState(true); else { first = true; check(); } }
     }
   };
   // Once, on start: every exact time, and the exact time each relative one
@@ -896,6 +935,7 @@ const SOURCE = `(() => {
   });
   d.addEventListener("visibilitychange", () => {
     if (d.hidden) return;
+    returns++;
     redraw();
     first = true;
     check();
@@ -908,6 +948,199 @@ const SOURCE = `(() => {
     // "Out of date" for data the check is about to refresh.)
     if (!busy && !d.hidden && since(lastCheck) >= 30e3) check(); else settle();
   }, 60e3);
+})();
+// The bolt: versions changed since this reader last saw them. Each row
+// carries its version (data-v). The tab keeps the versions it has shown
+// in sessionStorage, the browser the newest any tab has shown in
+// localStorage; a page compares with the tab's own, else the browser's.
+// A row that didn't change (or is new to the page) is remembered at once;
+// a changed one gets the small bolt at once, and is remembered only when
+// it has been seen (fully in view, the tab visible and the page current),
+// and then gets its strike. So a reload before the reader scrolls to it, or
+// a tab that loads hidden, loses nothing, and a tab never strikes the same
+// version twice. The strike: from the On main heading onto the first
+// version in view, then chain lightning down the column to the others in
+// view in the same card, clipped to the column (on narrow screens, where
+// the layout hides the heading, sparks on each version alone). No bolt at all on a
+// first visit or when storage can't be read. Reduced motion, forced
+// colours or no Web Animations: the small bolt, no strike. No
+// IntersectionObserver: the small bolt, remembered at once.
+(() => {
+  const d = document, KEY = "t3code-nix-seen";
+  const rows = Array.from(d.querySelectorAll(".pkg[data-v]"));
+  if (!rows.length) return;
+  const name = (r) => r.id.slice(4);
+  let stores;
+  try { stores = [sessionStorage, localStorage]; } catch { return; }
+  const read = (s) => { try { const m = JSON.parse(s.getItem(KEY) || "null"); return m && typeof m === "object" && !Array.isArray(m) ? m : null; } catch { return null; } };
+  const base = read(stores[0]) || read(stores[1]);
+  const remember = (list) => {
+    for (const s of stores) {
+      try {
+        const m = read(s) || Object.assign({}, base);
+        for (const r of list) m[name(r)] = r.dataset.v;
+        s.setItem(KEY, JSON.stringify(m));
+      } catch {}
+    }
+  };
+  const fresh = base ? rows.filter((r) => typeof base[name(r)] === "string" && base[name(r)] !== r.dataset.v) : [];
+  remember(rows.filter((r) => !fresh.includes(r)));
+  if (!fresh.length) return;
+  // The SVG namespace, from the mark: SOURCE has no "//" in a string (see
+  // minifyJs), and the namespace's URL would be one.
+  const NS = d.querySelector(".mark").namespaceURI;
+  const el = (n, a, p) => { const e = d.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
+  const cell = (r) => r.querySelector(".cell.ver");
+  const media = (q) => typeof matchMedia === "function" && matchMedia(q).matches;
+  const still = () => media("(prefers-reduced-motion: reduce)") || media("(forced-colors: active)") || typeof d.body.animate !== "function";
+  // The small bolt, said as "changed since your last visit".
+  for (const r of fresh) {
+    const tag = d.createElement("span");
+    tag.className = "zap-tag";
+    tag.title = "Changed since your last visit";
+    el("path", { d: "M62 6 35 53H50L40 94 68 44H53Z" }, el("svg", { viewBox: "0 0 100 100", "aria-hidden": "true" }, tag));
+    const sr = tag.appendChild(d.createElement("span"));
+    sr.className = "sr";
+    sr.textContent = ", changed since your last visit";
+    cell(r).appendChild(tag);
+  }
+  if (typeof IntersectionObserver !== "function") return remember(fresh);
+  // A jagged line from a to b (midpoint displacement), kept between x0 and x1.
+  const jag = (a, b, rough, x0, x1) => {
+    let pts = [a, b], w = rough;
+    for (let i = 0; i < 5; i++, w *= .55) {
+      const out = [pts[0]];
+      for (let j = 1; j < pts.length; j++) {
+        const p = pts[j - 1], q = pts[j], dx = q[0] - p[0], dy = q[1] - p[1], len = Math.hypot(dx, dy) || 1, o = (Math.random() - .5) * w;
+        out.push([(p[0] + q[0]) / 2 - dy / len * o, (p[1] + q[1]) / 2 + dx / len * o], q);
+      }
+      pts = out;
+    }
+    return pts.map((p) => [Math.min(x1 - 4, Math.max(x0 + 4, p[0])), p[1]]);
+  };
+  const path = (pts) => "M" + pts.map((p) => p[0].toFixed(1) + " " + p[1].toFixed(1)).join("L");
+  const play = (e, k, o) => e.animate(k, Object.assign({ fill: "forwards" }, o));
+  // One bolt in layer g, drawn in and flickering out; returns when it lands.
+  const bolt = (g, a, b, box, o) => {
+    const sub = el("g", { opacity: o.alpha }, g), dd = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const pts = jag(a, b, Math.min(o.rough * dd, (box.r - box.l) * .55), box.l, box.r), lines = [];
+    const draw = (pp, thin) => ["edge", "glow", "main", "core"].map((c) => {
+      const p = el("path", { class: c, d: path(pp) }, sub);
+      if (thin) p.style.strokeWidth = "calc(" + getComputedStyle(p).strokeWidth + " * .55)";
+      return p;
+    });
+    lines.push(...draw(pts, false));
+    for (let i = 0; i < o.branches; i++) {
+      const at = pts[Math.floor(pts.length * (.3 + Math.random() * .4))];
+      const ang = Math.atan2(b[1] - a[1], b[0] - a[0]) + (Math.random() < .5 ? -1 : 1) * (.45 + Math.random() * .5);
+      const len = dd * (.18 + Math.random() * .22);
+      lines.push(...draw(jag(at, [at[0] + Math.cos(ang) * len, at[1] + Math.sin(ang) * len], len * .5, box.l, box.r), true));
+    }
+    for (const p of lines) {
+      const L = p.getTotalLength();
+      p.style.strokeDasharray = L;
+      p.style.strokeDashoffset = L;
+      play(p, [{ strokeDashoffset: L }, { strokeDashoffset: 0 }], { duration: 90, delay: o.delay, easing: "ease-in" });
+    }
+    play(sub, [{ opacity: o.alpha }, { opacity: o.alpha, offset: .2 }, { opacity: .2, offset: .3 }, { opacity: o.alpha, offset: .4 }, { opacity: .5, offset: .65 }, { opacity: 0 }], { duration: 520, delay: o.delay + 90 });
+    return o.delay + 90;
+  };
+  // Where a bolt lands: on top of the version, a little way in.
+  const spot = (r) => {
+    const c = cell(r), lbl = c.querySelector(".lbl"), range = d.createRange();
+    range.setStart(c, lbl ? Array.prototype.indexOf.call(c.childNodes, lbl) + 1 : 0);
+    range.setEnd(c, c.childNodes.length);
+    const b = range.getClientRects()[0] || c.getBoundingClientRect();
+    return [b.left + Math.min(b.width * .4, 22), b.top + 3];
+  };
+  // Where a strike lands: sparks and a halo, the version flashing and its
+  // small bolt popping.
+  const land = (r, g, p) => {
+    const halo = el("circle", { class: "halo", cx: p[0], cy: p[1], r: 4 }, g);
+    play(halo, [{ r: 4, opacity: .95 }, { r: 26, opacity: 0 }], { duration: 420, easing: "ease-out" });
+    for (let i = 0; i < 8; i++) {
+      const a = Math.PI * i / 4 + Math.random() * .5, far = 12 + Math.random() * 14;
+      const s = el("line", { class: "spark", x1: p[0] + Math.cos(a) * 4, y1: p[1] + Math.sin(a) * 4, x2: p[0] + Math.cos(a) * 9, y2: p[1] + Math.sin(a) * 9 }, g);
+      play(s, [{ transform: "translate(0,0)", opacity: 1 }, { transform: "translate(" + Math.cos(a) * far + "px," + (Math.sin(a) * far + 6) + "px)", opacity: 0 }], { duration: 380 + Math.random() * 200, easing: "cubic-bezier(.1,.7,.3,1)" });
+    }
+    r.classList.add("zapped");
+    cell(r).querySelector(".zap-tag").classList.add("pop");
+  };
+  // One layer per strike over the window as it is, scrolling with the page,
+  // clipped to the column (or the version). clientWidth leaves out
+  // a scrollbar, so the layer never widens the page.
+  const layer = (box) => {
+    const w = d.documentElement.clientWidth, h = d.documentElement.clientHeight;
+    const g = el("svg", { class: "zap", "aria-hidden": "true", viewBox: "0 0 " + w + " " + h }, d.body);
+    const px = (n) => Math.max(0, n) + "px";
+    Object.assign(g.style, { left: scrollX + "px", top: scrollY + "px", width: w + "px", height: h + "px",
+      clipPath: "inset(" + px(box.t) + " " + px(w - box.r) + " " + px(h - box.b) + " " + px(box.l) + ")" });
+    return g;
+  };
+  // The rows of one card that came into view together, top to bottom: a
+  // chain down the column from its heading, or on narrow screens (where
+  // the layout hides the heading) the landing alone on each version, one
+  // after another.
+  const strike = (group) => {
+    const card = group[0].closest(".card"), head = card.querySelector(".col-ver");
+    const hop = group.length > 5 ? 110 : 170;
+    if (!head || !head.getClientRects().length) {
+      group.forEach((r, i) => {
+        setTimeout(() => {
+          const vb = cell(r).getBoundingClientRect(), g = layer({ l: vb.left - 8, r: vb.right, t: vb.top - 8, b: vb.bottom + 8 });
+          land(r, g, spot(r));
+          setTimeout(() => g.remove(), 1200);
+        }, i * hop);
+      });
+      return;
+    }
+    const hb = head.getBoundingClientRect(), box = { l: hb.left - 8, r: hb.right, t: hb.bottom + 2, b: card.getBoundingClientRect().bottom };
+    const g = layer(box);
+    let t = 0, last = null;
+    group.forEach((r, i) => {
+      const p = spot(r);
+      const from = last || [(box.l + box.r) / 2 + (Math.random() - .5) * (box.r - box.l) * .3, box.t];
+      t = bolt(g, from, p, box, { rough: last ? .5 : .35, alpha: last ? .85 : 1, delay: i ? t + hop - 90 : 0, branches: last ? 1 : 3 });
+      setTimeout(() => land(r, g, p), t);
+      last = p;
+    });
+    setTimeout(() => g.remove(), t + 1200);
+  };
+  // Each changed version once it is fully in view, with the tab visible
+  // and the page current (pageState): the gate opens with the first check
+  // of live.json that says so, and again with the first after the tab
+  // comes back, and each time it opens it looks afresh at those it hasn't
+  // struck. Hidden, or once a reload has started, it waits. So a page that
+  // is reloading for newer data starts no strike and remembers nothing.
+  const waiting = new Set(fresh);
+  let current = false;
+  d.addEventListener("visibilitychange", () => { if (d.hidden) current = false; });
+  const io = new IntersectionObserver((es) => {
+    if (d.hidden || !current) return;
+    const full = new Map();
+    for (const e of es) full.set(e.target, e.isIntersecting && e.intersectionRatio >= .99);
+    const now = fresh.filter((r) => waiting.has(r) && full.get(cell(r)));
+    const cards = new Map();
+    for (const r of now) {
+      waiting.delete(r);
+      io.unobserve(cell(r));
+      const c = r.closest(".card");
+      cards.set(c, (cards.get(c) || []).concat(r));
+    }
+    if (!now.length) return;
+    // Seen now, so remembered now; the strike that follows only shows it.
+    remember(now);
+    if (!still()) cards.forEach(strike);
+  }, { threshold: [0, .99] });
+  pageState = (on) => {
+    if (on === current) return;
+    current = on;
+    if (!on) return;
+    // Opening: reports queued while it was shut may be out of date, so
+    // they're dropped, and a fresh one asked for.
+    io.takeRecords();
+    for (const r of waiting) { io.unobserve(cell(r)); io.observe(cell(r)); }
+  };
 })();`;
 /** The script as the page carries it (minifyJs). */
 export const SCRIPT = minifyJs(SOURCE);

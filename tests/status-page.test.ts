@@ -120,14 +120,14 @@ test("page: groups, headings, names and the header row", () => {
   assert.ok(rowOf(page, "t3code").includes('<h5 class="hist-title">Recent deliveries</h5>'));
   // The header row: outside the list, hidden from screen readers, in the
   // markup's order.
-  assert.ok(page.includes('<div class="cols" aria-hidden="true"><span>Package</span><span>State</span><span>On <code>main</code></span><span>Delivery</span><span>Recent deliveries</span><span></span></div>\n<ul class="pkgs"'));
+  assert.ok(page.includes('<div class="cols" aria-hidden="true"><span>Package</span><span>State</span><span class="col-ver">On <code>main</code></span><span>Delivery</span><span>Recent deliveries</span><span></span></div>\n<ul class="pkgs"'));
   const r = rowOf(page, "codex");
   const cells = ['class="cell who"', 'class="cell state', 'class="cell ver"', 'class="cell dlv"', 'class="cell recent"', '<details class="more">'].map((c) => r.indexOf(c));
   assert.deepEqual([...cells].sort((a, b) => a - b), cells, "markup order matches the columns");
   assert.ok(cells.every((i) => i >= 0));
   // Without the live view: no state column, no state icon in any row.
   const plain = html(list, "o/r", null, "x");
-  assert.ok(plain.includes('<div class="cols no-state" aria-hidden="true"><span>Package</span><span>On <code>main</code></span>'));
+  assert.ok(plain.includes('<div class="cols no-state" aria-hidden="true"><span>Package</span><span class="col-ver">On <code>main</code></span>'));
   assert.ok(!plain.includes('class="cell state'));
 });
 
@@ -737,8 +737,9 @@ test("script: one check at a time, a hung one aborted after 15 seconds, and no e
   p.timeouts.at(-1)!();
   await p.flush();
   assert.equal(p.state.aborted, 1);
-  await p.minute();
-  assert.equal(p.state.fetches, 2, "the next check starts");
+  assert.equal(p.state.fetches, 2, "the return's check, skipped while that one was out, starts as it ends");
+  await p.flush();
+  assert.equal(p.checkedEl!.dateTime, "2026-11-13T11:57:00.000Z", "and draws its answer at once, as a return's check does");
   p.hide();
   await p.minute();
   assert.equal(p.checkedEl!.dateTime, "2026-11-13T11:57:00.000Z", "and it works");
@@ -928,4 +929,322 @@ test("page: a browser pin lists its browsers, the default first, with what's mis
   assert.ok(!rowOf(page, "agent-browser").includes("kids"));
   // The pin's own version is its channel: the browsers' versions are under it.
   assert.ok(r.includes('<div class="cell ver"><span class="lbl">On main </span>nixos-<wbr>unstable</div>'), r);
+});
+
+test("page: each row carries its version on main, a browser pin its browsers' versions", () => {
+  const browsers = [{ name: "ungoogled-chromium", version: "157.0", unavailable: [] }, { name: "chromium", version: "158.0", unavailable: ["aarch64-linux"] }];
+  const page = html([row("codex", { version: "2.0" }), row("agent-browser"), row("browser-unstable", { version: "ungoogled-chromium 157.0, Chromium 158.0 (unavailable on aarch64-linux) (nixos-unstable)", channel: "nixos-unstable", browsers })], "o/r");
+  assert.ok(page.includes('<li class="pkg" id="pkg-codex" data-v="2.0">'));
+  assert.ok(page.includes('<li class="pkg" id="pkg-browser-unstable" data-v="ungoogled-chromium 157.0, chromium 158.0">'), "not where they're missing");
+  assert.match(STYLE, /\.zap \{ display: none; \} \.zap-tag path \{ fill: CanvasText; stroke: Canvas; \}/, "forced colours: no lightning, the small bolt in text colour");
+  assert.match(STYLE, /prefers-reduced-motion: reduce\) \{ \*, \*::before, \*::after \{ transition: none !important; \} \.zapped \.ver, \.zap-tag\.pop \{ animation: none; \} \}/, "reduced motion: nothing moves");
+});
+
+type Stores = { session: Map<string, string>; local: Map<string, string> };
+interface BoltOpts {
+  rows: Record<string, string>; stores?: Stores; session?: string; local?: string; storage?: "ok" | "throws" | "write-throws";
+  /** Reduced motion (the default): a version in view is remembered, with no strike drawn. */
+  still?: boolean; hidden?: boolean; observer?: boolean;
+  /** live.json's ids for each check in turn, the last one repeated (the
+   * page's is "A"); "hang": that check never answers; "later": it answers
+   * when answer() is called. */
+  live?: string[]; narrow?: boolean;
+}
+/** Runs SCRIPT against a stub DOM with package rows in one card, for the
+ * bolt: rows 70px apart under the On main heading, timers run by hand. */
+function bolt(o: BoltOpts) {
+  const KEY = "t3code-nix-seen";
+  const stores: Stores = o.stores ?? { session: new Map(o.session ? [[KEY, o.session]] : []), local: new Map(o.local ? [[KEY, o.local]] : []) };
+  const store = (m: Map<string, string>) => ({
+    getItem: (k: string) => { if (o.storage === "throws") throw new Error("blocked"); return m.get(k) ?? null; },
+    setItem: (k: string, v: string) => { if (o.storage === "throws" || o.storage === "write-throws") throw new Error("full"); m.set(k, v); },
+  });
+  const rect = (l: number, t: number, r: number, b: number) => ({ left: l, top: t, right: r, bottom: b, width: r - l, height: b - t });
+  const body: any[] = [];
+  const node = (tag: string): any => ({ tag, children: [] as any[], attrs: {} as Record<string, string>, className: "", textContent: "", title: "", style: {},
+    classList: { set: new Set<string>(), add(c: string) { this.set.add(c); }, remove(c: string) { this.set.delete(c); } },
+    setAttribute(k: string, v: string) { this.attrs[k] = v; }, appendChild(c: any) { this.children.push(c); return c; },
+    getTotalLength: () => 100, animate: () => ({}), remove() { body.splice(body.indexOf(this), 1); } });
+  const head = { getClientRects: () => (o.narrow ? [] : [rect(400, 0, 600, 40)]), getBoundingClientRect: () => rect(400, 0, 600, 40) };
+  const card = { querySelector: (q: string) => (q === ".col-ver" ? head : null), getBoundingClientRect: () => rect(0, 0, 1000, 1000) };
+  const cells = new Map<string, any>(), rowsBy = new Map<string, any>();
+  const rows = Object.entries(o.rows).map(([name, v], i) => {
+    const cell = Object.assign(node("div"), {
+      childNodes: [] as any[], getBoundingClientRect: () => rect(400, 100 + 70 * i, 600, 120 + 70 * i),
+      querySelector(this: any, q: string) { return q === ".zap-tag" ? this.children.find((c: any) => c.className === "zap-tag") : null; },
+    });
+    cells.set(name, cell);
+    const row = { id: `pkg-${name}`, dataset: { v }, classList: node("li").classList, querySelector: (q: string) => (q === ".cell.ver" ? cell : null), closest: () => card };
+    rowsBy.set(name, row);
+    return row;
+  });
+  const nameOf = (c: any) => [...cells].find(([, x]) => x === c)![0];
+  const io = { callback: null as any, observing: new Set<string>(), observes: 0, queued: [] as any[] };
+  const listeners: Record<string, (() => void)[]> = {};
+  const state = { hidden: o.hidden ?? false, reloads: 0 };
+  let timers: [() => void, number][] = [];
+  const live = [...(o.live ?? ["A"])];
+  let later: ((id: string) => void) | null = null, minute: (() => void) | null = null;
+  const reply = (id: string) => ({ headers: { get: () => null }, json: async () => ({ id, checked: null }) });
+  const document = {
+    documentElement: { dataset: { id: "A" }, clientWidth: 1000, clientHeight: 800 },
+    body: { animate: () => ({}), appendChild: (c: any) => { body.push(c); return c; } },
+    get hidden() { return state.hidden; }, hasFocus: () => true,
+    querySelector: (q: string) => (q === ".mark" ? { namespaceURI: "svg" } : null),
+    querySelectorAll: (q: string) => (q === ".pkg[data-v]" ? rows : []),
+    createElement: node, createElementNS: (_: string, t: string) => node(t), createRange: () => ({ setStart() {}, setEnd() {}, getClientRects: () => [] }),
+    addEventListener: (t: string, fn: () => void) => { (listeners[t] ??= []).push(fn); },
+  };
+  vm.runInNewContext(SCRIPT, {
+    document, sessionStorage: store(stores.session), localStorage: store(stores.local), location: { reload: () => { state.reloads++; } },
+    Intl, Date, Math, Number, JSON, String, Array, Object, Set, Map, scrollX: 0, scrollY: 0, getComputedStyle: () => ({ strokeWidth: "3px" }),
+    matchMedia: (q: string) => ({ matches: q === "(prefers-reduced-motion: reduce)" && (o.still ?? true) }),
+    ...(o.observer === false ? {} : { IntersectionObserver: class {
+      constructor(cb: any) { io.callback = cb; }
+      observe(c: any) { io.observing.add(nameOf(c)); io.observes++; }
+      unobserve(c: any) { io.observing.delete(nameOf(c)); }
+      takeRecords() { const q = io.queued; io.queued = []; return q; }
+    } }),
+    addEventListener: () => {}, setInterval: (fn: () => void) => { minute = fn; }, setTimeout: (fn: () => void, ms: number) => { timers.push([fn, ms]); return timers.length; }, clearTimeout: () => {},
+    fetch: () => {
+      const id = live.length > 1 ? live.shift()! : live[0];
+      if (id === "later") return new Promise((resolve) => { later = (x) => resolve(reply(x)); });
+      return id === "hang" ? new Promise(() => {}) : Promise.resolve(reply(id));
+    },
+    getSelection: () => "",
+  });
+  const seen = (m: Map<string, string>) => (m.has(KEY) ? JSON.parse(m.get(KEY)!) : null);
+  return {
+    stores, io, state, body, cell: (n: string) => cells.get(n), row: (n: string) => rowsBy.get(n),
+    /** The rows with a small bolt. */
+    tagged: () => [...cells].filter(([, c]) => c.children.length).map(([n]) => n),
+    said: (n: string) => cells.get(n).children[0]?.children.map((c: any) => c.textContent).join(""),
+    seen: () => ({ session: seen(stores.session), local: seen(stores.local) }),
+    /** The start-up check of live.json answers. */
+    flush: () => new Promise((r) => setImmediate(r)),
+    /** The observer reports these cells, in view by this much. */
+    view: (entries: Record<string, number>) => io.callback(Object.entries(entries).map(([n, ratio]) => ({ target: cells.get(n), isIntersecting: ratio > 0, intersectionRatio: ratio }))),
+    /** A report the observer has queued but not yet delivered. */
+    queue: (n: string, ratio: number) => { io.queued.push({ target: cells.get(n), isIntersecting: ratio > 0, intersectionRatio: ratio }); },
+    /** The observer delivers what it still has queued. */
+    deliver: () => { const q = io.queued; io.queued = []; if (q.length) io.callback(q); },
+    /** Every timer runs, in order of when it's due. */
+    run: () => { const due = timers.sort((a, b) => a[1] - b[1]); timers = []; for (const [fn] of due) fn(); },
+    hide: () => { state.hidden = true; for (const fn of listeners.visibilitychange ?? []) fn(); },
+    show: async () => { state.hidden = false; for (const fn of listeners.visibilitychange ?? []) fn(); await new Promise((r) => setImmediate(r)); },
+    /** A minute passes (more than 30 s since the last check): the minute's check. */
+    minute: async () => { const t = Date.now; Date.now = () => t() + 61e3; try { minute!(); } finally { Date.now = t; } await new Promise((r) => setImmediate(r)); },
+    /** The check waiting on "later" answers. */
+    answer: async (id: string) => { later!(id); await new Promise((r) => setImmediate(r)); },
+  };
+}
+
+test("bolt: a first visit draws none and remembers what it showed, in the tab and the browser", async () => {
+  const b = bolt({ rows: { codex: "2", pi: "1" } });
+  await b.flush();
+  assert.deepEqual(b.tagged(), []);
+  assert.deepEqual(b.seen(), { session: { codex: "2", pi: "1" }, local: { codex: "2", pi: "1" } });
+  assert.equal(b.io.callback, null, "nothing to watch");
+});
+
+test("bolt: a version changed since the last visit gets its small bolt at once, and is remembered once seen in full", async () => {
+  const b = bolt({ rows: { codex: "2", pi: "1", fx: "3" }, local: JSON.stringify({ codex: "1", pi: "1" }) });
+  assert.deepEqual(b.tagged(), ["codex"], "pi unchanged; fx new to the page");
+  assert.equal(b.said("codex"), ", changed since your last visit");
+  assert.deepEqual(b.seen().local, { codex: "1", pi: "1", fx: "3" }, "the rest remembered; codex not yet seen");
+  assert.deepEqual([...b.io.observing], [], "not watched until the page is known current");
+  await b.flush();
+  assert.deepEqual([...b.io.observing], ["codex"]);
+  b.view({ codex: 0.5 });
+  assert.equal(b.seen().local.codex, "1", "partly in view: not yet");
+  b.view({ codex: 1 });
+  assert.deepEqual(b.seen(), { session: { codex: "2", pi: "1", fx: "3" }, local: { codex: "2", pi: "1", fx: "3" } });
+  assert.deepEqual([...b.io.observing], [], "once");
+});
+
+test("bolt: a page about to reload for newer data strikes nothing and remembers nothing changed", async () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), live: ["B"] });
+  await b.flush();
+  assert.equal(b.state.reloads, 1);
+  assert.deepEqual([...b.io.observing], []);
+  assert.equal(b.seen().local.codex, "1");
+  // A check that never answers: nothing yet either (it's aborted after 15 s, and then counts).
+  const hung = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), live: ["hang"] });
+  await hung.flush();
+  assert.deepEqual([...hung.io.observing], []);
+});
+
+test("bolt: the newest report for a cell counts", async () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }) });
+  await b.flush();
+  const report = (...ratios: number[]) => b.io.callback(ratios.map((r) => ({ target: b.cell("codex"), isIntersecting: r > 0, intersectionRatio: r })));
+  report(1, 0.5);
+  assert.equal(b.seen().local.codex, "1", "in view, then partly out: not seen");
+  report(0.5, 1);
+  assert.equal(b.seen().local.codex, "2");
+});
+
+test("bolt: a reload before the version was seen keeps it; after, a reload doesn't strike again", async () => {
+  const first = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }) });
+  const before = bolt({ rows: { codex: "2" }, stores: first.stores });
+  assert.deepEqual(before.tagged(), ["codex"], "never scrolled to: still changed");
+  await before.flush();
+  before.view({ codex: 1 });
+  assert.deepEqual(bolt({ rows: { codex: "2" }, stores: before.stores }).tagged(), []);
+});
+
+test("bolt: the tab's own view wins over the browser's; a new tab starts from the browser's", () => {
+  // Another tab already saw codex 2; this tab last showed 1.
+  assert.deepEqual(bolt({ rows: { codex: "2" }, session: JSON.stringify({ codex: "1" }), local: JSON.stringify({ codex: "2" }) }).tagged(), ["codex"]);
+  // A new tab: the browser's view, carried into the tab's, so its reload still knows codex.
+  const b = bolt({ rows: { codex: "2", pi: "1" }, local: JSON.stringify({ codex: "1", pi: "1" }) });
+  assert.deepEqual(b.seen().session, { codex: "1", pi: "1" });
+  assert.deepEqual(bolt({ rows: { codex: "2", pi: "1" }, stores: b.stores }).tagged(), ["codex"]);
+  // Junk in the tab's: the browser's.
+  assert.deepEqual(bolt({ rows: { codex: "2" }, session: "{not json", local: JSON.stringify({ codex: "1" }) }).tagged(), ["codex"]);
+});
+
+test("bolt: none when storage can't be read or holds junk; a failed write still shows the bolt", async () => {
+  assert.deepEqual(bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), storage: "throws" }).tagged(), []);
+  for (const junk of ["{not json", "[]", "null", "7"]) {
+    const b = bolt({ rows: { codex: "2" }, local: junk });
+    assert.deepEqual(b.tagged(), [], junk);
+    assert.deepEqual(b.seen().local, { codex: "2" }, "replaced with what it showed");
+  }
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), storage: "write-throws" });
+  assert.deepEqual(b.tagged(), ["codex"]);
+  await b.flush();
+  // Seen, and the write fails: no error.
+  b.view({ codex: 1 });
+});
+
+test("bolt: a hidden tab strikes nothing until it is visible and current, then looks again", async () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), hidden: true });
+  await b.flush();
+  assert.equal(b.io.observes, 0, "no check while hidden, so nothing watched");
+  await b.show();
+  assert.equal(b.io.observes, 1, "watched after the return's check");
+  b.view({ codex: 1 });
+  assert.equal(b.seen().local.codex, "2");
+  await b.show();
+  assert.equal(b.io.observes, 1, "nothing left to watch");
+});
+
+test("bolt: without IntersectionObserver, the small bolt, remembered at once", () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), observer: false });
+  assert.deepEqual(b.tagged(), ["codex"]);
+  assert.equal(b.seen().local.codex, "2");
+});
+
+test("bolt: the strike, one chain per card down the column, or the landing alone on each version when narrow", async () => {
+  const rows = { codex: "2", pi: "2", fx: "2" }, local = JSON.stringify({ codex: "1", pi: "1", fx: "1" });
+  for (const narrow of [false, true]) {
+    const b = bolt({ rows, local, still: false, narrow });
+    await b.flush();
+    b.view({ codex: 1, pi: 1, fx: 1 });
+    assert.deepEqual(b.seen().local, { codex: "2", pi: "2", fx: "2" }, "seen: remembered at once");
+    if (!narrow) {
+      assert.equal(b.body.length, 1, "one layer for the card");
+      assert.equal(b.body[0].style.clipPath, "inset(42px 400px 0px 392px)", "clipped to the column, under its heading");
+      assert.ok(b.body[0].children.some((c: any) => c.tag === "g"), "lightning");
+    }
+    b.run();
+    if (narrow) {
+      assert.equal(b.body.length, 3, "a layer per version, made as it lands");
+      assert.equal(b.body[0].style.clipPath, "inset(92px 400px 672px 392px)", "clipped to the version");
+      assert.ok(!b.body.some((g: any) => g.children.some((c: any) => c.tag === "g")), "no lightning");
+    }
+    assert.ok(["codex", "pi", "fx"].every((n) => b.row(n).classList.set.has("zapped") && b.cell(n).children[0].classList.set.has("pop")));
+    b.run();
+    assert.equal(b.body.length, 0, "layers removed");
+  }
+});
+
+test("bolt: back in the tab, nothing strikes until the return's check says the page is current", async () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), live: ["A", "hang"] });
+  await b.flush();
+  b.hide();
+  await b.show();
+  b.view({ codex: 1 });
+  assert.equal(b.seen().local.codex, "1", "the check is still out: the page may be stale");
+});
+
+test("bolt: a check that started before the tab came back doesn't open the gate", async () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), live: ["A", "later", "later"] });
+  await b.flush();
+  await b.minute();
+  b.hide();
+  // The return's check is skipped: the minute's is still out.
+  await b.show();
+  await b.answer("A");
+  b.view({ codex: 1 });
+  assert.equal(b.seen().local.codex, "1", "its answer may be from before newer data went live");
+  // The return's check, run when that one ended, answers.
+  await b.answer("A");
+  b.view({ codex: 1 });
+  assert.equal(b.seen().local.codex, "2");
+});
+
+test("bolt: once a reload for newer data has started, nothing strikes", async () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), live: ["A", "B"] });
+  await b.flush();
+  await b.minute();
+  assert.equal(b.state.reloads, 1);
+  b.view({ codex: 1 });
+  assert.equal(b.seen().local.codex, "1");
+});
+
+test("bolt: once a reload has started, a later check can't reopen the gate, even with the reload refused", async () => {
+  // Reload asked for; back in the tab before it happens, the same newer id: its tries refuse a second reload.
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), live: ["A", "B"] });
+  await b.flush();
+  await b.minute();
+  assert.equal(b.state.reloads, 1);
+  b.hide();
+  await b.show();
+  assert.equal(b.state.reloads, 1, "refused");
+  b.view({ codex: 1 });
+  assert.equal(b.seen().local.codex, "1");
+});
+
+test("bolt: seen is remembered at once; the strike that follows only shows it", async () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }), still: false });
+  await b.flush();
+  b.view({ codex: 1 });
+  assert.equal(b.seen().local.codex, "2", "before the strike lands");
+  // Hidden before it lands: it still lands, and nothing changes.
+  b.hide();
+  b.run();
+  assert.ok(b.row("codex").classList.set.has("zapped"));
+  assert.equal(b.seen().local.codex, "2");
+});
+
+test("bolt: a report queued while the gate was shut is dropped when it opens", async () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }) });
+  await b.flush();
+  b.hide();
+  // In full view a moment ago; scrolled away since, its fresh report still to come.
+  b.queue("codex", 1);
+  await b.show();
+  b.deliver();
+  assert.equal(b.seen().local.codex, "1");
+  assert.ok(b.io.observing.has("codex"), "watched afresh");
+});
+
+test("bolt: a report with nothing in full view writes nothing", async () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }) });
+  await b.flush();
+  b.stores.session.clear();
+  b.stores.local.clear();
+  b.view({ codex: 0.5 });
+  assert.deepEqual(b.seen(), { session: null, local: null });
+});
+
+test("bolt: a check while the gate is already open keeps the reports queued", async () => {
+  const b = bolt({ rows: { codex: "2" }, local: JSON.stringify({ codex: "1" }) });
+  await b.flush();
+  b.queue("codex", 1);
+  await b.minute();
+  b.deliver();
+  assert.equal(b.seen().local.codex, "2");
 });

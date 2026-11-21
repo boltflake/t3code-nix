@@ -214,7 +214,9 @@ Where to see what the flake has at this moment:
   estimated); the median delivery time over the last 30 days, once there
   are enough deliveries to count; and each package's update status, such as
   a newer version found and what it's waiting for, a version being tested,
-  or an update held and why.
+  or an update held and why. A version changed since your last visit gets a
+  lightning strike and a small bolt beside it (only the bolt if your system
+  asks for reduced motion).
 - **The GitHub Releases**: one per T3 Code version on the latest channel, listing every
   package in that set (see [Following new releases](#following-new-releases)).
 - **`t3code-nix doctor`** on your machine: the versions your build bundles,
