@@ -40,7 +40,7 @@
           t3code-nix.nixosModules.default
           {
             programs.t3code = {
-              enable = true; # the desktop app and `t3code-nix doctor`
+              enable = true; # the desktop app, its providers on PATH and `t3code-nix doctor`
 
               # Optional: uncomment what you need. All the options are
               # under "The NixOS module" in t3code-nix's README.

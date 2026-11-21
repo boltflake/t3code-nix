@@ -303,6 +303,7 @@ What each package is built from is in
 | `nixpkgs` | `"unstable"` | `"unstable"` or `"stable"`: build on nixos-unstable's libraries, or on the current stable NixOS release's ([NixOS stable](#nixos-stable)). It applies to the app, the CLI, the server, the doctor and the agent tools. It doesn't change which T3 Code you get (that's `channel`), and `"stable"` can't be combined with `channel = "nightly"` |
 | `providers` | `null` (the package's own) | which providers to bundle, by name, as in [Agent providers](#agent-providers) |
 | `excludeProviders` | `[ ]` | providers to leave out, by name |
+| `providersOnPath` | `true` | puts the bundled providers on `PATH` too, at low priority |
 | `electron` | `null` (the package's own: `"auto"`) | which Electron the desktop app runs on: `"auto"`, `"bundled"`, `"nixpkgs"` or an Electron package (see [The desktop app's Electron](#the-desktop-apps-electron)) |
 | `acpRuntimes` | `null` (the package's own: none) | runtimes for agents T3 Code installs from the ACP registry: `"nodejs"`, `"uv"` (see [ACP registry agents](#acp-registry-agents)) |
 | `agentTools.boat.enable` | `false` | installs [boat](#agent-tools), with or without the app |
@@ -821,7 +822,10 @@ about how T3 Code uses them:
   (Cursor, Grok, fx, OpenCode, Antigravity, Kiro, Muse, pi) are installed,
   but you switch each one on once in T3 Code's settings.
 
-**`~/.t3/bin/t3`**, which the desktop app writes, doesn't see the bundled
+The module also puts them on your `PATH` (`providersOnPath`), at low
+priority, so your own package of the same command wins.
+
+**`~/.t3/bin/t3`**, which the desktop app writes, doesn't bundle the
 providers and breaks after garbage collection; use this flake's `t3` instead.
 
 ### Provider updates

@@ -100,6 +100,13 @@ let
       drvs (installed onStable "t3code") == [ set.t3code.drvPath ]
       && drvs (installed onStable "t3") == [ set.t3.drvPath ]
       && !failedAssertion onStable;
+    "the stable set's providers go on PATH" =
+      let
+        names = map lib.getName set.t3code.providers;
+      in
+      lib.sort lib.lessThan (
+        drvs (builtins.filter (p: builtins.elem (lib.getName p) names) onStable.environment.systemPackages)
+      ) == lib.sort lib.lessThan (drvs set.t3code.providers);
     "the server runs the stable set's t3" =
       lib.hasPrefix "${set.t3}/bin/" server.systemd.user.services.t3code-server.serviceConfig.ExecStart;
     "an explicit package wins; the CLI stays stable, with the app's providers" =
