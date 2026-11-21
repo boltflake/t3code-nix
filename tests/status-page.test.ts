@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import vm from "node:vm";
-import { escape, html, SCRIPT, SCRIPT_HASH, STYLE } from "../scripts/status-page.ts";
+import { escape, html, minifyCss, minifyJs, SCRIPT, SCRIPT_HASH, STYLE } from "../scripts/status-page.ts";
 import type { Delivery, Row, StableView } from "../scripts/status.ts";
 import type { Live, PinState } from "../scripts/status-live.ts";
 
@@ -37,11 +37,12 @@ test("page: nothing loaded from anywhere, the policy, the title and the mark", (
   assert.match(page, /<header class="top">\n<div class="title"><a class="brand" href="https:\/\/github\.com\/o\/r"><svg class="mark"[^]*?<span>t3code-nix<\/span><\/a><div class="crumb"><span class="slash" aria-hidden="true">\/<\/span><h1>Package status<\/h1><\/div><\/div>/, "the title is in the header, after the name");
   assert.ok(!page.includes("packaged for Nix: the versions on"), "no intro line");
   assert.match(page, /<svg class="mark" viewBox="0 0 100 100" aria-hidden="true">/);
-  assert.match(page, /@media \(prefers-reduced-motion: reduce\) \{\n  \.mark \.strike, \.mark \.glow, \.mark \.spin, \.mark \.pop, \.mark \.energy \{ animation: none; \}/, "the mark stands still when motion is reduced");
+  assert.ok(page.includes(`<style>${minifyCss(STYLE)}</style>`), "the style, minified");
+  assert.match(STYLE, /@media \(prefers-reduced-motion: reduce\) \{\n  \.mark \.strike, \.mark \.glow, \.mark \.spin, \.mark \.pop, \.mark \.energy \{ animation: none; \}/, "the mark stands still when motion is reduced");
   assert.equal(page.split('id="mark-blur"').length, 2, "the glow's filter, once");
-  const forced = page.match(/@media \(forced-colors: active\) \{\n([\s\S]*?)\n\}\n/)![1];
+  const forced = STYLE.match(/@media \(forced-colors: active\) \{\n([\s\S]*?)\n\}\n/)![1];
   assert.ok(forced.includes(".mark .strike, .mark .glow, .mark .energy { display: none; }"), "forced colours hide the strike, glow and energy");
-  assert.equal(page.split(".mark .strike, .mark .glow, .mark .energy { display: none; }").length, 2, "and only there");
+  assert.equal(STYLE.split(".mark .strike, .mark .glow, .mark .energy { display: none; }").length, 2, "and only there");
   assert.ok(!/\d{4}-\d\d-\d\dT/.test(text(page)), "no raw ISO times in the text");
   assert.ok(page.includes('data-id="id1"'));
   for (const href of ["https://github.com/o/r#quick-start", "https://github.com/o/r/releases", "https://github.com/o/r"]) assert.ok(page.includes(`href="${href}"`), href);
@@ -50,6 +51,36 @@ test("page: nothing loaded from anywhere, the policy, the title and the mark", (
   assert.ok(page.includes('Last checked against upstream: <time id="checked-exact" datetime="2026-11-13T11:50:00.000Z">13 Nov 2026, 11:50 UTC</time>.'));
   // A version link names its package after the visible version.
   assert.ok(page.includes('<a class="hit" href="https://github.com/openai/codex/releases/tag/v1.0">1.<wbr>0<span class="sr">, release notes for Codex</span></a>'));
+});
+
+test("page: the style and script, minified without changing a rule or a statement", () => {
+  const css = minifyCss(STYLE);
+  assert.ok(css.length < STYLE.length * 0.8, "smaller");
+  assert.ok(!css.includes("/*") && !/\n/.test(css), "no comments, no line breaks");
+  // STYLE's strings are font names and empty contents, written in double
+  // quotes (comments use none), and it has no escapes: nothing the minifier
+  // could change inside a string or next to an escaped character. Read
+  // from STYLE itself, not after the minifier's own steps.
+  assert.deepEqual([...new Set(STYLE.match(/"[^"]*"/g))].sort(), ['""', '"Helvetica Neue"', '"Liberation Mono"', '"Segoe UI"']);
+  assert.ok(!STYLE.includes("\\"), "no escapes");
+  // No single-quoted strings (comments' apostrophes aside; a quote left
+  // after taking comments out is a string's, even one holding "/*").
+  assert.ok(!STYLE.replace(/\/\*[\s\S]*?\*\//g, "").includes("'"), "no single-quoted strings");
+  // Every selector list and declaration is there, with only the spaces the
+  // minifier may drop gone: a space between two selectors (a descendant)
+  // stays.
+  const squeeze = (t: string) => t.replace(/\s+/g, " ").replace(/\s*([,>])\s*/g, "$1").replace(/:\s+/g, ":").trim();
+  const bare = STYLE.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const m of bare.matchAll(/([^{};]+)\{/g)) assert.ok(css.includes(squeeze(m[1]) + "{"), `selector: ${m[1].trim()}`);
+  for (const m of bare.matchAll(/([-a-z]+)\s*:\s*([^;{}]+);/g)) assert.ok(css.includes(`${m[1]}:${squeeze(m[2])}`), `declaration: ${m[0].trim()}`);
+  assert.equal(minifyCss(".a :b { x: y; }"), ".a :b{x:y}", "never a space before a colon");
+  // The script: the same statements on the same lines, without comments or
+  // indentation; the page carries this one.
+  assert.equal(minifyJs("  const a = 1; // kept\n\n  // dropped\n  f();\n"), "const a = 1; // kept\nf();");
+  assert.ok(!/^\s|^\/\/|\s$/m.test(SCRIPT), "no indentation, comment lines or trailing space");
+  assert.ok(!SCRIPT.includes("`"), "no template strings, so none spans lines");
+  assert.ok(!/\\$/m.test(SCRIPT), "no line continued with a backslash, whose next line's spaces would count");
+  for (const line of SCRIPT.split("\n")) assert.ok(!/["'][^"']*\/\/[^"']*["']/.test(line), `no "//" in a string: ${line}`);
 });
 
 test("page: every title's text is also on the page", () => {
@@ -119,9 +150,10 @@ test("page: the headline card, with and without the live view", () => {
   assert.deepEqual([...text(mixed.match(/<p class="counts">[\s\S]*?<\/p>/)![0]).matchAll(/\d [a-z ]+?(?= ·|$| $)/g)].map((m) => m[0].trim()),
     ["1 held", "1 new version found", "1 not checked"], "held first, only states that aren't up to date");
   // The status line: the checked time and the region, the
-  // controls hidden until the script shows them.
+  // out-of-date note hidden until the script shows it; no reload link.
   assert.ok(all.includes('Checked against upstream <time class="rel" id="checked" datetime="2026-11-13T11:50:00.000Z"'));
-  assert.ok(all.includes('<span class="live-status" role="status"><span class="stale-note" hidden>Out of date</span><span class="newer" hidden>Newer data · <a href="" class="reload hit">Reload</a></span></span></p>'));
+  assert.ok(all.includes('<span class="live-status" role="status"><span class="stale-note" hidden>Out of date</span></span></p>'));
+  assert.ok(!/class="(newer|reload)/.test(all), "no reload link");
   assert.ok(!/pause|aria-pressed/i.test(all.replace(/pause bars/g, "")), "no pause control");
   // The figure, only when given.
   assert.ok(!all.includes('class="figure"'));
@@ -369,9 +401,9 @@ function run(o: Opts = {}) {
   // The footer's exact check time, when there is one.
   const foot = time("", checkedEl?.dateTime ?? "", checkedEl?.title ?? "");
   const times = [...rels, exactTime, ...(checkedEl ? [foot] : [])];
-  const els: Record<string, any> = { ".stale-note": el(), ".at-last": el(), ".stale-icon": el(), ".newer": el(), ".status-line": el(), ".reload": el(), "#checked-exact": foot };
+  const els: Record<string, any> = { ".stale-note": el(), ".at-last": el(), ".stale-icon": el(), ".status-line": el(), "#checked-exact": foot };
   const leads = [el({ hidden: false })];
-  const state = { details: false, selection: "", hidden: o.hidden ?? false, focused: o.focused ?? true, reloads: 0, fetches: 0, aborted: 0, urls: [] as string[] };
+  const state = { details: false, selection: "", hidden: o.hidden ?? false, focused: o.focused ?? true, reloads: 0, fetches: 0, aborted: 0, urls: [] as string[], caches: [] as (string | undefined)[] };
   const store = o.store ?? new Map<string, string>();
   let writes = 0;
   const storage = {
@@ -413,9 +445,10 @@ function run(o: Opts = {}) {
       // Only a fetch given this controller's signal is aborted.
       for (const h of hung.filter((f) => f.signal === this.signal)) h.resolve(Promise.reject(new Error("aborted")));
     } },
-    fetch: (url: string, init?: { signal?: unknown }) => {
+    fetch: (url: string, init?: { signal?: unknown; cache?: string }) => {
       state.fetches++;
       state.urls.push(url);
+      state.caches.push(init?.cache);
       const next = replies.length ? replies.shift()! : "A";
       if (next === "hang") return new Promise((resolve) => hung.push({ resolve, signal: init?.signal }));
       if (next instanceof Error) return Promise.reject(next);
@@ -443,24 +476,34 @@ function run(o: Opts = {}) {
   };
 }
 
-test("script: wording, one interval, checks on start, every minute visible, every 5 minutes hidden, and on return", async () => {
+test("script: wording, one interval, checks on start, every minute visible, never hidden, and on return", async () => {
   const p = run();
   await p.flush();
   assert.deepEqual(p.intervals.map(([, ms]) => ms), [60e3], "one interval");
   assert.equal(p.state.fetches, 1, "a check on start");
   assert.match(p.state.urls[0], /^live\.json\?t=\d+$/, "the tiny file, past any cache");
+  assert.equal(p.state.caches[0], "no-store");
   assert.deepEqual(p.rels.map((t) => t.textContent), ["just now", "3 hours ago", "10 minutes ago"], "drawn once on start; under a minute is just now");
   assert.equal(p.exactTime.textContent, "13 Nov 2026, 09:00 UTC", "an exact time is drawn once, in the reader's zone");
   assert.equal(p.exactTime.writes, 0, "the same text: not rewritten");
   await p.minute();
   assert.equal(p.state.fetches, 2, "visible: every minute");
   p.hide();
-  for (let i = 0; i < 4; i++) await p.minute();
-  assert.equal(p.state.fetches, 2, "hidden: not before 5 minutes");
-  await p.minute();
-  assert.equal(p.state.fetches, 3, "hidden: every 5 minutes");
+  for (let i = 0; i < 30; i++) await p.minute();
+  assert.equal(p.state.fetches, 2, "hidden: never, however long");
   await p.show();
-  assert.equal(p.state.fetches, 4, "straight away on becoming visible");
+  assert.equal(p.state.fetches, 3, "straight away on becoming visible");
+  assert.ok(new Set(p.state.urls).size === 3, "each past any cache");
+  // The interval's turn within 30 s of the return's check: skipped.
+  const tick = async (ms: number) => { p.advance(ms); p.intervals[0][0](); await p.flush(); };
+  await tick(20e3);
+  assert.equal(p.state.fetches, 3, "not again 20 s after the return's check");
+  await tick(20e3);
+  assert.equal(p.state.fetches, 4, "40 s after it: checks");
+  // The clock set back an hour: the minute's checks go on.
+  p.advance(-3600e3);
+  await p.minute();
+  assert.equal(p.state.fetches, 5, "a clock set back doesn't stop checks");
 });
 
 test("script: times stand still while someone reads, move while nobody's there, and catch up on return", async () => {
@@ -543,7 +586,6 @@ test("script: a newer check time waits for a redraw; an older one is ignored", a
   assert.equal(p.checkedEl!.dateTime, "2026-11-13T11:55:00.000Z", "away: shown at the redraw");
   assert.equal(p.checkedEl!.title, "13 Nov 2026, 11:55 UTC");
   assert.deepEqual([p.foot.dateTime, p.foot.textContent], ["2026-11-13T11:55:00.000Z", "13 Nov 2026, 11:55 UTC"], "the footer follows");
-  assert.equal(p.els[".newer"].hidden, true, "no link: nothing newer");
   p.advance(5 * 60e3);
   await p.minute();
   assert.equal(p.checkedEl!.dateTime, "2026-11-13T11:55:00.000Z", "an older time is ignored");
@@ -590,72 +632,90 @@ test("script: a stale newer time and a failed check still turn out of date on", 
   assert.equal(fast.els[".stale-note"].hidden, true);
 });
 
-test("script: a newer id reloads only when nobody is in the window", async () => {
-  // Someone reading: the link, never a reload.
+/** The ids a store holds tries for, without their times. */
+const triesIn = (store: Map<string, string>) => JSON.parse(store.get("t3code-nix-reloaded")!).map((e: string) => e.replace(/@\d+$/, ""));
+
+test("script: a newer id reloads a visible tab at once, whoever is reading", async () => {
+  // Someone reading, a section open and text selected: it reloads anyway
+  // (the script no longer looks at either; this guards against it waiting
+  // for them again).
   const reading = run({ replies: ["B", "B"] });
+  reading.state.details = true;
+  reading.state.selection = "codex";
   await reading.flush();
-  assert.equal(reading.els[".newer"].hidden, false);
-  await reading.minute();
-  assert.equal(reading.state.reloads, 0);
-  // Then the tab goes to the background: it reloads.
-  reading.hide();
   assert.equal(reading.state.reloads, 1);
-  // Hidden from the start: at once.
-  const hidden = run({ replies: ["B"], hidden: true });
-  await hidden.flush();
-  assert.equal(hidden.state.reloads, 1);
-  // Unfocused: only after 2 minutes; a short blur doesn't count.
-  const blurred = run({ replies: ["A", "B", "B", "B"] });
-  await blurred.flush();
-  blurred.blur();
-  await blurred.minute();
-  assert.equal(blurred.state.reloads, 0);
-  await blurred.minute();
-  assert.equal(blurred.state.reloads, 1);
-  // Unfocused from the start: 2 minutes from then.
-  const start = run({ replies: ["B", "B", "B"], focused: false });
-  await start.flush();
-  await start.minute();
-  assert.equal(start.state.reloads, 0);
-  await start.minute();
-  assert.equal(start.state.reloads, 1);
-  // A section open or text selected: it waits, hidden or not.
-  const open = run({ replies: ["B"], hidden: true });
-  open.state.details = true;
-  await open.flush();
-  assert.equal(open.state.reloads, 0);
-  open.state.details = false;
-  open.state.selection = "codex";
-  await open.minute();
-  assert.equal(open.state.reloads, 0);
-  open.state.selection = "";
-  await open.minute();
-  assert.equal(open.state.reloads, 1);
-  // "Reload": a real reload.
-  const link = run({ replies: ["B"] });
-  await link.flush();
-  let prevented = 0;
-  for (const fn of link.els[".reload"].listeners) fn({ preventDefault: () => { prevented++; } });
-  assert.deepEqual([prevented, link.state.reloads], [1, 1]);
+  // A newer id later on: at that check.
+  const later = run({ replies: ["A", "B"] });
+  await later.flush();
+  assert.equal(later.state.reloads, 0);
+  await later.minute();
+  assert.equal(later.state.reloads, 1);
+  // Nothing newer: no reload, at any check or on going to the background.
+  const same = run({ replies: ["A", "A"] });
+  await same.flush();
+  await same.minute();
+  same.hide();
+  assert.equal(same.state.reloads, 0);
+  assert.ok(!/\.newer|"\.reload"/.test(SCRIPT), "no link to show or wire up");
 });
 
-test("script: ids remembered, seeded with the page's own; no loop on stale copies", async () => {
-  const store = new Map<string, string>();
-  const p = run({ replies: ["A", "B", "A", "B"], hidden: true, store });
+test("script: a hidden tab leaves a newer id to its check on becoming visible", async () => {
+  // Opened in the background: no check until it's visible, then a reload.
+  const opened = run({ replies: ["B"], hidden: true });
+  await opened.flush();
+  await opened.minute();
+  assert.equal(opened.state.fetches, 0, "no check while hidden, not even on start");
+  await opened.show();
+  assert.equal(opened.state.reloads, 1, "on becoming visible");
+  // A check out when the tab is hidden, answered with B: the same.
+  const p = run({ replies: ["A", "hang", "B"] });
   await p.flush();
-  assert.deepEqual(JSON.parse(store.get("t3code-nix-reloaded")!), ["A"], "seeded with its own id");
-  for (let i = 0; i < 3; i++) { p.advance(5 * 60e3); await p.minute(); }
+  await p.minute();
+  p.hide();
+  await p.answer("B");
+  assert.equal(p.state.reloads, 0);
+  await p.show();
   assert.equal(p.state.reloads, 1);
-  assert.deepEqual(JSON.parse(store.get("t3code-nix-reloaded")!), ["A", "B"]);
-  // After that reload a cache still serves page A while live.json says B:
-  // a fresh run shows the link and doesn't loop.
-  const again = run({ replies: ["B", "B"], hidden: true, store });
-  await again.flush();
-  again.advance(5 * 60e3);
-  await again.minute();
-  assert.equal(again.state.reloads, 0);
-  assert.equal(again.els[".newer"].hidden, false, "the link still shows");
-  assert.equal(again.els[".newer"].changes, 1, "announced once");
+});
+
+test("script: tries remembered, seeded with the page's own; a stale copy gets 3, 10 minutes apart", async () => {
+  const store = new Map<string, string>();
+  const p = run({ replies: ["A", "B", "A", "B"], store });
+  await p.flush();
+  assert.deepEqual(triesIn(store), ["A"], "seeded with its own id");
+  for (let i = 0; i < 3; i++) await p.minute();
+  assert.equal(p.state.reloads, 1);
+  assert.deepEqual(triesIn(store), ["A", "B"]);
+  // A cache still serves page A while live.json says B: each fresh run
+  // tries again once 10 minutes have passed since the last try, 3 tries in
+  // all within the hour (the first above), then none until they age out.
+  const at = (hm: string) => Date.parse(`2026-11-13T${hm}:00.000Z`);
+  const reloads: number[] = [];
+  for (const start of ["12:05", "12:25", "12:40"]) {
+    const again = run({ replies: Array(20).fill("B"), store, now: at(start) });
+    await again.flush();
+    for (let i = 0; i < 15 && !again.state.reloads; i++) await again.minute();
+    reloads.push(again.state.reloads);
+  }
+  assert.deepEqual(reloads, [1, 1, 0]);
+  const times = JSON.parse(store.get("t3code-nix-reloaded")!).filter((e: string) => e.startsWith("B@")).map((e: string) => new Date(Number(e.slice(2))).toISOString().slice(11, 16));
+  assert.deepEqual(times, ["12:01", "12:11", "12:25"], "10 minutes after the last, or at once if that's past");
+  // An hour on, the tries have aged out: data that comes back to B is
+  // reloaded for again.
+  const back = run({ replies: ["B"], store, now: at("13:30") });
+  await back.flush();
+  assert.equal(back.state.reloads, 1);
+  // A clock set back a day: the tries are a day away, not in the future.
+  const behind = new Map([["t3code-nix-reloaded", JSON.stringify(["A@" + at("12:00"), "B@" + at("12:00")])]]);
+  const early = run({ replies: ["B"], store: behind, now: at("12:00") - 86400e3 });
+  await early.flush();
+  assert.equal(early.state.reloads, 1);
+  // An older page's bare entry is a try long ago, so aged out.
+  const old = new Map([["t3code-nix-reloaded", JSON.stringify(["A", "B"])]]);
+  const q = run({ replies: ["B"], store: old });
+  await q.flush();
+  assert.equal(q.state.reloads, 1);
+  assert.deepEqual(triesIn(old), ["A", "B", "B"]);
   // Only the last 20 are kept.
   const many = new Map([["t3code-nix-reloaded", JSON.stringify(Array.from({ length: 25 }, (_, i) => `x${i}`))]]);
   await run({ store: many }).flush();
@@ -685,29 +745,31 @@ test("script: one check at a time, a hung one aborted after 15 seconds, and no e
 
 test("script: storage that can't be trusted never reloads by itself", async () => {
   for (const storage of ["throws", "read-throws", "malformed", "fails-later", "fails-first"] as const) {
-    const p = run({ replies: ["B", "B", "B"], hidden: true, storage, checked: "2026-11-13T09:00:00.000Z" });
+    const p = run({ replies: ["B", "B", "B"], storage, checked: "2026-11-13T09:00:00.000Z" });
     await p.flush();
-    p.advance(5 * 60e3);
+    p.advance(10 * 60e3);
     await p.minute();
     assert.equal(p.state.reloads, 0, `${storage}: no automatic reload`);
-    assert.equal(p.rels[0].textContent, "6 minutes ago", `${storage}: times work`);
+    p.hide();
+    await p.minute();
+    assert.equal(p.rels[0].textContent, "12 minutes ago", `${storage}: times work`);
     assert.equal(p.els[".stale-note"].hidden, false, `${storage}: the switch works`);
-    assert.equal(p.els[".newer"].hidden, false, `${storage}: the link shows`);
   }
   // A malformed entry in otherwise working storage counts as empty: replaced,
   // and the reload happens once.
   const junk = new Map([["t3code-nix-reloaded", "{not json"]]);
-  const healed = run({ replies: ["B", "B"], hidden: true, store: junk });
+  const healed = run({ replies: ["B", "B"], store: junk });
   await healed.flush();
   assert.equal(healed.state.reloads, 1);
-  assert.deepEqual(JSON.parse(junk.get("t3code-nix-reloaded")!), ["A", "B"]);
+  assert.deepEqual(triesIn(junk), ["A", "B"]);
   // Storage that worked for the first run and can't be read in the next.
   const store = new Map<string, string>();
-  const first = run({ replies: ["B"], hidden: true, store });
+  const first = run({ replies: ["B"], store });
   await first.flush();
   assert.equal(first.state.reloads, 1);
-  const next = run({ replies: ["C", "C"], hidden: true, store, storage: "read-throws" });
+  const next = run({ replies: ["C", "C"], store, storage: "read-throws" });
   await next.flush();
+  await next.minute();
   assert.equal(next.state.reloads, 0, "after a successful reload, reads failing: no loop");
 });
 
@@ -768,15 +830,14 @@ test("script: coming back to the tab redraws at once, and its check is drawn in 
 });
 
 test("script: a missed focus event doesn't leave a reader counted as away", async () => {
-  const p = run({ replies: ["A", "B", "B", "B"] });
+  const p = run({ replies: ["A", "A", "A", "A"] });
   await p.flush();
   p.blur();
   p.state.focused = true; // focus came back, but no event arrived
   await p.minute();
   await p.minute();
   await p.minute();
-  assert.equal(p.state.reloads, 0, "hasFocus() says someone is there");
-  assert.equal(p.rels[0].textContent, "just now", "and the times stand still");
+  assert.equal(p.rels[0].textContent, "just now", "hasFocus() says someone is there: the times stand still");
 });
 
 test("script: coming back redraws before the return check answers", async () => {
@@ -790,13 +851,16 @@ test("script: coming back redraws before the return check answers", async () => 
 });
 
 test("script: a check still out when the tab comes back is drawn in full", async () => {
-  // The hidden tab's 5-minute check is out when the reader returns after
-  // hours; its fresh answer must not leave "Out of date" showing.
-  const p = run({ replies: ["A", "hang"], hidden: true });
+  // A check went out just before the tab was hidden, and is still out when
+  // the reader returns after hours; its fresh answer must not leave "Out of
+  // date" showing.
+  const p = run({ replies: ["A", "hang"] });
   await p.flush();
+  await p.minute();
+  p.hide();
   p.advance(5 * 3600e3);
   await p.minute();
-  assert.equal(p.state.fetches, 2, "the hidden check is out");
+  assert.equal(p.state.fetches, 2, "the check is out");
   await p.show();
   assert.equal(p.state.fetches, 2, "no second check");
   assert.equal(p.els[".stale-note"].hidden, false, "old data, for now");

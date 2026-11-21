@@ -5,8 +5,8 @@
 // depends only on its inputs, so it stays deterministic: dates are written
 // out in UTC, and the script turns the relative ones into "2 hours ago" and
 // the exact ones into the reader's own time zone in the browser, says when
-// the data is out of date, and offers or makes a reload when the site has
-// newer data (see SCRIPT).
+// the data is out of date, and reloads when the site has newer data (see
+// SCRIPT).
 import { createHash } from "node:crypto";
 import { AGENT_TOOLS, BROWSER_PINS, NIXPKGS_PINS, PROVIDERS, T3, UNFREE } from "./lib/packages.ts";
 import type { Browser, Delivery, Row, StableView } from "./status.ts";
@@ -166,10 +166,10 @@ function figure(d: DeliveryFigure | null): string {
 }
 
 /** The status line: the checked time (live view) and the status region,
- * whose texts the script shows. */
+ * whose "Out of date" the script shows. */
 function statusLine(checked: string | null): string {
   const time = checked ? `<span class="checked-text">Checked against upstream <time class="rel" id="checked" datetime="${escape(checked)}" title="${escape(utc(checked))}">${escape(utc(checked))}</time></span>` : "";
-  return `<p class="status-line">${time}<span class="live-status" role="status"><span class="stale-note" hidden>Out of date</span><span class="newer" hidden>Newer data · <a href="" class="reload hit">Reload</a></span></span></p>`;
+  return `<p class="status-line">${time}<span class="live-status" role="status"><span class="stale-note" hidden>Out of date</span></span></p>`;
 }
 
 /** The latest change shown here: the packages whose versions arrived in
@@ -458,7 +458,7 @@ ${ul(c.names, 4).replace('<ul class="pkgs"', '<ul class="pkgs kids"')}
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src '${SCRIPT_HASH}'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>Package status · t3code-nix</title>
-<style>${STYLE}</style>
+<style>${minifyCss(STYLE)}</style>
 </head>
 <body>
 <svg class="defs" aria-hidden="true" focusable="false"><defs><pattern id="hatch" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="hatch-bg" width="3" height="3"/><rect class="hatch-line" width="1.2" height="3"/></pattern></defs></svg>
@@ -485,6 +485,23 @@ ${activity(list, live)}${sections}
 }
 
 // ---- Style -------------------------------------------------------------
+
+/** Our own CSS, smaller on the wire: no comments, and no whitespace a rule
+ * doesn't need (around { } ; , > and after :). Never a space before a ":",
+ * which can be a descendant combinator. Only for STYLE, whose strings are
+ * font names and empty contents (tests check). */
+export function minifyCss(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ").replace(/\s*([{};,>])\s*/g, "$1").replace(/:\s+/g, ":")
+    .replace(/;}/g, "}").trim();
+}
+
+/** Our own script, smaller on the wire: each line trimmed, comment lines
+ * and blank lines dropped. Line breaks stay, so no statement runs into the
+ * next. Only for SOURCE, which has no multi-line strings and no "//" in a
+ * string (tests check). */
+export function minifyJs(js: string): string {
+  return js.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//")).join("\n");
+}
 
 export const STYLE = `
 :root { color-scheme: light dark;
@@ -722,18 +739,22 @@ footer { margin-top: 3rem; color: var(--muted); font-size: .875rem; line-height:
 // ---- Script ------------------------------------------------------------
 
 // Nothing changes by itself while someone is in the window, except the
-// out-of-date switch turning on and the "Newer data · Reload" link
-// appearing. "Nobody in the window": the tab hidden, or the window unfocused
-// for 2 minutes (a moment in the find bar doesn't count). Then, once a
-// minute, the relative times are redrawn with the newest check time, and
-// once more when someone comes back. Checks of the site's tiny live.json:
-// on start, once a minute while visible, every 5 minutes in the background,
-// and on becoming visible; one at a time, aborted after 15 s. The same id:
-// only the check time is taken. Another id: the link, and a reload when
-// nobody is in the window, no section is open and nothing is selected, once
-// per id (the tab remembers the ids it reloaded for, starting with its own,
-// so stale copies can't make it loop; if storage can't be trusted, never).
-export const SCRIPT = `(() => {
+// out-of-date switch turning on and a reload for newer data. "Nobody in the
+// window": the tab hidden, or the window unfocused for 2 minutes (a moment
+// in the find bar doesn't count). Then, once a minute, the relative times
+// are redrawn with the newest check time, and once more when someone comes
+// back. Checks of the site's tiny live.json, only while the tab is
+// visible: on start, on becoming visible, and once a minute (not within
+// 30 s of the last); one at a time, aborted after 15 s. The same id: only
+// the check time is taken. Another id: a reload at once (an answer that
+// arrives while the tab is hidden waits for the check on becoming
+// visible). Each id gets at most 3 reloads in an hour, 10 minutes apart: a
+// cache that still serves the old page gets another chance, and data that
+// comes back to an earlier id later is reloaded for again. Times are
+// compared either way round, so a clock set back can't stop checks or
+// tries. The tab remembers its tries, and its own id as
+// one; if storage can't be trusted, it never reloads by itself.
+const SOURCE = `(() => {
   const d = document, id = d.documentElement.dataset.id;
   const $ = (q) => d.querySelector(q), all = (q) => d.querySelectorAll(q);
   const IDS = "t3code-nix-reloaded";
@@ -742,13 +763,18 @@ export const SCRIPT = `(() => {
   let broken = false;
   const get = () => { try { return sessionStorage.getItem(IDS); } catch { broken = true; return null; } };
   const remembered = () => { try { const a = JSON.parse(get() || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } };
+  // Tries are "<id>@<ms>"; a bare "<id>" (an older page's) is a try long
+  // ago, so aged out.
+  const tries = (x) => remembered().filter((e) => typeof e === "string" && (e === x || e.startsWith(x + "@")))
+    .map((e) => Number(e.slice(x.length + 1)) || 0);
   const remember = (x) => {
-    try { sessionStorage.setItem(IDS, JSON.stringify([...remembered(), x].slice(-20))); } catch { broken = true; }
-    if (!remembered().includes(x)) broken = true;
+    const e = x + "@" + Date.now();
+    try { sessionStorage.setItem(IDS, JSON.stringify([...remembered(), e].slice(-20))); } catch { broken = true; }
+    if (!remembered().includes(e)) broken = true;
   };
   const f = new Intl.RelativeTimeFormat("en", { numeric: "always" });
   const units = [["year", 31536e3], ["month", 2592e3], ["week", 604800], ["day", 86400], ["hour", 3600], ["minute", 60]];
-  let skew = 0, pending = null, busy = false, lastCheck = 0, stale = false, first = true;
+  let skew = 0, busy = false, lastCheck = 0, stale = false, first = true;
   const now = () => Date.now() + skew;
   // hasFocus() too, so a missed focus event can't leave a reader "away".
   const hasFocus = () => typeof d.hasFocus !== "function" || d.hasFocus();
@@ -822,10 +848,11 @@ export const SCRIPT = `(() => {
       setStale(true);
     }
   };
-  const safe = () => away() && !$("details[open]") && !String((typeof getSelection === "function" && getSelection()) || "");
-  const tryReload = () => {
-    if (broken || pending === null || remembered().includes(pending) || !safe()) return;
-    remember(pending);
+  const since = (t) => Math.abs(Date.now() - t);
+  const reload = (x) => {
+    const t = tries(x).filter((at) => since(at) < 3600e3);
+    if (broken || t.length >= 3 || t.some((at) => since(at) < 10 * 60e3)) return;
+    remember(x);
     if (!broken) location.reload();
   };
   const check = async () => {
@@ -843,11 +870,7 @@ export const SCRIPT = `(() => {
       if (data.id === id) {
         const c = data.checked;
         if (checkedEl && typeof c === "string" && Number.isFinite(Date.parse(c)) && (checked === null || Date.parse(c) > Date.parse(checked))) checked = c;
-      } else {
-        pending = data.id;
-        show($(".newer"), true);
-        tryReload();
-      }
+      } else if (!d.hidden) reload(data.id);
     } catch {} finally {
       if (timer) clearTimeout(timer);
       busy = false;
@@ -863,11 +886,8 @@ export const SCRIPT = `(() => {
     for (const t of all("time:not(.rel)")) setText(t, exact(t.dateTime));
     for (const t of all("time.rel")) t.title = exact(t.dateTime);
   }
-  const reloadLink = $(".reload");
-  // "Reload": a real reload, not a navigation the cache could answer.
-  if (reloadLink) reloadLink.addEventListener("click", (e) => { e.preventDefault(); location.reload(); });
-  // This page's own id counts as reloaded for.
-  if (id && !remembered().includes(id)) remember(id);
+  // This page's own id counts as a try.
+  if (id && !tries(id).length) remember(id);
   addEventListener("blur", () => { blurredAt = Date.now(); });
   addEventListener("focus", () => {
     const back = blurredAt !== null && Date.now() - blurredAt >= 120e3;
@@ -875,20 +895,21 @@ export const SCRIPT = `(() => {
     if (back) redraw();
   });
   d.addEventListener("visibilitychange", () => {
-    if (d.hidden) return tryReload();
+    if (d.hidden) return;
     redraw();
     first = true;
     check();
   });
   redraw();
-  check();
+  if (!d.hidden) check();
   setInterval(() => {
     // A check settles when it ends; without one (or with one still out),
     // settle now. (After a sleep, settling before the check would show
     // "Out of date" for data the check is about to refresh.)
-    if (!busy && (!d.hidden || Date.now() - lastCheck >= 5 * 60e3)) check(); else settle();
-    tryReload();
+    if (!busy && !d.hidden && since(lastCheck) >= 30e3) check(); else settle();
   }, 60e3);
 })();`;
+/** The script as the page carries it (minifyJs). */
+export const SCRIPT = minifyJs(SOURCE);
 /** The script's hash, for the Content-Security-Policy. */
 export const SCRIPT_HASH = `sha256-${createHash("sha256").update(SCRIPT).digest("base64")}`;
