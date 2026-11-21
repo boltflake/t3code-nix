@@ -57,6 +57,8 @@
     "t3code-electron-bundled"
     "t3code-electron-nixpkgs"
     "electron-swap"
+    # Its run-time libraries on the program's RUNPATH, no LD_LIBRARY_PATH.
+    "t3code-runtime-libs"
   ];
   # Not on NixOS stable.
   nightly = [
@@ -70,6 +72,7 @@
     "t3-nightly-speech-smoke"
     "t3code-nightly-electron-bundled"
     "t3code-nightly-electron-nixpkgs"
+    "t3code-nightly-runtime-libs"
   ];
   # They read a vendor's command line, which nixpkgs doesn't change; their
   # notes would open guard-review issues against main's versions.

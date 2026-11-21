@@ -6318,6 +6318,109 @@ let
   nightlyElectron = electronVariants (packages.t3code-nightly or null
   ) (packages.t3code-unwrapped-nightly or null) "t3code-nightly";
 
+  # The desktop app finds the libraries Electron opens at run time through
+  # its program's RUNPATH (desktop.nix's runtimeLibs), with no LD_LIBRARY_PATH
+  # for everything it starts to inherit. For a channel's app and its
+  # bundled-Electron twin, through the wrapper: the program in Node mode sees
+  # no LD_LIBRARY_PATH and opens each of those libraries by name; the app
+  # folder's libvulkan.so.1 is nixpkgs' loader, and each transcription add-on
+  # found links it; and no unexpected library sits beside the program, since
+  # runtimeDependencies reach executables only (Electron 44 links ANGLE in;
+  # a libEGL.so or libGLESv2.so there again could open libGL by itself and,
+  # unless its own RUNPATH finds it, fall back to software rendering without
+  # a word).
+  #
+  # Not the forced nixpkgs variants: they ignore ci/electron-fallback.json,
+  # so a failure of theirs here could never be confirmed on bundled Electron
+  # (scripts/ci/test.ts) and would block a fallback. Where auto picks
+  # nixpkgs' Electron, the channel's app is that build. One check per
+  # channel, so a failure falls back only the channel it is about.
+  runtimeLibs =
+    app: twin:
+    let
+      # Each build once: after a fallback, the app is its bundled twin.
+      apps = lib.attrValues (
+        lib.listToAttrs (
+          map (a: lib.nameValuePair (builtins.unsafeDiscardStringContext a.drvPath) a) [
+            app
+            twin
+          ]
+        )
+      );
+      probe = builtins.toFile "t3code-runtime-libs-probe.js" ''
+        if ("LD_LIBRARY_PATH" in process.env) {
+          console.error("LD_LIBRARY_PATH is set: " + process.env.LD_LIBRARY_PATH);
+          process.exit(1);
+        }
+        let failed = false;
+        for (const name of process.argv.slice(2)) {
+          try {
+            process.dlopen({ exports: {} }, name);
+          } catch (e) {
+            // Loaded, but not a Node add-on: what a found library gives.
+            if (/did not self-register/.test(e.message)) continue;
+            console.error(name + ": " + e.message);
+            failed = true;
+          }
+        }
+        process.exit(failed ? 1 : 0);
+      '';
+      # One soname per library of runtimeLibs (and the other names Electron
+      # opens of them). libudev, libxkbcommon, Wayland and libvulkan are also
+      # found without runtimeDependencies (a dependency's or the app folder's
+      # RUNPATH); the others only through it.
+      sonames = lib.concatStringsSep " " [
+        "libGL.so.1"
+        "libEGL.so.1"
+        "libGLESv2.so.2"
+        "libvulkan.so.1"
+        "libudev.so.1"
+        "libwayland-client.so.0"
+        "libwayland-egl.so.1"
+        "libxkbcommon.so.0"
+        "libnotify.so.4"
+        "libsecret-1.so.0"
+        "libpulse.so.0"
+        "libpipewire-0.3.so.0"
+      ];
+      loader = "${lib.getLib pkgs.vulkan-loader}/lib/libvulkan.so.1";
+      check =
+        app:
+        let
+          dir = "${app.passthru.unwrapped}/libexec/${app.passthru.unwrapped.meta.mainProgram}";
+        in
+        ''
+          echo "${app.name} (${app.passthru.electron.choice} Electron)"
+          env -u LD_LIBRARY_PATH ELECTRON_RUN_AS_NODE=1 ${lib.getExe app} ${probe} ${sonames}
+          [ "$(readlink -f ${dir}/libvulkan.so.1)" = "$(readlink -f ${loader})" ] \
+            || { echo "${dir}/libvulkan.so.1 isn't nixpkgs' Vulkan loader"; exit 1; }
+          find ${dir} -name libggml-vulkan.so | while read -r f; do
+            deps=$(${lib.getBin stdenv.cc.libc}/bin/ldd "$f") || { echo "$f: $deps"; exit 1; }
+            got=$(awk '$1 == "libvulkan.so.1"' <<< "$deps")
+            got=''${got:-no libvulkan.so.1}
+            [ "$(awk '{ print $3 }' <<< "$got" | xargs -r readlink -f)" = "$(readlink -f ${loader})" ] \
+              || { echo "$f: $got, not nixpkgs' Vulkan loader"; exit 1; }
+          done
+          for f in ${dir}/*.so*; do
+            case "''${f##*/}" in
+              libffmpeg.so | libvk_swiftshader.so | libvulkan.so.1) ;;
+              *)
+                echo "$f: a new library beside the program; if it opens one of desktop.nix's runtimeLibs, its RUNPATH needs them too"
+                exit 1
+                ;;
+            esac
+          done
+        '';
+    in
+    if app == null then
+      null
+    else
+      runCommand "${app.name}-runtime-libs" { } ''
+        export HOME=$TMPDIR
+        ${lib.concatMapStrings check apps}
+        touch $out
+      '';
+
 in
 {
   inherit
@@ -6374,6 +6477,8 @@ in
     electron-runtime
     electron-swap
     ;
+  t3code-runtime-libs = runtimeLibs packages.t3code latestChannelElectron.bundled;
+  t3code-nightly-runtime-libs = runtimeLibs (packages.t3code-nightly or null) nightlyElectron.bundled;
   t3code-electron-bundled = latestChannelElectron.bundled;
   t3code-electron-nixpkgs = latestChannelElectron.nixpkgs;
   t3code-nightly-electron-bundled = nightlyElectron.bundled;
