@@ -1,30 +1,30 @@
 {
   "name": "t3-nightly",
-  "version": "0.1.12-nightly.20261120.5009",
-  "tag": "v0.1.12-nightly.20261120.5009",
+  "version": "0.1.12-nightly.20261121.5024",
+  "tag": "v0.1.12-nightly.20261121.5024",
   "assets": {
     "x86_64-linux": {
-      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.12-nightly.20261120.5009/t3-0.1.12-nightly.20261120.5009-linux-x64.tar.gz",
-      "hash": "sha256-p0bFbpu3+kfmWRYCysLpICgKWiQSuhcV0SHVknI/zm0=",
-      "assetId": 773045164,
-      "digest": "sha256:a746c56e9bb7fa47e6591602cac2e920280a5a2412ba1715d121d592723fce6d"
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.12-nightly.20261121.5024/t3-0.1.12-nightly.20261121.5024-linux-x64.tar.gz",
+      "hash": "sha256-RPLxhW2VKpfE+36mAMGymgO/yxzFIMxtXkiszJhBLwM=",
+      "assetId": 774058079,
+      "digest": "sha256:44f2f1856d952a97c4fb7ea600c1b29a03bfcb1cc520cc6d5e48accc98412f03"
     },
     "aarch64-linux": {
-      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.12-nightly.20261120.5009/t3-0.1.12-nightly.20261120.5009-linux-arm64.tar.gz",
-      "hash": "sha256-8RO7/Nkn5FChzuxtU2F0FKPMIsL5/AND5GxkvgMxlGg=",
-      "assetId": 773045180,
-      "digest": "sha256:f113bbfcd927e450a1ceec6d53617414a3cc22c2f9fc0343e46c64be03319468"
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.12-nightly.20261121.5024/t3-0.1.12-nightly.20261121.5024-linux-arm64.tar.gz",
+      "hash": "sha256-5kHaKKmMrlcv+GK7tvrtG9IIFq3XBsPWh1M3h5qNkuw=",
+      "assetId": 774058065,
+      "digest": "sha256:e641da28a98cae572ff862bbb6faed1bd20816add706c3d6875337879a8d92ec"
     }
   },
   "licenses": {
     "LICENSE": {
-      "url": "https://raw.githubusercontent.com/pingdotgg/t3code/f0a2aa10f5165413e863db9f1502dc4bb6fa42e8/LICENSE",
+      "url": "https://raw.githubusercontent.com/pingdotgg/t3code/6357d17a4963e546aa71a6094ae2b3d3bb04edb1/LICENSE",
       "hash": "sha256-k12PKvDHA/nDlRfuV8xJMLGdAtUzvpMLY/DoL5NhS0M="
     }
   },
   "browser": {
     "version": "158.0.8127.36",
-    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/f0a2aa10f5165413e863db9f1502dc4bb6fa42e8/apps/server/src/preview/PreviewBrowser.ts",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/6357d17a4963e546aa71a6094ae2b3d3bb04edb1/apps/server/src/preview/PreviewBrowser.ts",
     "assets": {
       "x86_64-linux": {
         "url": "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.36/linux64/chrome-headless-shell-linux64.zip",
@@ -43,13 +43,13 @@
     "size": 45904544,
     "sha256": "e8c9b73c06344307d8b346e07fbe93dd88d894627854bcff31523f1ce44394fa",
     "url": "https://huggingface.co/handy-computer/whisper-tiny.en-gguf/resolve/becb8bcb804405dc97b380a523d9975888820986/whisper-tiny.en-Q8_0.gguf",
-    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/f0a2aa10f5165413e863db9f1502dc4bb6fa42e8/apps/server/src/speech/catalog.json",
-    "checked": "https://raw.githubusercontent.com/pingdotgg/t3code/f0a2aa10f5165413e863db9f1502dc4bb6fa42e8/apps/server/src/speech/catalog.json",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/6357d17a4963e546aa71a6094ae2b3d3bb04edb1/apps/server/src/speech/catalog.json",
+    "checked": "https://raw.githubusercontent.com/pingdotgg/t3code/6357d17a4963e546aa71a6094ae2b3d3bb04edb1/apps/server/src/speech/catalog.json",
     "fromCatalog": true
   },
   "electron": "44.10.1",
   "released": {
-    "at": "2026-11-20T19:21:17.000Z",
+    "at": "2026-11-21T01:49:16.000Z",
     "kind": "published"
   }
 }
