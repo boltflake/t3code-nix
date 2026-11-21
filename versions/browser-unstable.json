@@ -1,20 +1,20 @@
 {
   "name": "browser-unstable",
-  "version": "0bb8272318b4ca41bf0edc6224df3e3e3046b70d",
+  "version": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
   "assets": {},
   "channel": "nixos-unstable",
-  "rev": "0bb8272318b4ca41bf0edc6224df3e3e3046b70d",
-  "narHash": "sha256-S5keGWzaKpuXo9MNoIC2FfTIuTyTnx8P4NhYJMEsTLI=",
-  "chromium": "157.0.8103.78",
+  "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+  "narHash": "sha256-f/VVvxf5RsQgWVhUtefoca5ktVg0DA2bnkMOcmSnozo=",
+  "chromium": "158.0.8127.36",
   "outPaths": {
-    "x86_64-linux": "/nix/store/8nnhl6h7rrsmvypzrg8klawk3wvm6839-ungoogled-chromium-157.0.8103.78",
-    "aarch64-linux": "/nix/store/y7pf2kzv812gbpb2747ipbc6cpk1pcrn-ungoogled-chromium-157.0.8103.78"
+    "x86_64-linux": "/nix/store/jfzyljfjs2d6n31lljnz59vqr6w04lrj-ungoogled-chromium-158.0.8127.36",
+    "aarch64-linux": "/nix/store/wmlgxzkjcxmr1zcydngv6r9jaz6jy9am-ungoogled-chromium-158.0.8127.36"
   },
   "browsers": {
     "chromium": {
       "version": "158.0.8127.36",
       "outPaths": {
-        "x86_64-linux": "/nix/store/4p46clpf85q13snhhhmlazys6mybcnjk-chromium-158.0.8127.36",
+        "x86_64-linux": "/nix/store/j5jzyirg5xsmiikjy2bpnwhnn2l78dby-chromium-158.0.8127.36",
         "aarch64-linux": "/nix/store/cyghid12l9ivb5cmrmdlrd2n61j7gkqq-chromium-158.0.8127.36"
       }
     },
@@ -37,7 +37,7 @@
     }
   },
   "released": {
-    "at": "2026-11-20T05:46:40.449Z",
+    "at": "2026-11-21T15:17:40.369Z",
     "kind": "seen"
   }
 }
