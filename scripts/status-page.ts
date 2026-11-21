@@ -271,11 +271,11 @@ function deliveryCell(r: Row): string {
   return `<svg class="band-mark" viewBox="0 0 6 16" aria-hidden="true">${bar(r, 0)}</svg>${escape(duration(r.gap))}`;
 }
 
-/** "8 min, under 1 h"; "~3 h, approximate: upload time"; "not known". */
+/** "8 min"; "~3 h, approximate: upload time"; "not known". */
 function deliveryWords(d: { gap: number | null; released: Released | null }): string {
   if (d.gap === null || !d.released) return "not known";
   if (KIND[d.released.kind].why) return `~${roughly(d.gap)}, approximate: ${KIND[d.released.kind].label}`;
-  return `${duration(d.gap)}, ${BAND[tone(d.gap)]}`;
+  return duration(d.gap);
 }
 
 /** The median of some numbers (the mean of the middle two for an even

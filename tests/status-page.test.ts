@@ -268,7 +268,8 @@ test("page: the delivery column, the strip and the details", () => {
   assert.ok(det.includes('<summary>Details<span class="sr"> for Grok Build</span></summary>'));
   assert.ok(det.includes("<dt>Released upstream</dt><dd><time datetime=\"2026-11-13T09:00:00.000Z\">13 Nov 2026, 09:00 UTC</time> (file uploaded). Upstream gives only the file"));
   assert.ok(det.includes(`<a href="https://github.com/o/r/commit/${"c".repeat(40)}">commit ccccccc<span class="sr"> for Grok Build</span></a>`));
-  assert.ok(det.includes("<span>8 min, under 1 h</span>") && det.includes("<span>3 h, under 6 h</span>") && det.includes("<span>9 h, 6 h or more</span>"));
+  assert.ok(det.includes("<span>8 min</span>") && det.includes("<span>3 h</span>") && det.includes("<span>9 h</span>"));
+  assert.ok(!det.includes("under 1 h</span>") && !det.includes("6 h or more</span>"), "no band words: the time says it");
   assert.ok(rowOf(page, "antigravity").includes("<span>~1 min, approximate: first seen</span>") && rowOf(page, "antigravity").includes("<span>not known</span>"));
   assert.ok(rowOf(page, "pi").includes("1.0 was on <code>main</code> when the package was added."));
   assert.ok(rowOf(page, "kiro-cli").includes("1.0 is back on <code>main</code>: it was there before."));
