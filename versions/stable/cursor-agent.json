@@ -1,20 +1,20 @@
 {
   "name": "cursor-agent",
-  "version": "2026.11.19-f005e9d",
+  "version": "2026.11.22-e9042b2",
   "assets": {
     "x86_64-linux": {
-      "url": "https://downloads.cursor.com/lab/2026.11.19-f005e9d/linux/x64/agent-cli-package.tar.gz",
-      "hash": "sha256-olmG6vDJMwru7FmaE5cRy58mfGRWLQc6crdR7fUWFpU=",
-      "checksumSource": "https://downloads.cursor.com/lab/2026.11.19-f005e9d/linux/x64/agent-cli-package.tar.gz.sha256"
+      "url": "https://downloads.cursor.com/lab/2026.11.22-e9042b2/linux/x64/agent-cli-package.tar.gz",
+      "hash": "sha256-dmOxxdG1bgle+OI77zjWbfbP1mXEhzRwIU4OQR8Pl7M=",
+      "checksumSource": "https://downloads.cursor.com/lab/2026.11.22-e9042b2/linux/x64/agent-cli-package.tar.gz.sha256"
     },
     "aarch64-linux": {
-      "url": "https://downloads.cursor.com/lab/2026.11.19-f005e9d/linux/arm64/agent-cli-package.tar.gz",
-      "hash": "sha256-X/Bb4NfAt3VFdNvNZ3w1JUo/8ZDtZFfnG77g8nYjfik=",
-      "checksumSource": "https://downloads.cursor.com/lab/2026.11.19-f005e9d/linux/arm64/agent-cli-package.tar.gz.sha256"
+      "url": "https://downloads.cursor.com/lab/2026.11.22-e9042b2/linux/arm64/agent-cli-package.tar.gz",
+      "hash": "sha256-e33QAg+5oqnh5+Pzni+fUS0d2VdxdOzaiqgqwx28lWU=",
+      "checksumSource": "https://downloads.cursor.com/lab/2026.11.22-e9042b2/linux/arm64/agent-cli-package.tar.gz.sha256"
     }
   },
   "released": {
-    "at": "2026-11-20T05:20:25.918Z",
+    "at": "2026-11-22T00:59:39.209Z",
     "kind": "seen"
   }
 }
