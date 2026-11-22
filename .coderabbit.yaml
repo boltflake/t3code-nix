@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit reviews pull requests to main. The update bot pushes straight to
+# main, so its version bumps never reach it; Dependabot's action bumps are
+# read by hand from each compare diff (.github/dependabot.yml), so they're
+# skipped too.
+reviews:
+  profile: chill
+  in_progress_fortune: false
+  suggested_reviewers: false
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_usernames: ["dependabot[bot]"]
+  # Files the updater writes or that a review can't read usefully.
+  path_filters:
+    - "!flake.lock"
+    - "!versions/**"
+    - "!tests/fixtures/**"
+    - "!**/*.svg"
+    - "!**/*.png"
+  path_instructions:
+    - path: ".github/**"
+      instructions: >-
+        Outside actions are pinned to a full commit SHA with the tag in a
+        comment. The unit check (lib/checks.nix) runs actionlint on every
+        workflow (not the composite actions) and zizmor on every workflow and
+        composite action; accepted zizmor findings are ignored where they
+        occur, with the reason beside them.
+    - path: "**/*.md"
+      instructions: >-
+        Docs describe what is live now. Flag wording like "once it's live"
+        or "will be" for things that already ship.

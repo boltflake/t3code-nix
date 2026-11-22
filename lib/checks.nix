@@ -5862,10 +5862,11 @@ let
 
   # The channel rules, the updater and the workflow's job scripts, against
   # recorded and faked responses and real git repositories; then the
-  # workflows and composite actions, linted: actionlint for mistakes (with
-  # shellcheck on the run: scripts), zizmor for security problems, offline
-  # (the sandbox has no GitHub API) and failing on a file it can't read; zizmor
-  # also on the Dependabot config (its cooldown audit wants 7 days); and
+  # linters: actionlint on the workflows for mistakes (with shellcheck on the
+  # run: scripts; it doesn't read composite actions), zizmor on the workflows
+  # and composite actions for security problems, offline (the sandbox has no
+  # GitHub API) and failing on a file it can't read; zizmor also on the
+  # Dependabot config (its cooldown audit wants 7 days); and
   # shellcheck on scripts/ci/*.sh, which actionlint doesn't see. The
   # copy has no .git, so the files are found and named. Findings we accept are
   # ignored where they occur, with the reason next to them (.github/zizmor.yml
