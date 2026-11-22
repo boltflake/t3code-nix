@@ -17,7 +17,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     # Don't make it follow your nixpkgs: the binary cache holds builds made
     # on t3code-nix's own pinned nixpkgs.
-    t3code-nix.url = "github:swsammy/t3code-nix";
+    t3code-nix.url = "github:boltflake/t3code-nix";
   };
 
   # The binary cache, for the first build (the module adds it for later

@@ -44,7 +44,7 @@ export interface Env {
 }
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
 
-export const UA = "t3code-nix-watcher (https://github.com/swsammy/t3code-nix)";
+export const UA = "t3code-nix-watcher (https://github.com/boltflake/t3code-nix)";
 const TIMEOUT_MS = 10_000;
 export const HEARTBEAT_MS = 15 * 60_000;
 /** The longest a server may make a source wait: a Retry-After or reset

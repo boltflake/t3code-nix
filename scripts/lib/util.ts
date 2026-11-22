@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const VERSIONS = join(ROOT, "versions");
 export const SYSTEMS = ["x86_64-linux", "aarch64-linux"] as const;
-export const UA = "t3code-nix (https://github.com/swsammy/t3code-nix)";
+export const UA = "t3code-nix (https://github.com/boltflake/t3code-nix)";
 
 /** One package's failure; callers catch it so the others carry on. */
 export class Failed extends Error {}

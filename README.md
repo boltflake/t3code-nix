@@ -1,10 +1,10 @@
 <img src="docs/header.svg" width="100%" alt="t3code-nix: T3 Code and all agent providers, packaged for Nix within minutes">
 
 <p align="center">
-  <a href="https://swsammy.github.io/t3code-nix/"><img src="docs/live-status.svg" width="272" alt="Live: package status"></a>
+  <a href="https://boltflake.github.io/t3code-nix/"><img src="docs/live-status.svg" width="272" alt="Live: package status"></a>
   <br>
-  <a href="https://swsammy.github.io/t3code-nix/"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fswsammy.github.io%2Ft3code-nix%2Fbadges%2Ft3code.json&query=%24.message&label=T3%20Code%20latest&color=3f6cc0&style=flat-square" alt="T3 Code on the latest channel: the version this flake ships now"></a>
-  <a href="https://swsammy.github.io/t3code-nix/"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fswsammy.github.io%2Ft3code-nix%2Fbadges%2Ft3code-nightly.json&query=%24.message&label=nightly&color=6e5494&style=flat-square" alt="T3 Code on the nightly channel: the version this flake ships now"></a>
+  <a href="https://boltflake.github.io/t3code-nix/"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fboltflake.github.io%2Ft3code-nix%2Fbadges%2Ft3code.json&query=%24.message&label=T3%20Code%20latest&color=3f6cc0&style=flat-square" alt="T3 Code on the latest channel: the version this flake ships now"></a>
+  <a href="https://boltflake.github.io/t3code-nix/"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fboltflake.github.io%2Ft3code-nix%2Fbadges%2Ft3code-nightly.json&query=%24.message&label=nightly&color=6e5494&style=flat-square" alt="T3 Code on the nightly channel: the version this flake ships now"></a>
 </p>
 
 This flake packages the [<img src="docs/logos/t3code.png" height="16" alt=""> T3 Code](https://github.com/pingdotgg/t3code) desktop app and CLI for x86_64 and aarch64 Linux. It includes every supported agent provider, plus a few useful agent tools. This is a community project, not affiliated with or endorsed by the T3 Code team or any provider's vendor.
@@ -41,9 +41,9 @@ This flake packages the [<img src="docs/logos/t3code.png" height="16" alt=""> T3
 Try **t3code-nix** without touching your config:
 
 ```sh
-nix run github:swsammy/t3code-nix              # downloads and opens the T3 Code app, with all 10 agent providers
-nix run github:swsammy/t3code-nix#t3 -- serve  # starts a T3 Code server
-nix run github:swsammy/t3code-nix#codex        # runs one agent (Codex) in the terminal
+nix run github:boltflake/t3code-nix              # downloads and opens the T3 Code app, with all 10 agent providers
+nix run github:boltflake/t3code-nix#t3 -- serve  # starts a T3 Code server
+nix run github:boltflake/t3code-nix#codex        # runs one agent (Codex) in the terminal
 ```
 
 ## Setup
@@ -56,7 +56,7 @@ Add t3code-nix and its module:
 
 ```nix
 {
-  inputs.t3code-nix.url = "github:swsammy/t3code-nix";
+  inputs.t3code-nix.url = "github:boltflake/t3code-nix";
   # Don't add `inputs.t3code-nix.inputs.nixpkgs.follows`: see "Binary cache".
 
   outputs = { nixpkgs, t3code-nix, ... }: {
@@ -93,7 +93,7 @@ desktop app:
 
 ```nix
 {
-  inputs.t3code-nix.url = "github:swsammy/t3code-nix";
+  inputs.t3code-nix.url = "github:boltflake/t3code-nix";
   # Don't add `inputs.t3code-nix.inputs.nixpkgs.follows`: see "Binary cache".
 
   outputs = { nixpkgs, t3code-nix, ... }: {
@@ -150,15 +150,15 @@ Flakes are not enabled by default on NixOS.
 3. Turn your system into a flake with T3 Code:
 
    ```sh
-   sudo nix run github:swsammy/t3code-nix#init
+   sudo nix run github:boltflake/t3code-nix#init
    sudo nixos-rebuild switch
    ```
 
-   This creates `/etc/nixos/flake.nix` with T3 Code enabled. It follows the same NixOS branch your channel does, so your system stays on its NixOS release, though the first rebuild can bring that branch's newer updates. An existing `flake.nix` is never overwritten. To see the file first, run `sudo nix run github:swsammy/t3code-nix#init -- --dry-run`.
+   This creates `/etc/nixos/flake.nix` with T3 Code enabled. It follows the same NixOS branch your channel does, so your system stays on its NixOS release, though the first rebuild can bring that branch's newer updates. An existing `flake.nix` is never overwritten. To see the file first, run `sudo nix run github:boltflake/t3code-nix#init -- --dry-run`.
 
-   Its configuration is named after your host, so a plain `nixos-rebuild switch` builds it. If `/etc/nixos` is a git repository, `init` adds the file to it (or tells you the command, when the repository is another user's). It prints the rebuild command to run; use that one if it differs. `nix run github:swsammy/t3code-nix#init -- --help` lists its options, and the file's comments show the options for the providers, the server and the agent tools.
+   Its configuration is named after your host, so a plain `nixos-rebuild switch` builds it. If `/etc/nixos` is a git repository, `init` adds the file to it (or tells you the command, when the repository is another user's). It prints the rebuild command to run; use that one if it differs. `nix run github:boltflake/t3code-nix#init -- --help` lists its options, and the file's comments show the options for the providers, the server and the agent tools.
 
-   To go back, delete `flake.nix` (and `flake.lock`); if you've rebuilt with it, rebuild again (or boot the previous generation). `nix flake init -t github:swsammy/t3code-nix` gives you the same template to fill in yourself.
+   To go back, delete `flake.nix` (and `flake.lock`); if you've rebuilt with it, rebuild again (or boot the previous generation). `nix flake init -t github:boltflake/t3code-nix` gives you the same template to fill in yourself.
 
 To try a single command without changing your configuration, put `--extra-experimental-features 'nix-command flakes'` after `nix` instead.
 
@@ -175,16 +175,16 @@ tools: `nix-env`, `nix-shell`, `nix-build`, or an `import` in your
 
 ```sh
 # Install the T3 Code app for your user (run it again to update):
-nix-env -f https://github.com/swsammy/t3code-nix/archive/main.tar.gz -iA t3code
+nix-env -f https://github.com/boltflake/t3code-nix/archive/main.tar.gz -iA t3code
 
 # Or try the t3 CLI in a temporary shell, without installing anything:
-nix-shell -p '(import (fetchTarball "https://github.com/swsammy/t3code-nix/archive/main.tar.gz") { }).t3'
+nix-shell -p '(import (fetchTarball "https://github.com/boltflake/t3code-nix/archive/main.tar.gz") { }).t3'
 ```
 
 ```nix
 # configuration.nix
 let
-  t3code-nix = import (fetchTarball "https://github.com/swsammy/t3code-nix/archive/main.tar.gz") { };
+  t3code-nix = import (fetchTarball "https://github.com/boltflake/t3code-nix/archive/main.tar.gz") { };
 in
 {
   imports = [ t3code-nix.nixosModules.default ];
@@ -208,7 +208,7 @@ in
 
 Where to see what the flake has at this moment:
 
-- **[The status page](https://swsammy.github.io/t3code-nix/)**: every
+- **[The status page](https://boltflake.github.io/t3code-nix/)**: every
   pinned package's version on `main`, when t3code-nix published it and,
   where upstream's release time is known, how long after it (measured or
   estimated); the median delivery time over the last 30 days, once there
@@ -649,7 +649,7 @@ same revision, you still get a second copy of the libraries.
   either system), the stable set stays on the last versions that passed.
   It catches up the next time everything passes there: after a fix in
   nixpkgs, or with a later T3 Code release. The
-  [status page](https://swsammy.github.io/t3code-nix/) says when the set is
+  [status page](https://boltflake.github.io/t3code-nix/) says when the set is
   behind, a `stable-behind` issue says why, and each release's notes say
   whether NixOS stable has it.
 - **agent-browser** takes its browser (ungoogled-chromium by default) from
@@ -672,7 +672,7 @@ same revision, you still get a second copy of the libraries.
 doctor`, which checks the usual reasons T3 Code or a provider misbehaves
 on NixOS, usually in a few seconds (asking claude about its machine
 policy can take up to 30). Without the module, run
-`nix run github:swsammy/t3code-nix#doctor`. That one doesn't know your
+`nix run github:boltflake/t3code-nix#doctor`. That one doesn't know your
 configuration: it checks the default packages, and can't tell whether you
 meant to run the server.
 
@@ -714,7 +714,7 @@ A security problem goes in a private report, never an issue: see
 
 1. Run `t3code-nix doctor` first, and do what its `WARN` and `PROBLEM`
    lines say.
-2. If that doesn't fix it, [open an issue](https://github.com/swsammy/t3code-nix/issues)
+2. If that doesn't fix it, [open an issue](https://github.com/boltflake/t3code-nix/issues)
    with the doctor's output, the t3code-nix commit you're on, what you
    did, and what happened. With flakes, `nix flake metadata /etc/nixos`
    (or your flake's folder) lists each input with its commit; without
@@ -743,9 +743,9 @@ apart.
 versions, point the input at a tag or a commit instead:
 
 ```nix
-inputs.t3code-nix.url = "github:swsammy/t3code-nix/t3code-v<version>"; # a latest-channel release
+inputs.t3code-nix.url = "github:boltflake/t3code-nix/t3code-v<version>"; # a latest-channel release
 # or any commit (for example, to pin a nightly published between release tags):
-# inputs.t3code-nix.url = "github:swsammy/t3code-nix/<commit>";
+# inputs.t3code-nix.url = "github:boltflake/t3code-nix/<commit>";
 ```
 
 Each T3 Code version on the latest channel gets a `t3code-v<version>` tag, on the commit
@@ -761,8 +761,8 @@ that first published it, with every package as it was there. Its
 
   ```sh
   cd /etc/nixos
-  sudo nix flake lock --override-input t3code-nix 'github:swsammy/t3code-nix/t3code-v<version>'
-  # or a commit: 'github:swsammy/t3code-nix/<commit>'
+  sudo nix flake lock --override-input t3code-nix 'github:boltflake/t3code-nix/t3code-v<version>'
+  # or a commit: 'github:boltflake/t3code-nix/<commit>'
   sudo nixos-rebuild switch    # or as you usually rebuild, e.g. --flake /etc/nixos#nixos
   ```
 
@@ -798,7 +798,7 @@ Each T3 Code version on the latest channel gets a GitHub Release here, named
 
 To hear about them, use Watch → Custom → Releases on the repository page,
 or subscribe to the feed at
-<https://github.com/swsammy/t3code-nix/releases.atom>.
+<https://github.com/boltflake/t3code-nix/releases.atom>.
 
 **nixpkgs.** The nixpkgs this flake pins (for the libraries the apps load
 and the helpers around them) moves to the newest `nixos-unstable` with
@@ -834,7 +834,7 @@ providers and breaks after garbage collection; use this flake's `t3` instead.
 
 T3 Code's "update provider" notice still works: it tells you when a newer
 version of a provider is out. Once t3code-nix has published it (the
-[status page](https://swsammy.github.io/t3code-nix/) shows what it has),
+[status page](https://boltflake.github.io/t3code-nix/) shows what it has),
 run `nix flake update t3code-nix` and rebuild to get it. The notice comes
 from the provider's own release feed, so it can show a version this flake
 hasn't published yet.
@@ -927,7 +927,7 @@ runs on can change:
 | `"nixpkgs"` | nixpkgs' `electron_N-bin`, under the same conditions as `"auto"`, but never upstream's. Where `"auto"` would fall back for one of those reasons, evaluation stops with an error that says why and what to use instead. If nixpkgs' Electron failed t3code-nix's tests for this release, it's still used, with a warning |
 | a package | the Electron you pass. It must be the bundled major version, though an older patch release is fine. Take nixpkgs' `electron_N-bin`, where N is that major, from the same nixpkgs the app is built on (`t3code-nix.inputs.nixpkgs.legacyPackages.<system>`, or the overlay's `pkgs`): mixing two nixpkgs revisions in one app can break it |
 
-The [status page](https://swsammy.github.io/t3code-nix/) shows which
+The [status page](https://boltflake.github.io/t3code-nix/) shows which
 Electron the current releases run; `t3code-nix doctor` shows yours.
 
 ```nix

@@ -1,4 +1,4 @@
-# `t3code-nix init` (`nix run github:swsammy/t3code-nix#init`): writes
+# `t3code-nix init` (`nix run github:boltflake/t3code-nix#init`): writes
 # /etc/nixos/flake.nix from the flake template for a NixOS system that
 # isn't a flake yet, with its nixpkgs branch and host name filled in
 # (init.sh). It doesn't depend on T3 Code: `nix run …#init` doesn't build

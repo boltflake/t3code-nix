@@ -7,7 +7,7 @@
 // Refs are always full names ("refs/heads/...", "refs/tags/...").
 import { Failed, UA } from "../lib/util.ts";
 
-export const REPO = process.env.GITHUB_REPOSITORY ?? "swsammy/t3code-nix";
+export const REPO = process.env.GITHUB_REPOSITORY ?? "boltflake/t3code-nix";
 export const LABEL = "t3code-nix";
 
 export interface Issue {

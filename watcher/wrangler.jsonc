@@ -11,7 +11,7 @@
   "triggers": { "crons": ["* * * * *", "*/1 * * * *"] },
   "kv_namespaces": [{ "binding": "STATE", "id": "KV_NAMESPACE_ID" }],
   "version_metadata": { "binding": "CF_VERSION" },
-  "vars": { "REPO": "swsammy/t3code-nix" },
+  "vars": { "REPO": "boltflake/t3code-nix" },
   "workers_dev": true,
   "observability": { "enabled": true }
 }

@@ -1,8 +1,8 @@
 # t3code-nix without flakes: `nix-env -f`, `nix-shell`, `nix-build`,
 # `import (fetchTarball …)` and channel-based NixOS configurations.
 #
-#   nix-env -f https://github.com/swsammy/t3code-nix/archive/main.tar.gz -iA t3code
-#   t3code-nix = import (fetchTarball "https://github.com/swsammy/t3code-nix/archive/main.tar.gz") { };
+#   nix-env -f https://github.com/boltflake/t3code-nix/archive/main.tar.gz -iA t3code
+#   t3code-nix = import (fetchTarball "https://github.com/boltflake/t3code-nix/archive/main.tar.gz") { };
 #     t3code-nix.t3code               this system's packages, at the top level
 #     t3code-nix.nixosModules.default the NixOS module
 #     t3code-nix.overlays.default     the overlay

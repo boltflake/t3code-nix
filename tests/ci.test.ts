@@ -1033,7 +1033,7 @@ test("releases: each verified tag gets one, in history order, with its packages 
   const first = gh.releaseList[0].body, last = gh.releaseList[1].body;
   assert.match(first, /\| t3code \| 0\.1\.7 \|/);
   assert.match(first, /## Release notes\n\n- T3 Code 0\.1\.7: \[release notes\]\(https:\/\/github\.com\/pingdotgg\/t3code\/releases\/tag\/v0\.1\.7\)\n$/);
-  assert.match(last, /github:swsammy\/t3code-nix\/t3code-v0\.1\.9/);
+  assert.match(last, /github:boltflake\/t3code-nix\/t3code-v0\.1\.9/);
   // The previous release is the highest verified one below: 0.1.7, not the
   // mismatched 0.1.8. codex changed since; the nightly isn't listed.
   assert.match(last, /## Changed since t3code-v0\.1\.7/);

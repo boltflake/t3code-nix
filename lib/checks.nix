@@ -2951,7 +2951,7 @@ let
       "the flake exports it, and it holds only flake.nix (init never overwrites a file)" =
         self.templates.default.path == dir && builtins.attrNames (builtins.readDir dir) == [ "flake.nix" ];
       "its inputs are this flake and nixos-unstable, not following each other" =
-        tpl.inputs.t3code-nix.url == "github:swsammy/t3code-nix"
+        tpl.inputs.t3code-nix.url == "github:boltflake/t3code-nix"
         && tpl.inputs.nixpkgs.url == "github:NixOS/nixpkgs/nixos-unstable"
         && !(tpl.inputs.t3code-nix ? inputs);
       "it imports the user's configuration.nix and enables T3 Code" =

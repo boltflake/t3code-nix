@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security problems privately, never in a public issue:
-[report a vulnerability](https://github.com/swsammy/t3code-nix/security/advisories/new)
+[report a vulnerability](https://github.com/boltflake/t3code-nix/security/advisories/new)
 (the repository's Security tab, "Report a vulnerability"). Include:
 
 - what you found, its impact, and how to reproduce it
@@ -46,7 +46,7 @@ To get one:
 - if you pinned a `t3code-v*` tag or a commit, move the pin to a release
   or commit that has the fix first
 - if your `nix run` follows `main`, run it again with `--refresh` before
-  the flake ref (`nix run --refresh github:swsammy/t3code-nix`); with a
+  the flake ref (`nix run --refresh github:boltflake/t3code-nix`); with a
   pinned tag or commit, run it from one that has the fix. Stop a server
   started that way first
 - without flakes, rebuild from a tarball that has it

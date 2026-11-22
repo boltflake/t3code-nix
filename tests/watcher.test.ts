@@ -78,7 +78,7 @@ function world() {
   };
   return { w, f: f as (url: string, init?: RequestInit) => Promise<Response> };
 }
-const env = (kv: FakeKV): Env => ({ STATE: kv, GITHUB_TOKEN: "t", HEALTH_TOKEN: "h", REPO: "swsammy/t3code-nix", CF_VERSION: { id: "v1" } });
+const env = (kv: FakeKV): Env => ({ STATE: kv, GITHUB_TOKEN: "t", HEALTH_TOKEN: "h", REPO: "boltflake/t3code-nix", CF_VERSION: { id: "v1" } });
 
 test("watcher: first sight records every version and dispatches once", async () => {
   const kv = new FakeKV();
@@ -112,7 +112,7 @@ test("watcher: a new version dispatches; a failed dispatch is retried", async ()
   const { w, f } = world();
   await run(A, env(kv), t0, f);
   w.claude = "2.1.323";
-  const url = "https://api.github.com/repos/swsammy/t3code-nix/actions/workflows/update.yml/dispatches";
+  const url = "https://api.github.com/repos/boltflake/t3code-nix/actions/workflows/update.yml/dispatches";
   w.override.set(url, () => new Response("down", { status: 502 }));
   const r1 = await run(A, env(kv), at(1), f);
   assert.deepEqual([r1.written, r1.state.dispatch.pending, r1.state.dispatch.error?.kind], [true, true, "http"]);
@@ -171,7 +171,7 @@ test("watcher: errors and recoveries wait for the heartbeat", async () => {
 test("watcher: a dispatch kept rate limited writes once, then only heartbeats", async () => {
   const kv = new FakeKV();
   const { w, f } = world();
-  const url = "https://api.github.com/repos/swsammy/t3code-nix/actions/workflows/update.yml/dispatches";
+  const url = "https://api.github.com/repos/boltflake/t3code-nix/actions/workflows/update.yml/dispatches";
   w.override.set(url, () => new Response("slow", { status: 429, headers: { "retry-after": "60" } }));
   await run(A, env(kv), t0, f); // first sight: one write
   const first = kv.writes;
@@ -594,7 +594,7 @@ test("health: only GET, and never without a configured token", async () => {
 test("watcher: the dispatch asks for main, keeps its back-off and its first `since`, and saves a long back-off at once", async () => {
   const kv = new FakeKV();
   const { w, f } = world();
-  const url = "https://api.github.com/repos/swsammy/t3code-nix/actions/workflows/update.yml/dispatches";
+  const url = "https://api.github.com/repos/boltflake/t3code-nix/actions/workflows/update.yml/dispatches";
   await run(A, env(kv), t0, f);
   assert.deepEqual(w.calls.filter((c) => c.url === url).map((c) => JSON.parse(c.body!)), [{ ref: "main" }]);
   // A new version, the dispatch failing twice: the failure keeps its first `since`.

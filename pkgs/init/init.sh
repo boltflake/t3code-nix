@@ -26,7 +26,7 @@ usage: t3code-nix-init [--dir DIR] [--branch BRANCH] [--host NAME] [--dry-run]
 
 Writes DIR/flake.nix (default /etc/nixos): your configuration.nix with
 T3 Code, on the nixpkgs branch your system follows now. Never overwrites a
-flake.nix. Run it as root: sudo nix run github:swsammy/t3code-nix#init
+flake.nix. Run it as root: sudo nix run github:boltflake/t3code-nix#init
 
   --dir DIR        where configuration.nix is (default /etc/nixos)
   --branch BRANCH  the nixpkgs branch, e.g. nixos-26.05 or nixos-unstable
@@ -76,7 +76,7 @@ if [ -e "$dir/flake.nix" ] || [ -L "$dir/flake.nix" ]; then
 $dir/flake.nix exists already, so your system is a flake: init changes nothing.
 Add T3 Code to it by hand, two additions:
 
-  inputs.t3code-nix.url = "github:swsammy/t3code-nix";
+  inputs.t3code-nix.url = "github:boltflake/t3code-nix";
 
 and, in your nixosSystem's modules:
 
@@ -217,7 +217,7 @@ if [ "$dry" = 1 ]; then
   exit 0
 fi
 
-[ -w "$dir" ] || die "can't write to $dir: run it as root (sudo nix run github:swsammy/t3code-nix#init)"
+[ -w "$dir" ] || die "can't write to $dir: run it as root (sudo nix run github:boltflake/t3code-nix#init)"
 # Written whole to a new file next to it (mode 0644 from the umask, no
 # chmod through a path afterwards), then linked into place: `ln` never
 # replaces an existing flake.nix, and a failed write leaves no flake.nix.

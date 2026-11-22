@@ -256,7 +256,7 @@
         }
       );
 
-      # `nix flake init -t github:swsammy/t3code-nix`: a NixOS flake with
+      # `nix flake init -t github:boltflake/t3code-nix`: a NixOS flake with
       # the module (templates/default; checked by `template`).
       templates.default = {
         path = ./templates/default;
