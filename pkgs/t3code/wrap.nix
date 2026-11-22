@@ -44,166 +44,252 @@
 # and passed on; null keeps the unwrapped app's own choice ("auto"):
 #
 #   t3code.override { electron = "bundled"; }
-{
-  lib,
-  symlinkJoin,
-  makeWrapper,
-  installShellFiles,
-  runCommand,
-  replaceVars,
-  coreutils,
-  cloudflared,
-  nodejs,
-  uv,
-  python3,
-  unwrapped,
-  # The desktop app's Electron, or null for the unwrapped app's own.
-  electron ? null,
-  # Every provider this t3code supports: driver name -> package.
-  availableProviders,
-  providers ? builtins.attrNames availableProviders,
-  excludeProviders ? [ ],
-  previewBrowser,
-  withPreviewBrowser ? true,
-  acpRuntimes ? [ ],
-  guard,
-  allowUpstreamService ? false,
-  # Put into the name: "-free" for t3code-free and t3-free.
-  variant ? "",
-}:
+#
+# The desktop app can carry the CLI too, wrapped the same way (providers,
+# PATH) but as the CLI (its guards, its preview-browser mode, its shell
+# completions), plus `t3code-desktop` on the latest channel: the layout of
+# nixpkgs' t3code, which the overlay's top-level t3code has.
+#
+#   t3code.override { withCli = true; }
+#
+# Arguments nixpkgs' t3code takes (enableClaude, …) fail with a message
+# naming `providers`; any other unknown argument fails too.
 let
-  # The unwrapped app, with the Electron asked for (desktop only).
-  app =
-    if electron == null then
-      unwrapped
-    else if unwrapped ? passthru.electron then
-      unwrapped.override { inherit electron; }
-    else
-      throw "t3code: electron applies to the desktop app only, not ${unwrapped.name}";
-  helper = import ./select-providers.nix {
-    inherit lib;
-    available = availableProviders;
-  };
-  selected = helper.select { inherit providers excludeProviders; };
-
-  # The ACP registry's runners: npm (with node) for npm agents; uv with a
-  # full python3 for uv agents (uv would otherwise download a Python that
-  # can't start without nix-ld, and python3Minimal lacks ssl).
-  runtimes = {
-    nodejs = [ nodejs ];
-    uv = [
-      uv
-      python3
-    ];
-  };
-  runtimeNames = lib.unique (
-    map (
-      r:
-      if !builtins.isString r then
-        throw "t3code: acpRuntimes takes names (${lib.concatStringsSep ", " (builtins.attrNames runtimes)}), not packages"
-      else if runtimes ? ${r} then
-        r
+  # nixpkgs' t3code takes enable<Tool> flags; this one takes providers.
+  unknownArgMessage =
+    name: unknown:
+    let
+      nixpkgsStyle = builtins.filter (a: builtins.match "enable[A-Z].*" a != null) unknown;
+      list = builtins.concatStringsSep ", ";
+    in
+    "${name} (t3code-nix) was given arguments it doesn't take: ${list unknown}."
+    + (
+      if nixpkgsStyle != [ ] then
+        " ${list nixpkgsStyle}: arguments of nixpkgs' t3code. This one bundles agent providers by name, providers = [ \"claude\" \"codex\" … ] (or excludeProviders), and puts no other tools (git, gh) on T3 Code's PATH; see the README, \"Agent providers\" (https://github.com/boltflake/t3code-nix#agent-providers)."
       else
-        throw (helper.unknownRuntime r (builtins.attrNames runtimes))
-    ) acpRuntimes
-  );
-  runtimeFlags = lib.optionals (runtimeNames != [ ]) [
-    "--suffix"
-    "PATH"
-    ":"
-    (lib.makeBinPath (lib.concatMap (r: runtimes.${r}) runtimeNames))
-  ];
+        ""
+    );
+  wrapper =
+    {
+      lib,
+      symlinkJoin,
+      makeWrapper,
+      installShellFiles,
+      runCommand,
+      replaceVars,
+      coreutils,
+      cloudflared,
+      nodejs,
+      uv,
+      python3,
+      unwrapped,
+      # The desktop app's Electron, or null for the unwrapped app's own.
+      electron ? null,
+      # Every provider this t3code supports: driver name -> package.
+      availableProviders,
+      providers ? builtins.attrNames availableProviders,
+      excludeProviders ? [ ],
+      previewBrowser,
+      withPreviewBrowser ? true,
+      acpRuntimes ? [ ],
+      guard,
+      allowUpstreamService ? false,
+      # Put into the name: "-free" for t3code-free and t3-free.
+      variant ? "",
+      # The CLI inside the desktop app (withCli): the same channel's unwrapped
+      # CLI and its own pin's preview browser.
+      withCli ? false,
+      cliUnwrapped ? null,
+      cliPreviewBrowser ? null,
+    }:
+    let
+      # The unwrapped app, with the Electron asked for (desktop only).
+      app =
+        if electron == null then
+          unwrapped
+        else if unwrapped ? passthru.electron then
+          unwrapped.override { inherit electron; }
+        else
+          throw "t3code: electron applies to the desktop app only, not ${unwrapped.name}";
+      helper = import ./select-providers.nix {
+        inherit lib;
+        available = availableProviders;
+      };
+      selected = helper.select { inherit providers excludeProviders; };
 
-  # t3code looks for Antigravity on PATH as `agy_acp_server.par` and treats
-  # it as the newer CLI when the real file is named `agy`. This link lives
-  # only on t3code's PATH, not in the antigravity package.
-  shims = runCommand "t3code-provider-shims" { } (
-    ''
-      mkdir -p $out/bin
-    ''
-    + lib.concatMapStrings (
-      p:
-      lib.optionalString (lib.getName p == "antigravity") ''
-        ln -s ${p}/bin/agy $out/bin/agy_acp_server.par
+      # The ACP registry's runners: npm (with node) for npm agents; uv with a
+      # full python3 for uv agents (uv would otherwise download a Python that
+      # can't start without nix-ld, and python3Minimal lacks ssl).
+      runtimes = {
+        nodejs = [ nodejs ];
+        uv = [
+          uv
+          python3
+        ];
+      };
+      runtimeNames = lib.unique (
+        map (
+          r:
+          if !builtins.isString r then
+            throw "t3code: acpRuntimes takes names (${lib.concatStringsSep ", " (builtins.attrNames runtimes)}), not packages"
+          else if runtimes ? ${r} then
+            r
+          else
+            throw (helper.unknownRuntime r (builtins.attrNames runtimes))
+        ) acpRuntimes
+      );
+      runtimeFlags = lib.optionals (runtimeNames != [ ]) [
+        "--suffix"
+        "PATH"
+        ":"
+        (lib.makeBinPath (lib.concatMap (r: runtimes.${r}) runtimeNames))
+      ];
+
+      # t3code looks for Antigravity on PATH as `agy_acp_server.par` and treats
+      # it as the newer CLI when the real file is named `agy`. This link lives
+      # only on t3code's PATH, not in the antigravity package.
+      shims = runCommand "t3code-provider-shims" { } (
+        ''
+          mkdir -p $out/bin
+        ''
+        + lib.concatMapStrings (
+          p:
+          lib.optionalString (lib.getName p == "antigravity") ''
+            ln -s ${p}/bin/agy $out/bin/agy_acp_server.par
+          ''
+        ) selected
+      );
+      # The CLI takes --base-dir; the desktop app doesn't.
+      cli = if lib.hasPrefix "t3-" app.name then "1" else "0";
+      linkPreviewBrowser = replaceVars ./preview-browser.sh (
+        lib.genAttrs [
+          "mkdir"
+          "ln"
+          "mv"
+          "rm"
+        ] (c: "${coreutils}/bin/${c}")
+      );
+      guardFlags = lib.optional (cli == "1" && !allowUpstreamService) guard.refuseT3;
+      browserFlagsFor =
+        mode: browser:
+        lib.optionals withPreviewBrowser [
+          "--run"
+          (lib.concatStringsSep " " [
+            ". ${linkPreviewBrowser};"
+            "t3codeLinkPreviewBrowser ${mode}"
+            "${browser}/libexec/chrome-headless-shell"
+            browser.platform
+            browser.version
+            ''"$@" || echo "warning: couldn't link T3 Code's preview browser" >&2''
+          ])
+        ];
+      browserFlags = browserFlagsFor cli previewBrowser;
+      pathFlag = lib.makeBinPath (
+        selected
+        ++ [
+          shims
+          cloudflared
+        ]
+      );
+      cloudflaredRun = ''case "''${T3CODE_CLOUDFLARED_PATH-}" in *[![:space:]]*) ;; *) export T3CODE_CLOUDFLARED_PATH=${cloudflared}/bin/cloudflared ;; esac'';
+
+      # The CLI inside the desktop app.
+      innerCli =
+        if !withCli then
+          null
+        else if cli == "1" then
+          throw "t3code: withCli applies to the desktop app only, not ${app.name}"
+        else if cliUnwrapped == null || (withPreviewBrowser && cliPreviewBrowser == null) then
+          throw "t3code: withCli needs cliUnwrapped, and cliPreviewBrowser unless withPreviewBrowser is false"
+        else
+          cliUnwrapped;
+      completions = bin: ''
+        export HOME=$(mktemp -d)
+        export T3CODE_HOME=$HOME/.t3
+        for shell in bash zsh fish; do
+          ${bin} --completions $shell > $HOME/t3.$shell
+        done
+        installShellCompletion --bash --name t3 $HOME/t3.bash
+        installShellCompletion --cmd t3 --zsh $HOME/t3.zsh --fish $HOME/t3.fish
+      '';
+    in
+    symlinkJoin {
+      name = lib.replaceStrings [ "-unwrapped" ] [ variant ] app.name;
+      paths = [ app ] ++ lib.optional withCli innerCli;
+      nativeBuildInputs = [
+        makeWrapper
+      ]
+      ++ lib.optional (cli == "1" || withCli) installShellFiles;
+
+      postBuild = ''
+        for bin in ${app}/bin/*; do
+          name=$(basename "$bin")
+          rm "$out/bin/$name"
+          makeWrapper "$bin" "$out/bin/$name" \
+            ${lib.concatStringsSep " " guardFlags} \
+            --prefix PATH : ${pathFlag} \
+            ${lib.escapeShellArgs runtimeFlags} \
+            --run ${lib.escapeShellArg cloudflaredRun} \
+            ${lib.escapeShellArgs browserFlags}
+        done
       ''
-    ) selected
-  );
-  # The CLI takes --base-dir; the desktop app doesn't.
-  cli = if lib.hasPrefix "t3-" app.name then "1" else "0";
-  linkPreviewBrowser = replaceVars ./preview-browser.sh (
-    lib.genAttrs [
-      "mkdir"
-      "ln"
-      "mv"
-      "rm"
-    ] (c: "${coreutils}/bin/${c}")
-  );
-  guardFlags = lib.optional (cli == "1" && !allowUpstreamService) guard.refuseT3;
-  browserFlags = lib.optionals withPreviewBrowser [
-    "--run"
-    (lib.concatStringsSep " " [
-      ". ${linkPreviewBrowser};"
-      "t3codeLinkPreviewBrowser ${cli}"
-      "${previewBrowser}/libexec/chrome-headless-shell"
-      previewBrowser.platform
-      previewBrowser.version
-      ''"$@" || echo "warning: couldn't link T3 Code's preview browser" >&2''
-    ])
-  ];
+      # The CLI's shell completions, from the (already patched) binary itself,
+      # with a throwaway home: they complete the command `t3`.
+      + lib.optionalString (cli == "1") (completions "${app}/bin/t3")
+      # The CLI inside the desktop app, wrapped as the CLI is.
+      + lib.optionalString withCli (
+        ''
+          rm "$out/bin/t3"
+          makeWrapper ${innerCli}/bin/t3 "$out/bin/t3" \
+            ${lib.concatStringsSep " " (lib.optional (!allowUpstreamService) guard.refuseT3)} \
+            --prefix PATH : ${pathFlag} \
+            ${lib.escapeShellArgs runtimeFlags} \
+            --run ${lib.escapeShellArg cloudflaredRun} \
+            ${lib.escapeShellArgs (browserFlagsFor "1" cliPreviewBrowser)}
+        ''
+        + completions "${innerCli}/bin/t3"
+        # nixpkgs' name for the desktop app, on the channel nixpkgs has.
+        + lib.optionalString (app.meta.mainProgram or null == "t3code") ''
+          ln -s t3code $out/bin/t3code-desktop
+        ''
+      );
+
+      passthru = {
+        unwrapped = app;
+        electron = app.passthru.electron or null;
+        providers = selected;
+        acpRuntimes = runtimeNames;
+        previewBrowser = if withPreviewBrowser then previewBrowser else null;
+        cliPreviewBrowser = if withCli && withPreviewBrowser then cliPreviewBrowser else null;
+        inherit withCli unknownArgMessage;
+        # For the preview-browser-link check.
+        inherit linkPreviewBrowser;
+      };
+
+      meta = app.meta // {
+        description =
+          lib.replaceStrings [ "without providers" ] [ "with its providers" ]
+            app.meta.description;
+      };
+    };
+
+  known = builtins.functionArgs wrapper;
 in
-symlinkJoin {
-  name = lib.replaceStrings [ "-unwrapped" ] [ variant ] app.name;
-  paths = [ app ];
-  nativeBuildInputs = [
-    makeWrapper
-  ]
-  ++ lib.optional (cli == "1") installShellFiles;
-
-  postBuild = ''
-    for bin in ${app}/bin/*; do
-      name=$(basename "$bin")
-      rm "$out/bin/$name"
-      makeWrapper "$bin" "$out/bin/$name" \
-        ${lib.concatStringsSep " " guardFlags} \
-        --prefix PATH : ${
-          lib.makeBinPath (
-            selected
-            ++ [
-              shims
-              cloudflared
-            ]
-          )
-        } \
-        ${lib.escapeShellArgs runtimeFlags} \
-        --run ${lib.escapeShellArg ''case "''${T3CODE_CLOUDFLARED_PATH-}" in *[![:space:]]*) ;; *) export T3CODE_CLOUDFLARED_PATH=${cloudflared}/bin/cloudflared ;; esac''} \
-        ${lib.escapeShellArgs browserFlags}
-    done
-  ''
-  # The CLI's shell completions, from the (already patched) binary itself,
-  # with a throwaway home: they complete the command `t3`.
-  + lib.optionalString (cli == "1") ''
-    export HOME=$(mktemp -d)
-    export T3CODE_HOME=$HOME/.t3
-    for shell in bash zsh fish; do
-      ${app}/bin/t3 --completions $shell > $HOME/t3.$shell
-    done
-    installShellCompletion --bash --name t3 $HOME/t3.bash
-    installShellCompletion --cmd t3 --zsh $HOME/t3.zsh --fish $HOME/t3.fish
-  '';
-
-  passthru = {
-    unwrapped = app;
-    electron = app.passthru.electron or null;
-    providers = selected;
-    acpRuntimes = runtimeNames;
-    previewBrowser = if withPreviewBrowser then previewBrowser else null;
-    # For the preview-browser-link check.
-    inherit linkPreviewBrowser;
-  };
-
-  meta = app.meta // {
-    description =
-      lib.replaceStrings [ "without providers" ] [ "with its providers" ]
-        app.meta.description;
-  };
+# lib.setFunctionArgs, which needs no lib: callPackage fills `known`, and an
+# override with an argument outside it gets the message, not Nix's own error.
+{
+  __functionArgs = known;
+  __functor =
+    _: args:
+    let
+      unknown = builtins.attrNames (removeAttrs args (builtins.attrNames known));
+    in
+    if unknown == [ ] then
+      wrapper args
+    else
+      throw (
+        unknownArgMessage (builtins.replaceStrings [ "-unwrapped" ] [ "" ] (
+          (builtins.parseDrvName (args.unwrapped.name or "t3code")).name
+        )) unknown
+      );
 }

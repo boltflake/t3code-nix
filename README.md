@@ -896,7 +896,7 @@ pinned nixpkgs, that gives:
 
 | Packages | At the top level of `pkgs`? |
 | --- | --- |
-| `t3code`, `t3code-nightly`, `t3code-free`, `t3code-unwrapped` (+ `-nightly`) | yes (`t3code` replaces nixpkgs' own, the same program) |
+| `t3code`, `t3code-nightly`, `t3code-free`, `t3code-unwrapped` (+ `-nightly`) | yes (`t3code` replaces nixpkgs' own, the same program, and comes with its CLI: see below) |
 | `codex`, `claude-code`, `kiro-cli`, `agent-browser` | yes, replacing nixpkgs' own (the same programs); the overlay's `agent-browser` uses your nixpkgs' browsers (`ungoogled-chromium` by default) |
 | `cursor-agent`, `grok`, `pi`, `boat` | yes (nixpkgs has nothing by those names) |
 | `opencode` | no: nixpkgs' `opencode-desktop` builds from nixpkgs' own `opencode`, so that stays (the apps bundle this flake's either way) |
@@ -907,6 +907,42 @@ pinned nixpkgs, that gives:
 Anything that isn't at the top level is still there as
 `pkgs.t3code-nix.<name>`, for example `pkgs.t3code-nix.t3`. If your
 nixpkgs gains a different program under one of these names, it keeps it.
+
+**The top-level `pkgs.t3code`** has the programs nixpkgs' package has
+(`bin/t3`, `bin/t3code-desktop`), so a module that runs them works with it:
+Home Manager's own `programs.t3code`, whose `server.enable` runs
+`${package}/bin/t3 serve`, for one. Its arguments are this flake's, though
+(below).
+
+- It's the app with its CLI inside, `pkgs.t3code-nix.t3code.override {
+  withCli = true; }`: `bin/t3code`, `bin/t3code-desktop` (nixpkgs' name for
+  the app) and `bin/t3`, the CLI with the same providers, wrapped as the
+  `t3` package is. It's bigger for it (about 5.4 GB on disk with every
+  provider, against 4.9 GB for the app alone).
+- The `t3` inside is the CLI's own release, which this flake updates
+  separately from the app, so for a while after a release it can be a
+  different version.
+- It takes this flake's arguments, not nixpkgs': `providers = [ "claude"
+  "codex" ]` rather than `enableClaude = true`, which fails with a message
+  saying so. nixpkgs' `enableGit`, `enableGitHub` and the like put `git` and
+  `gh` on T3 Code's `PATH`; this one doesn't (they come from your system).
+  For nixpkgs' arguments, use nixpkgs' own `t3code`, from a nixpkgs without
+  this overlay.
+- Installing it next to another `t3` gives two: nixpkgs' (a `tee`), or this
+  flake's `pkgs.t3code-nix.t3`. With nixpkgs' `t3`, or ours with other
+  providers or another channel, at the same priority (the default) a Home
+  Manager build fails on the collision and on NixOS one of them wins
+  silently; `nix profile` refuses even an identical one. Install only one,
+  give one a higher priority (`lib.hiPrio`, or `--priority` for `nix
+  profile`), or install the app without its CLI:
+  `pkgs.t3code.override { withCli = false; }`.
+- `withCli = true` works on `t3code-nightly` and `t3code-free` too (the
+  nightly has no `t3code-desktop`). Home Manager's own server needs it if you
+  point its `programs.t3code.package` at one of them.
+- With the NixOS module and `package = pkgs.t3code`, the app's `t3` is
+  installed with the app. With `cli.enable` or the server, the module's own
+  `t3` is installed too, at high priority, so it wins over the app's, and
+  the server always runs the module's.
 
 The overlay builds on your own nixpkgs. Your nixpkgs config
 (`allowUnfree`) decides which unfree packages you can build, and the

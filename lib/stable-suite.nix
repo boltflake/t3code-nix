@@ -89,6 +89,7 @@
     "cache-settings"
     "template"
     "overlay"
+    "t3code-with-cli"
     "module-eval"
     "default-nix"
     "no-self-rev"

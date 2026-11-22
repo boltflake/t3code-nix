@@ -526,6 +526,107 @@ let
       touch $out
     '';
 
+  # The desktop app with its own CLI (withCli, the overlay's top-level
+  # t3code): nixpkgs' layout, the CLI wrapped as the CLI, each with its own
+  # preview browser (two stand-ins, as the real pins name the same one).
+  t3code-with-cli =
+    let
+      standInBrowser =
+        name: platform: version:
+        runCommand name { } "mkdir -p $out/libexec && touch $out/libexec/chrome-headless-shell"
+        // {
+          inherit platform version;
+        };
+      appBrowser = standInBrowser "stand-in-app-browser" "pa" "1";
+      cliBrowser = standInBrowser "stand-in-cli-browser" "pc" "2";
+      w = packages.t3code.override {
+        withCli = true;
+        previewBrowser = appBrowser;
+        cliPreviewBrowser = cliBrowser;
+      };
+      allowed = w.override { allowUpstreamService = true; };
+      nightly = packages.t3code-nightly.override { withCli = true; };
+      names = p: map lib.getName p.providers;
+      chained =
+        (w.override {
+          providers = [
+            "pi"
+            "codex"
+          ];
+        }).override
+          { excludeProviders = [ "codex" ]; };
+      noBrowser = w.override { withPreviewBrowser = false; };
+      free = overlayPkgs.t3code-nix.t3code-free.override { withCli = true; };
+      # No browser at all: neither browser is needed.
+      bare = packages.t3code.override {
+        withCli = true;
+        withPreviewBrowser = false;
+        cliPreviewBrowser = null;
+      };
+      forced = x: (builtins.tryEval (builtins.deepSeq x x)).success;
+    in
+    conditions "t3code-with-cli"
+      {
+        "overrides keep withCli and the app's providers" = chained.withCli && names chained == [ "pi" ];
+        "withPreviewBrowser = false drops both browsers" =
+          noBrowser.previewBrowser == null && noBrowser.cliPreviewBrowser == null;
+        "the CLI's preview browser is its own pin's" =
+          packages.t3code.cliPreviewBrowser == null
+          &&
+            (packages.t3code.override { withCli = true; }).cliPreviewBrowser.version
+            == packages.t3.previewBrowser.version;
+        "nixpkgs-style arguments fail, and the message names providers and the README" =
+          !forced (packages.t3code.override { enableClaude = true; }).drvPath
+          && !forced (packages.t3.override { enableCodex = true; }).drvPath
+          && !forced (packages.t3code.override { provders = [ ]; }).drvPath
+          && lib.hasInfix "providers = [" (packages.t3code.unknownArgMessage "t3code" [ "enableClaude" ])
+          && lib.hasInfix "README, \"Agent providers\"" (
+            packages.t3code.unknownArgMessage "t3code" [ "enableClaude" ]
+          );
+        "withCli is the desktop app's only" = !forced (packages.t3.override { withCli = true; }).drvPath;
+        "a free app with its CLI needs no allowUnfree" = forced free.drvPath;
+        "without the preview browser, the CLI's isn't needed" = forced bare.drvPath;
+      }
+      ''
+        set -u
+        for b in t3 t3code t3code-desktop; do [ -x ${w}/bin/$b ] || { echo "no bin/$b"; exit 1; }; done
+        [ "$(readlink ${w}/bin/t3code-desktop)" = t3code ] || { echo "t3code-desktop isn't the app"; exit 1; }
+        [ ! -e ${nightly}/bin/t3code-desktop ] && [ -x ${nightly}/bin/t3code-nightly ] && [ -x ${nightly}/bin/t3 ] \
+          || { echo "the nightly app with its CLI: wrong programs"; exit 1; }
+        export HOME=$TMPDIR/home
+        mkdir -p $HOME
+        ${w}/bin/t3 --version | grep -q '^t3 v' || { echo "t3 --version"; exit 1; }
+        for f in share/bash-completion/completions/t3 share/zsh/site-functions/_t3 share/fish/vendor_completions.d/t3.fish; do
+          [ -s ${w}/$f ] || { echo "no $f"; exit 1; }
+        done
+        # Each program's own browser, and its own mode.
+        grep -q "t3codeLinkPreviewBrowser 1 ${cliBrowser}/" ${w}/bin/t3 && ! grep -q "${appBrowser}" ${w}/bin/t3 \
+          || { echo "bin/t3 doesn't use the CLI's browser in CLI mode"; exit 1; }
+        grep -q "t3codeLinkPreviewBrowser 0 ${appBrowser}/" ${w}/bin/t3code && ! grep -q "${cliBrowser}" ${w}/bin/t3code \
+          || { echo "bin/t3code doesn't use the app's browser in app mode"; exit 1; }
+        # A chained override reaches the CLI inside: no codex there.
+        ! grep -q "${packages.codex}/bin" ${chained}/bin/t3 || { echo "an excluded provider is still on bin/t3's PATH"; exit 1; }
+        grep -q "${packages.pi}/bin" ${chained}/bin/t3 || { echo "bin/t3 lacks the chosen provider"; exit 1; }
+        # The bundled providers, on the CLI's PATH too.
+        for p in ${lib.concatMapStringsSep " " toString w.providers}; do
+          grep -q "$p/bin" ${w}/bin/t3 || { echo "bin/t3 lacks $p"; exit 1; }
+        done
+        # The guard is the CLI's only, and allowUpstreamService lifts it.
+        ${w}/bin/t3 update > out 2>&1 && { echo "t3 update wasn't refused"; exit 1; }
+        grep -q "installed by Nix" out || { cat out; exit 1; }
+        ! grep -q "installed by Nix" ${w}/bin/t3code || { echo "the app has the CLI's guard"; exit 1; }
+        ! grep -q "installed by Nix" ${allowed}/bin/t3 || { echo "allowUpstreamService didn't reach the CLI"; exit 1; }
+        # The real wrapper, in CLI mode: --base-dir decides where the link goes.
+        # A host that restricts user namespaces skips the link on purpose.
+        ${w}/bin/t3 --base-dir $TMPDIR/b --version > /dev/null
+        if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
+          [ ! -e $TMPDIR/b/tools ] || { echo "linked on a host that restricts user namespaces"; exit 1; }
+        else
+          [ "$(readlink $TMPDIR/b/tools/chrome-headless-shell/pc/2)" = ${cliBrowser}/libexec/chrome-headless-shell ] \
+            || { echo "bin/t3 didn't link its browser under --base-dir"; exit 1; }
+        fi
+      '';
+
   # A check made of named conditions that are settled while evaluating, plus
   # an optional script. It fails naming the false ones.
   conditions =
@@ -745,13 +846,16 @@ let
       # Names first: nixpkgs' unfree packages under these names (the
       # Antigravity IDE) aren't allowed here, so their drvPath can't be read.
       # tryEval: nixpkgs may turn a name into a throwing alias.
-      # "Ours": the overlay's own package under that name (pkgs.t3code-nix).
+      # "Ours": the overlay's own package under that name (pkgs.t3code-nix);
+      # the top-level t3code is that app with its CLI (withCli).
+      ourTop =
+        n: if n == "t3code" then o.t3code-nix.t3code.override { withCli = true; } else o.t3code-nix.${n};
       isOurs =
         n:
         o ? ${n}
         && (builtins.tryEval o.${n}.name).success
-        && o.${n}.name == o.t3code-nix.${n}.name
-        && o.${n}.drvPath == o.t3code-nix.${n}.drvPath;
+        && o.${n}.name == (ourTop n).name
+        && o.${n}.drvPath == (ourTop n).drvPath;
       # Built on the user's own Chromium through the overlay (see
       # pkgs/default.nix's browserChannel); everything else as the flake has it.
       ownBrowser = [ "agent-browser" ];
@@ -848,6 +952,9 @@ let
             "t3"
           ];
       "the app and the same-program providers are ours" = builtins.all isOurs names.sameAsNixpkgs;
+      # nixpkgs' t3code has `t3` and `t3code-desktop`; the overlay's does too.
+      "the top-level t3code carries its CLI, pkgs.t3code-nix.t3code doesn't" =
+        o.t3code.withCli && !o.t3code-nix.t3code.withCli;
       "providers nixpkgs lacks are added" = builtins.all isOurs [
         "cursor-agent"
         "grok"
@@ -1177,8 +1284,60 @@ let
       };
       cached = c: builtins.elem example.url c.nix.settings.substituters;
       keyed = c: builtins.elem example.publicKey c.nix.settings.trusted-public-keys;
+      # The app with its own t3 (withCli, as the overlay's pkgs.t3code), with
+      # the module's CLI or server, and its providers picked by the module.
+      withCliApp = packages.t3code.override { withCli = true; };
+      # The overlay's own pkgs.t3code here.
+      appCli = system self.nixosModules.default {
+        enable = true;
+        package = overlayAllowed.t3code;
+        cli.enable = true;
+      };
+      # The app's build is never forced on a server-only host: its output path
+      # throws here.
+      appServerOnly = system self.nixosModules.default {
+        package = withCliApp // {
+          outPath = throw "the app's output path was read on a server-only host";
+          drvPath = throw "the app's drvPath was read on a server-only host";
+        };
+        server.enable = true;
+      };
+      appServer = system self.nixosModules.default {
+        enable = true;
+        package = overlayAllowed.t3code;
+        providers = [ "codex" ];
+        server.enable = true;
+      };
+      appAlone = system self.nixosModules.default {
+        enable = true;
+        package = withCliApp;
+      };
+      highPrio = p: (p.meta.priority or 5) < 5;
+      doctorOf = c: builtins.head (installed c "t3code-nix-doctor");
     in
     conditions "module-eval" {
+      "the module's t3 goes on PATH at high priority, so an app's own t3 (withCli) can't win by list order" =
+        builtins.all highPrio (installed appCli "t3")
+        && installed appCli "t3" != [ ]
+        && builtins.all highPrio (installed appServer "t3")
+        && builtins.all highPrio (installed appServerOnly "t3")
+        && installed appServerOnly "t3" != [ ]
+        && builtins.all highPrio (installed nightly "t3-nightly");
+      "with an app that has its own t3, the server runs the module's t3, with the module's providers" =
+        lib.hasPrefix "${builtins.head (installed appServer "t3")}/bin/t3 " (exec appServer)
+        && providersOf appServer "t3code" == [ [ "codex" ] ]
+        && (builtins.head (installed appServer "t3code")).withCli
+        && providersOf appServer "t3" == [ [ "codex" ] ];
+      "the doctor knows whether the module installs its t3" =
+        (doctorOf appCli).cliInstalled
+        && (doctorOf appServer).cliInstalled
+        && !(doctorOf appAlone).cliInstalled
+        # The app alone: its own t3 is the one, the module adds none.
+        && installed appAlone "t3" == [ ]
+        && (builtins.head (installed appAlone "t3code")).withCli
+        # A server-only host never forces the app's build.
+        && (builtins.tryEval (doctorOf appServerOnly).drvPath).success
+        && (builtins.tryEval appServerOnly.system.path.drvPath).success;
       "enable installs this flake's t3code" =
         builtins.elem packages.t3code real.environment.systemPackages;
       "the bundled providers go on PATH, at low priority, so the owner's own win" =
@@ -1682,6 +1841,11 @@ let
       cli = fakeCli "t3-0.1.9";
       otherCli = fakeCli "t3-0.1.10";
       foreignCli = fake "t3code-0.1.8" [ "t3" ];
+      # A desktop app with its own t3 (withCli): named like the app, its t3
+      # runs a t3-unwrapped build.
+      appWithCli = fakeCli "t3code-0.1.9";
+      # The doctor of a configuration that installs its CLI, or doesn't.
+      appCliWith = installed: (doctorWith [ codex ] "on").override { cliInstalled = installed; };
       codex = fake "codex-1.0" [ "codex" ];
       # Executables that only wait: codex stands in for codex's daemon update
       # loop, which the doctor knows by its exe and arguments; helper doesn't.
@@ -2401,6 +2565,19 @@ let
         touch $work/scenario/no-home
         run ${doctor} no-home 0
         has "No problems found."
+
+        # The app's own t3 (withCli): fine when the configuration installs no
+        # CLI; shadowing the configuration's when it does.
+        scenario
+        ln -sf ${appWithCli}/bin/t3 $work/scenario/path/t3
+        run ${appCliWith false} app-own-t3 0
+        has "OK       t3: the app's own ($work/scenario/path/t3, withCli)"
+        # The flake's own doctor (nix run .#doctor) doesn't know; no warning.
+        run ${doctor} app-own-t3-standalone 0
+        has "OK       t3: the app's own ($work/scenario/path/t3, withCli)"
+        run ${appCliWith true} app-t3-shadows 0
+        has "WARN     t3: $work/scenario/path/t3 is the app's own t3 (withCli, t3code-0.1.9), ahead of the t3 this configuration installs"
+        has "put the profile with programs.t3code's t3 first on PATH, or remove the app with withCli from the other profile"
 
         # Only reads: nothing but `config show`, `store info` and `show`.
         scenario
@@ -6478,6 +6655,7 @@ in
     preview-browser-pin
     preview-browser-link
     preview-browser-optional
+    t3code-with-cli
     provider-selection
     free-variant
     module-eval

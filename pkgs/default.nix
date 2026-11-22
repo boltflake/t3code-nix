@@ -142,13 +142,28 @@ let
     pin: callPackage ./chrome-headless-shell/package.nix { inherit ((versions.load pin)) browser; };
   wrap =
     unwrapped: pin:
-    callPackage ./t3code/wrap.nix {
-      inherit unwrapped;
-      # Passed, or callPackage would fill it with nixpkgs' `electron`.
-      electron = null;
-      availableProviders = providers;
-      previewBrowser = previewBrowser pin;
+    callPackage ./t3code/wrap.nix (
+      {
+        inherit unwrapped;
+        # Passed, or callPackage would fill it with nixpkgs' `electron`.
+        electron = null;
+        availableProviders = providers;
+        previewBrowser = previewBrowser pin;
+      }
+      // (cliFor.${pin} or { })
+    );
+  # For the desktop apps' `withCli`: the same channel's CLI, with its own
+  # pin's preview browser. Read only when `withCli` is on.
+  cliFor = {
+    t3code = {
+      cliUnwrapped = self.t3-unwrapped;
+      cliPreviewBrowser = previewBrowser "t3";
     };
+    t3code-nightly = {
+      cliUnwrapped = self.t3-unwrapped-nightly;
+      cliPreviewBrowser = previewBrowser "t3-nightly";
+    };
+  };
   providers = import ./t3code/providers.nix set;
   # The `-free` variants. The name stays on a later `.override { providers =
   # … }`, even one that adds an unfree provider: the name says where it

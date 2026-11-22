@@ -1,4 +1,6 @@
-# Which of this flake's packages the overlay puts at the top level of pkgs.
+# Which of this flake's packages the overlay puts at the top level of pkgs
+# (each the package under pkgs.t3code-nix of that name, except t3code: that
+# app with its CLI, withCli; see flake.nix).
 # Every package is under pkgs.t3code-nix.<name>; only these names are also
 # added at the top level, and each only if the user's nixpkgs has no package
 # of that name, or has the same program under it (`sameAsNixpkgs`). So

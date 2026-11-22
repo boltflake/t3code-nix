@@ -194,11 +194,17 @@
           topLevel = builtins.filter (
             name: !(prev ? ${name}) || builtins.elem name names.sameAsNixpkgs
           ) names.candidates;
+          # The top-level t3code replaces nixpkgs' (sameAsNixpkgs), which has
+          # the CLI too (`t3`, and `t3code-desktop`); modules written for it,
+          # Home Manager's programs.t3code among them, run that `t3`.
+          top = ours // {
+            t3code = ours.t3code.override { withCli = true; };
+          };
         in
         {
           t3code-nix = ours;
         }
-        // lib.getAttrs topLevel ours;
+        // lib.getAttrs topLevel top;
 
       packages =
         forAllSystems (system: import ./pkgs { pkgs = pkgsFor system; })

@@ -7,7 +7,8 @@
 # What this build knows comes from its data file (sourced below): CHANNEL,
 # NIXPKGS (unstable, or stable for the NixOS-stable set), ELECTRON (the
 # desktop app's Electron and why, empty without one),
-# VERSION, CLI (this build's t3), SERVER (on, off or unknown), SERVER_HOME
+# VERSION, CLI (this build's t3), CLI_INSTALLED (yes, no or unknown: whether
+# the module installs CLI), SERVER (on, off or unknown), SERVER_HOME
 # (the server's T3CODE_HOME, empty for ~/.t3), SERVER_USERS (whose session
 # runs it, space-separated; empty: every user that isn't a system one),
 # CACHE_URL, CACHE_KEY (empty: no cache configured) and PROVIDERS (lines "driver
@@ -443,6 +444,17 @@ else
   real=$(readlink -f -- "$t3")
   if [ "${real%/bin/t3}" = "$CLI" ]; then
     ok "t3: this build's ($t3)"
+  # A t3code-nix desktop app with its own t3 (withCli: the overlay's
+  # pkgs.t3code), known by its shape: a t3code build whose t3 runs a
+  # t3-unwrapped one.
+  elif app_t3=$(store_name "$real") && case $app_t3 in t3code-*) true ;; *) false ;; esac \
+    && grep -qs -- "-t3-unwrapped" "$real"; then
+    if [ "$CLI_INSTALLED" = yes ]; then
+      warn "t3: $t3 is the app's own t3 (withCli, $app_t3), ahead of the t3 this configuration installs" \
+        "put the profile with programs.t3code's t3 first on PATH, or remove the app with withCli from the other profile"
+    else
+      ok "t3: the app's own ($t3, withCli)"
+    fi
   elif [ "${real#/nix/store/}" = "$real" ]; then
     warn "t3: $t3 isn't from Nix (upstream's install script puts one in ~/.local/bin); it updates itself and doesn't bundle the providers" \
       "delete it, or put t3code-nix's t3 first on PATH"
