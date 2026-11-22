@@ -321,7 +321,9 @@ in
         build: no bundled providers, updated outside Nix, and on NixOS it
         only runs with `runtimeCompat`. For using upstream's own service on
         purpose; `server` is the Nix-managed one, and `t3 connect link` gives
-        it T3 Connect.
+        it T3 Connect. It applies to the module's own `t3` (`cli.enable`,
+        the server), not to the one inside an app with `withCli`; for that,
+        override the app with `allowUpstreamService = true`.
       '';
     };
 
@@ -468,8 +470,10 @@ in
         free parts the binary cache holds. Other choices: the flake's
         `t3code-free` or `t3`, an `.override { … }` of one of them, or
         `pkgs.t3code` through the flake's overlay, which builds on this
-        system's nixpkgs and follows its `allowUnfree`. For nightly, set
-        `channel` instead, which also picks the CLI.
+        system's nixpkgs and follows its `allowUnfree`. The overlay's
+        `pkgs.t3code` has its own `t3` (`withCli`); with `cli.enable` or the
+        server, the module's `t3` is installed at high priority over it. For
+        nightly, set `channel` instead, which also picks the CLI.
       '';
     };
 
@@ -544,8 +548,10 @@ in
         }
       ];
       networking.firewall.allowedTCPPorts = lib.mkIf srv.openFirewall [ srv.port ];
-      # The CLI the server runs, for `t3 pair` and the like.
-      environment.systemPackages = [ cli ];
+      # The CLI the server runs, for `t3 pair` and the like. At high
+      # priority: the system profile ignores collisions, and another `t3` (an
+      # app with withCli, the overlay's pkgs.t3code) must not win by list order.
+      environment.systemPackages = [ (lib.hiPrio cli) ];
 
       # Not t3code.service: that is upstream's, in ~/.config/systemd/user,
       # which would shadow a unit of the same name here.
@@ -611,7 +617,7 @@ in
 
     {
       environment.systemPackages =
-        lib.optionals cfg.enable ([ app ] ++ lib.optional cfg.cli.enable cli)
+        lib.optionals cfg.enable ([ app ] ++ lib.optional cfg.cli.enable (lib.hiPrio cli))
         # `t3code-nix doctor`, knowing this configuration (a server-only
         # host too).
         ++ lib.optional (cfg.enable || srv.enable) (
@@ -620,6 +626,9 @@ in
             t3 = cli;
             inherit (cfg) channel;
             server = if srv.enable then "on" else "off";
+            # Whether this configuration installs `cli` (else a `t3` from
+            # the app itself, withCli, is the expected one).
+            cliInstalled = cfg.cli.enable || srv.enable;
             serverHome = srv.home;
             serverUsers = srv.users;
           }

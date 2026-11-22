@@ -28,6 +28,9 @@
   nixpkgs ? "unstable",
   # "on" or "off" from the module; "unknown" for the flake's package.
   server ? "unknown",
+  # Whether the module installs `t3` (cli.enable or the server); null for
+  # the flake's package, which doesn't know.
+  cliInstalled ? null,
   # programs.t3code.server.home (null: ~/.t3).
   serverHome ? null,
   # programs.t3code.server.users (empty: every user that isn't a system one).
@@ -90,6 +93,16 @@ let
     ELECTRON=${lib.escapeShellArg electronLine}
     VERSION=${lib.escapeShellArg (lib.getVersion t3code)}
     CLI=${lib.escapeShellArg (plain t3)}
+    CLI_INSTALLED=${
+      lib.escapeShellArg (
+        if cliInstalled == null then
+          "unknown"
+        else if cliInstalled then
+          "yes"
+        else
+          "no"
+      )
+    }
     SERVER=${lib.escapeShellArg server}
     SERVER_HOME=${lib.escapeShellArg (if serverHome == null then "" else serverHome)}
     SERVER_USERS=${lib.escapeShellArg (lib.concatStringsSep " " serverUsers)}
@@ -131,7 +144,11 @@ doctor.overrideAttrs (old: {
   '';
   passthru = (old.passthru or { }) // {
     # The app it was built for (module-eval checks which set it came from).
-    inherit commands t3code;
+    inherit
+      commands
+      t3code
+      cliInstalled
+      ;
   };
   meta = (old.meta or { }) // {
     description = "Tells you why T3 Code (t3code-nix) isn't working; read-only";
