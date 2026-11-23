@@ -205,6 +205,45 @@ test("issues: guard-review opens per package and closes on guard-reviewed", asyn
   assert.equal(gh.issueList[0].comments!.length, 0);
   await issues.apply([obs("guard-reviewed", "codex", "4", "")], gh, hours(1));
   assert.deepEqual(gh.issueList.map((i) => i.state), ["closed", "open"]);
+  // A later release adds another option: the same issue reopens, saying
+  // the detail is different, not that the reviewed one came back.
+  await issues.apply([obs("guard-review", "codex", "5", "newer option")], gh, hours(2));
+  assert.equal(gh.issueList[0].state, "open");
+  assert.equal(gh.issueList[0].comments!.at(-1)!, "Reopened at ` 5 `, with a different detail than it closed with:\n\n```\nnewer option\n```");
+  // Closed again, then the same detail back: that one is "It's back", at
+  // the version it's back in.
+  await issues.apply([obs("guard-reviewed", "codex", "5", "")], gh, hours(3));
+  await issues.apply([obs("guard-review", "codex", "6", "newer option")], gh, hours(4));
+  assert.equal(gh.issueList[0].comments!.at(-1)!, "It's back at ` 6 `.\n\n```\nnewer option\n```");
+  // Closed by hand, then reported again at the same version: no version named.
+  gh.issueList[0].state = "closed";
+  await issues.apply([obs("guard-review", "codex", "6", "newer option")], gh, hours(5));
+  assert.equal(gh.issueList[0].comments!.at(-1)!, "It's back.\n\n```\nnewer option\n```");
+});
+
+test("issues: a reopen is \"It's back\" for part of the detail it closed with, or none", async () => {
+  const gh = new Fake();
+  // Two jobs' details, joined; it closes, then one of them comes back.
+  await issues.apply([obs("resolve-failed", "grok", null, "a\nb"), obs("resolve-failed", "grok", null, "c")], gh, now);
+  await issues.apply([obs("pass", "grok", "4")], gh, hours(1));
+  await issues.apply([obs("resolve-failed", "grok", null, "c")], gh, hours(2));
+  assert.match(gh.issueList[0].comments!.at(-1)!, /^It's back\./);
+  // No detail at all is nothing new either.
+  await issues.apply([obs("pass", "grok", "4")], gh, hours(3));
+  await issues.apply([obs("resolve-failed", "grok", null, "")], gh, hours(4));
+  assert.equal(gh.issueList[0].comments!.at(-1)!, "It's back.");
+  // A line it didn't have is a different detail.
+  await issues.apply([obs("pass", "grok", "4")], gh, hours(5));
+  await issues.apply([obs("resolve-failed", "grok", null, "cc\nd")], gh, hours(6));
+  assert.equal(gh.issueList[0].comments!.at(-1)!, "Reopened, with a different detail than it closed with:\n\n```\ncc\nd\n```");
+  // One line it had and one it didn't: a different detail.
+  await issues.apply([obs("pass", "grok", "4")], gh, hours(6.5));
+  await issues.apply([obs("resolve-failed", "grok", null, "cc\nx")], gh, hours(6.7));
+  assert.match(gh.issueList[0].comments!.at(-1)!, /^Reopened, with a different detail/);
+  // Lines match whole: part of a line is still a different detail.
+  await issues.apply([obs("pass", "grok", "4")], gh, hours(7));
+  await issues.apply([obs("resolve-failed", "grok", null, "c")], gh, hours(8));
+  assert.match(gh.issueList[0].comments!.at(-1)!, /^Reopened, with a different detail/);
 });
 
 /** A downgrade as the updater reports it: upstream moved `pkg` back. */
@@ -312,13 +351,14 @@ test("issues: a downgrade reopens on a new move, starting over; a hand-closed on
   // Pulled again later, from a lower version: it starts over with that move.
   await issues.apply([down("grok", "1.9.5", "1.9.0")], gh, hours(2));
   assert.equal(gh.issueList[0].state, "open");
-  assert.match(gh.issueList[0].comments!.at(-1)!, /^It's back/);
+  assert.match(gh.issueList[0].comments!.at(-1)!, /^Reopened, with a different detail than it closed with:\n/);
   assert.equal(issues.metaOf(gh.issueList[0])!.version, "1.9.5");
   assert.equal(gh.issueList[0].title, "downgrade: grok (1.9.5 pulled)");
   // Closed by hand while the move still stands: the next report reopens it.
   gh.issueList[0].state = "closed";
   await issues.apply([down("grok", "1.9.5", "1.9.0")], gh, hours(3));
   assert.equal(gh.issueList[0].state, "open");
+  assert.match(gh.issueList[0].comments!.at(-1)!, /^It's back\./, "the same move");
 });
 
 test("issues: a downgrade from an earlier reading changes nothing; its package gone closes it", async () => {

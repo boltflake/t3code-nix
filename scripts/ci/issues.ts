@@ -13,7 +13,12 @@
 //   changed problem  a comment (new version or different detail)
 //   recovery         close with a comment, only on positive evidence that
 //                    proves the fix; errors and skipped checks are "unknown"
-//   recurrence       reopen
+//   recurrence       reopen: "It's back." when the detail holds nothing
+//                    new, or "Reopened, with a different detail than it
+//                    closed with:" when it does (a downgrade: a different
+//                    move), such as a guard-review for commands added after
+//                    the last ones were reviewed; either names a new version
+//                    (not a downgrade's)
 //
 // --run-ok: the run had no infrastructure failure (closes update-failed).
 // Environment: RUN_URL, DRY_RUN, SEEN_AT, GITHUB_RUN_ATTEMPT.
@@ -378,7 +383,20 @@ export async function apply(observations: Observation[], gh: Client, now: Date, 
     let state: "open" | undefined;
     let note: string | null = null;
     if (issue.state === "closed") {
-      [meta, state, note] = [fresh, "open", `It's back.\n\n${shown(o.detail)}`];
+      // One issue per key, so a closed one can come back for something else
+      // (new commands to review): saying "It's back" then reads as the
+      // earlier fix failing. It's back when every line of the detail was in
+      // the one it closed with (part of a joined detail, or none). The detail
+      // alone can't say it's the same problem (a fixed text at a new
+      // version), so a new version is named.
+      const before = new Set((old.detail ?? "").split("\n"));
+      const same = down
+        ? old.from === fresh.from && old.to === fresh.to
+        : o.detail.split("\n").every((line) => !line.trim() || before.has(line));
+      const at = !down && o.version && o.version !== old.version ? ` at ${inline(o.version)}` : "";
+      const lead = same ? `It's back${at}` : `Reopened${at}, with a different detail than it closed with`;
+      const text = o.detail ? `${lead}${same ? "." : ":"}\n\n${shown(o.detail)}` : `${lead}.`;
+      [meta, state, note] = [fresh, "open", text];
     } else if (changed) {
       [meta, note] = [down ? { ...fresh, version: tracked(old.version, fresh.version!) } : fresh, `Changed:\n\n${shown(o.detail || o.version || "")}`];
     } else if (now.getTime() - Date.parse(old.reminded ?? stamp) >= REMIND_AFTER_MS) {
