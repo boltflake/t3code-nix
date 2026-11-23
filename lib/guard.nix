@@ -127,8 +127,13 @@ let
   # setup` only allows Chrome's sandbox and installs libraries with apt;
   # `uninstall` and `service uninstall` remove upstream's own copy;
   # `environment link` links another machine's T3 Code (see "T3 Code over
-  # SSH"); the rest handle pairing, sessions, T3 Connect devices, projects,
-  # threads, themes, traces and policies.
+  # SSH"); `feedback` sends a report to the T3 team through the running
+  # server (only with Agent feedback set to Automatic in Settings > Labs),
+  # and `feedback list` reads the reports saved on this machine; `workflow`
+  # starts and steers the running server's workflow runs, lists their hook
+  # paths and changes what they keep (`workflow store`); the rest handle
+  # pairing, sessions, T3 Connect devices, projects, threads, themes, traces
+  # and policies.
   t3Commands = [
     "help"
     "serve"
@@ -186,6 +191,21 @@ let
     "policy settings"
     "policy templates"
     "triage"
+    "feedback"
+    "feedback list"
+    "workflow"
+    "workflow start"
+    "workflow list"
+    "workflow show"
+    "workflow resume"
+    "workflow cancel"
+    "workflow signal"
+    "workflow questions"
+    "workflow hooks"
+    "workflow store"
+    "workflow store list"
+    "workflow store set"
+    "workflow store delete"
     "connect"
   ]
   # `connect`'s: the ones let through and any refused.
@@ -370,6 +390,7 @@ let
       "api"
       "auth"
       "debug"
+      "machine"
       "mcp"
       "mini"
       "models"
