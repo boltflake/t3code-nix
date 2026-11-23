@@ -1,29 +1,29 @@
 {
   "name": "opencode",
-  "version": "2.4.0",
-  "tag": "v2.4.0",
+  "version": "2.4.1",
+  "tag": "v2.4.1",
   "assets": {
     "x86_64-linux": {
-      "url": "https://github.com/anomalyco/opencode/releases/download/v2.4.0/opencode-linux-x64.tar.gz",
-      "hash": "sha256-Zs9q3rAvv+nMux9kl/z0bOzy0pmh3Dp6MuAeow/yAgE=",
-      "assetId": 782309215,
-      "digest": "sha256:66cf6adeb02fbfe9ccbb1f6497fcf46cecf2d299a1dc3a7a32e01ea30ff20201"
+      "url": "https://github.com/anomalyco/opencode/releases/download/v2.4.1/opencode-linux-x64.tar.gz",
+      "hash": "sha256-nd0Y4/r2Tq7M9qD8vJalx6FFIK5f1bYeW+UdiU9Hi0c=",
+      "assetId": 783565465,
+      "digest": "sha256:9ddd18e3faf64eaeccf6a0fcbc96a5c7a14520ae5fd5b61e5be51d894f478b47"
     },
     "aarch64-linux": {
-      "url": "https://github.com/anomalyco/opencode/releases/download/v2.4.0/opencode-linux-arm64.tar.gz",
-      "hash": "sha256-/tRoVmIV/Tiyarq5kBgkDA0wdy0/Ra7iViFmTO/342A=",
-      "assetId": 782309043,
-      "digest": "sha256:fed468566215fd38b26abab99018240c0d30772d3f45aee25621664ceff7e360"
+      "url": "https://github.com/anomalyco/opencode/releases/download/v2.4.1/opencode-linux-arm64.tar.gz",
+      "hash": "sha256-yyjPlFQa62KksupZl6mbXda65ZWncvNvvieSmfIDKk8=",
+      "assetId": 783565071,
+      "digest": "sha256:cb28cf94541aeb62a4b2ea5997a99b5dd6bae595a772f36fbe279299f2032a4f"
     }
   },
   "licenses": {
     "LICENSE": {
-      "url": "https://raw.githubusercontent.com/anomalyco/opencode/44aed4fd144611879046ae923c25541f913780ad/LICENSE",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/6f0514052a3c859894ad01bb14cc14dda1e44b96/LICENSE",
       "hash": "sha256-Yl8PYZEz+Ju7sqvjc2lhPfoYheuh5Q0CFw3rYrtCy2s="
     }
   },
   "released": {
-    "at": "2026-11-23T09:22:21.000Z",
+    "at": "2026-11-23T15:57:40.000Z",
     "kind": "published"
   }
 }
