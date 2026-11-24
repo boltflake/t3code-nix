@@ -1,33 +1,33 @@
 {
   "name": "codex",
-  "version": "0.171.0",
-  "tag": "rust-v0.171.0",
+  "version": "0.172.0",
+  "tag": "rust-v0.172.0",
   "assets": {
     "x86_64-linux": {
-      "url": "https://github.com/openai/codex/releases/download/rust-v0.171.0/codex-package-x86_64-unknown-linux-musl.tar.zst",
-      "hash": "sha256-hn4PY4oDu7+SLh93q9cNIuKD4qU/kygfygCayNDe5OA=",
-      "assetId": 769869119,
-      "digest": "sha256:867e0f638a03bbbf922e1f77abd70d22e283e2a53f93281fca009ac8d0dee4e0"
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.172.0/codex-package-x86_64-unknown-linux-musl.tar.zst",
+      "hash": "sha256-QOFauXgwtxpkKktzKMpMMBvwteD6r+aKqm4alLBP8V8=",
+      "assetId": 785031594,
+      "digest": "sha256:40e15ab97830b71a642a4b7328ca4c301bf0b5e0faafe68aaa6e1a94b04ff15f"
     },
     "aarch64-linux": {
-      "url": "https://github.com/openai/codex/releases/download/rust-v0.171.0/codex-package-aarch64-unknown-linux-musl.tar.zst",
-      "hash": "sha256-MyVBGyMFxIREKyNNKUZabOO/Pr0nDxGgILxqwOHjh0o=",
-      "assetId": 769865257,
-      "digest": "sha256:3325411b2305c484442b234d29465a6ce3bf3ebd270f11a020bc6ac0e1e3874a"
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.172.0/codex-package-aarch64-unknown-linux-musl.tar.zst",
+      "hash": "sha256-62JbYTaQjp5fcN4z70FmmM77cEP0n9WuFUxbpZQ9NOo=",
+      "assetId": 785025308,
+      "digest": "sha256:eb625b6136908e9e5f70de33ef416698cefb7043f49fd5ae154c5ba5943d34ea"
     }
   },
   "licenses": {
     "LICENSE": {
-      "url": "https://raw.githubusercontent.com/openai/codex/ccf9be8cc458bd6b8336fe84d68d8893f2691a5e/LICENSE",
+      "url": "https://raw.githubusercontent.com/openai/codex/3d86e43b075adeba2193ec5c22ac92f55afd82e6/LICENSE",
       "hash": "sha256-0X8ifk312hYAORM4hlzg8wVSEXYKNmiPgWlB1YIy2Nw="
     },
     "NOTICE": {
-      "url": "https://raw.githubusercontent.com/openai/codex/ccf9be8cc458bd6b8336fe84d68d8893f2691a5e/NOTICE",
+      "url": "https://raw.githubusercontent.com/openai/codex/3d86e43b075adeba2193ec5c22ac92f55afd82e6/NOTICE",
       "hash": "sha256-nXFXXs/ZqEP8Fnew77CAU8a6n9aGoN4ab1OC/TwiCRU="
     }
   },
   "released": {
-    "at": "2026-11-20T00:44:47.000Z",
+    "at": "2026-11-24T00:03:55.000Z",
     "kind": "published"
   }
 }
