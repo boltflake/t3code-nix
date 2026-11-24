@@ -243,6 +243,19 @@ test("npm is compared with what upstream points at, not the pin", async () => {
   assert.ok(got.has("codex:latest-mismatch") && got.has("claude-code:latest-match"));
 });
 
+test("npm: only npm being newer is a mismatch; npm lagging behind upstream is not", async () => {
+  const check = async (ours: string, npm: string) => {
+    const r = new u.Report();
+    r.resolved.set("codex", ours);
+    await u.checkNpm(r, new Set(["codex"]), async () => ({ version: npm }));
+    return r.observations.filter((o) => o.kind.startsWith("latest-")).map((o) => o.kind);
+  };
+  assert.deepEqual(await check("0.172.0", "0.171.0"), ["latest-match"]);
+  assert.deepEqual(await check("0.172.0", "0.172.0"), ["latest-match"]);
+  assert.deepEqual(await check("0.171.0", "0.172.0"), ["latest-mismatch"]);
+  assert.deepEqual(await check("0.172.0-alpha.1", "0.172.0"), ["latest-mismatch"]);
+});
+
 test("npm: started before the resolves finish, compared only for packages that resolved", async () => {
   const asked: string[] = [];
   let answer!: () => void;
@@ -269,7 +282,7 @@ test("npm: started before the resolves finish, compared only for packages that r
   assert.equal(asked.length, 3, "no second fetch");
 
   assert.deepEqual(r.observations.filter((o) => o.package === "codex").map((o) => [o.kind, o.version, o.detail]).sort(), [
-    ["latest-mismatch", "0.167.2", "npm's `latest` for @openai/codex is 0.167.3, upstream points at 0.167.2; t3code's update notice compares against npm, so it may be stale or missing"],
+    ["latest-mismatch", "0.167.2", "npm's `latest` for @openai/codex is 0.167.3, newer than 0.167.2, which upstream points at; t3code's update notice offers a version this package doesn't have"],
     ["npm-ok", null, ""],
   ]);
 

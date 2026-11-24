@@ -22,9 +22,9 @@
 //                    it until the pin is back at the pulled version)
 //   held             an open issue holds this exact version (skipped while
 //                    anything else is new; see retryNames)
-//   latest-mismatch  npm's `latest`, which t3code's update notice uses, differs
-//                    from what upstream points at
-//   latest-match     npm agrees (lets a latest-mismatch issue close)
+//   latest-mismatch  npm's `latest`, which t3code's update notice uses, is
+//                    newer than what upstream points at: we're behind
+//   latest-match     npm isn't newer (lets a latest-mismatch issue close)
 //   npm-ok           npm answered (lets an npm resolve-failed issue close)
 //   releases-ok      t3code's releases were read (lets the release stream's
 //                    no-match and resolve-failed close; one seen again in the
@@ -455,10 +455,12 @@ export async function checkNpm(report: Report, wanted: Set<string>, fetchJson: F
     }
     const npm = latest.version;
     report.observe(obs("npm-ok", name, null, "", "npm"));
-    report.observe(npm === ours
-      ? obs("latest-match", name, ours, `npm's \`latest\` for ${pkg} agrees`, "npm")
-      : obs("latest-mismatch", name, ours,
-        `npm's \`latest\` for ${pkg} is ${npm}, upstream points at ${ours}; t3code's update notice compares against npm, so it may be stale or missing`, "npm"));
+    // Only npm being newer matters: t3code then offers an update our package
+    // doesn't have. npm lagging behind upstream is harmless.
+    report.observe(npm !== null && compareVersions(ours, npm) === -1
+      ? obs("latest-mismatch", name, ours,
+        `npm's \`latest\` for ${pkg} is ${npm}, newer than ${ours}, which upstream points at; t3code's update notice offers a version this package doesn't have`, "npm")
+      : obs("latest-match", name, ours, `npm's \`latest\` for ${pkg} isn't newer`, "npm"));
   }));
 }
 

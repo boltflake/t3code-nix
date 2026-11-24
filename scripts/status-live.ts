@@ -62,7 +62,7 @@ const WORDS: Record<string, string> = {
   "test-failed": "tests failed",
   "combination-failed": "failed together with another update",
   "no-match": "no matching release",
-  "latest-mismatch": "differs from npm's latest tag",
+  "latest-mismatch": "behind npm's latest tag",
   integrity: "files changed without a new version",
   "resolve-failed": "couldn't read upstream",
   "env-broken": "build environment broken",
