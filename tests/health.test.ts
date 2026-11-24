@@ -183,3 +183,16 @@ test("health: the nightly entry stands for both nightly pins", () => {
   const pins = { "t3code-nightly": "0.2.0-nightly.20261130.4", "t3-nightly": "0.2.0-nightly.20261130.4" };
   assert.deepEqual(kinds(assess(h, null, pins, [], now)), ["update-lag:t3-nightly", "update-lag:t3code-nightly", "watcher-healthy"]);
 });
+
+test("health: a timed send's auth error is watcher-auth, a long failure watcher-stalled, each naming the workflow", () => {
+  const timed = (name: string, kind: string, since: number) => key({}, { timed: { [name]: { error: { kind, message: `HTTP ${kind === "auth" ? 401 : 502}`, since: ago(since) } } } });
+  const auth = assess(health(timed("health.yml", "auth", 0)), null, {}, [], now);
+  assert.deepEqual(kinds(auth), ["watcher-auth"], "and not healthy");
+  assert.match(auth[0].detail, /health\.yml: HTTP 401/);
+  const stuck = assess(health(timed("pages.yml", "http", STUCK_MS + 1)), null, {}, [], now);
+  assert.deepEqual(kinds(stuck), ["watcher-stalled"]);
+  assert.match(stuck[0].detail, /pages\.yml/);
+  assert.deepEqual(kinds(assess(health(timed("pages.yml", "rate-limit", 0)), null, {}, [], now)), ["watcher-healthy"]);
+  // A reply without the timed field still reads as before.
+  assert.deepEqual(kinds(assess(health(key({})), null, {}, [], now)), ["watcher-healthy"]);
+});

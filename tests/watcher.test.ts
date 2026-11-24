@@ -2,7 +2,7 @@
 // Run: node --test tests/*.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backoffUntil, CRONS, health, HEARTBEAT_MS, run, type Env, type KV } from "../watcher/src/watcher.ts";
+import { backoffUntil, CRONS, disabledWorkflow, health, HEARTBEAT_MS, run, TIMED, type Env, type KV } from "../watcher/src/watcher.ts";
 import { BOAT, VENDOR_URLS } from "../shared/sources.ts";
 
 const A = "* * * * *", B = "*/1 * * * *";
@@ -45,6 +45,12 @@ function world() {
     assetPages: {} as Record<string, { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: { name: string }[] }>,
     calls: [] as { url: string; body?: string }[],
     dispatches: 0,
+    /** Timed sends, by workflow file, with the minute each was sent. */
+    timed: { "pages.yml": [] as number[], "health.yml": [] as number[] } as Record<string, number[]>,
+    /** The minute and cron of the run being made (set by day()). */
+    minute: 0,
+    cron: "",
+    timedCrons: new Set<string>(),
   };
   const f = async (url: string, init?: RequestInit) => {
     w.calls.push({ url, body: init?.body as string | undefined });
@@ -60,6 +66,13 @@ function world() {
       return Response.json({ data: { t3, p0: gh(w.codex), p1: gh("v0.0.16"), p2: oc, p3: gh("v0.9.0"), p4: gh(w.browser) } });
     }
     if (url.endsWith("/actions/workflows/update.yml/dispatches")) { w.dispatches++; return new Response(null, { status: 204 }); }
+    const timedSend = /\/actions\/workflows\/(pages\.yml|health\.yml)\/dispatches$/.exec(url);
+    if (timedSend) {
+      assert.deepEqual([init?.method, (init?.headers as any)?.Authorization, init?.body], ["POST", "Bearer t", JSON.stringify({ ref: "main" })]);
+      w.timed[timedSend[1]].push(w.minute);
+      w.timedCrons.add(w.cron);
+      return new Response(null, { status: 204 });
+    }
     const channel = /^https:\/\/channels\.nixos\.org\/([^/]+)(\/git-revision)?$/.exec(url);
     if (channel && channel[2]) return w.channels[channel[1]] ? new Response(`${w.channels[channel[1]]}\n`) : new Response("no", { status: 404 });
     if (channel && init?.method === "HEAD") {
@@ -660,4 +673,351 @@ test("watcher: a source's short back-off waits for the heartbeat", async () => {
   w.override.set(`${VENDOR_URLS.grok}/stable`, () => new Response("slow", { status: 429, headers: { "retry-after": "60" } }));
   const r = await run(A, env(kv), at(1), f);
   assert.deepEqual([r.written, r.state.sources.grok.retryAt], [false, at(2).toISOString()]);
+});
+
+// The timed sends (pages.yml, health.yml): about hourly, only in runs that
+// write anyway, so they add no KV writes.
+const PAGES = "https://api.github.com/repos/boltflake/t3code-nix/actions/workflows/pages.yml/dispatches";
+const HEALTH = "https://api.github.com/repos/boltflake/t3code-nix/actions/workflows/health.yml/dispatches";
+type World = ReturnType<typeof world>;
+/** Minute runs of both crons from FROM to TO (exclusive), as the Worker
+ * makes them: fresh invocations against the same KV. Returns the minutes
+ * in which cron A wrote. */
+async function day(kv: FakeKV, w: World["w"], f: World["f"], from: number, to: number, each?: (m: number) => void) {
+  const writes: number[] = [];
+  for (let m = from; m < to; m++) {
+    w.minute = m;
+    each?.(m);
+    const before = kv.writes;
+    w.cron = A;
+    await run(A, env(kv), at(m), f);
+    if (kv.writes > before) writes.push(m);
+    w.cron = B;
+    await run(B, env(kv), at(m), f);
+  }
+  return writes;
+}
+const gaps = (xs: number[]) => xs.slice(1).map((x, i) => x - xs[i]);
+const timedOf = (kv: FakeKV) => JSON.parse(kv.data.get("state:a")!).timed;
+/** The same minutes with the timed sends turned off: what the watcher
+ * wrote before them, and when. */
+async function control(minutes: number, each?: (w: World["w"], m: number) => void) {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  CRONS[A].timed = false;
+  try {
+    const writes = await day(kv, w, f, 0, minutes, each && ((m) => each(w, m)));
+    assert.equal(w.calls.filter((c) => /pages\.yml|health\.yml/.test(c.url)).length, 0);
+    return { total: kv.writes, writes };
+  } finally {
+    CRONS[A].timed = true;
+  }
+}
+
+test("timed: a healthy day sends pages and health together, 50 to 65 minutes apart, only in writing runs, at no extra writes", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  const writesA = await day(kv, w, f, 0, 24 * 60);
+  assert.deepEqual(w.timed["pages.yml"], w.timed["health.yml"]);
+  const sent = w.timed["pages.yml"];
+  assert.ok(sent.length >= 22 && sent.length <= 29, `${sent.length} sends`);
+  assert.equal(sent[0], 15, "a new key sends at its next writing run after its first write");
+  for (const g of gaps(sent)) assert.ok(g >= 50 && g <= 65, `gap ${g}`);
+  // The same writes, at the same minutes, as without the sends.
+  const plain = await control(24 * 60);
+  assert.deepEqual([kv.writes, writesA], [plain.total, plain.writes]);
+  for (const m of sent) assert.ok(plain.writes.includes(m), `sent at ${m}, a minute that writes anyway`);
+  assert.deepEqual([...w.timedCrons], [A], "only cron A sends them");
+});
+
+test("timed: change-driven writes don't bring a send forward or add writes", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  // A new claude version every 7 minutes: change-driven writes all day.
+  const bump = (ww: World["w"], m: number) => { if (m % 7 === 3) ww.claude = `2.1.${400 + m}`; };
+  const writesA = await day(kv, w, f, 0, 6 * 60, (m) => bump(w, m));
+  assert.deepEqual(w.timed["pages.yml"], w.timed["health.yml"]);
+  assert.ok(w.timed["pages.yml"].length >= 5, `${w.timed["pages.yml"]}`);
+  for (const g of gaps(w.timed["pages.yml"])) assert.ok(g >= 50 && g <= 65, `gap ${g}`);
+  const plain = await control(6 * 60, bump);
+  assert.deepEqual([kv.writes, writesA], [plain.total, plain.writes]);
+});
+
+test("timed: the update dispatch goes first, and neither touches the other's state", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  await day(kv, w, f, 0, 15);
+  // At 15 a new version and the timed sends (failing), in one run.
+  w.claude = "2.1.500";
+  w.override.set(PAGES, () => new Response("down", { status: 502 }));
+  w.override.set(HEALTH, () => new Response("down", { status: 502 }));
+  const before = w.calls.length;
+  await day(kv, w, f, 15, 16);
+  const order = w.calls.slice(before).map((c) => c.url).filter((u) => u.endsWith("/dispatches")).map((u) => u.split("/").at(-2));
+  assert.deepEqual(order, ["update.yml", ...TIMED]);
+  // A pending update dispatch with its error and back-off: the timed
+  // failures at 30, 45 and 60 leave it as it was.
+  const st = JSON.parse(kv.data.get("state:a")!);
+  const pending = { pending: true, error: { kind: "http", message: "x", since: at(1).toISOString() }, retryAt: at(70).toISOString() };
+  st.dispatch = pending;
+  kv.data.set("state:a", JSON.stringify(st));
+  await day(kv, w, f, 16, 70);
+  assert.ok(w.calls.filter((c) => c.url === PAGES).length >= 4);
+  assert.deepEqual(JSON.parse(kv.data.get("state:a")!).dispatch, pending);
+  // The update dispatch then succeeds and leaves the timed errors as they were.
+  const timedBefore = timedOf(kv);
+  assert.equal(timedBefore["pages.yml"].error.kind, "http");
+  await day(kv, w, f, 70, 71); // not a heartbeat minute: the send writes
+  const after = JSON.parse(kv.data.get("state:a")!);
+  assert.deepEqual([after.dispatch, after.timed], [{ pending: false }, timedBefore]);
+});
+
+test("timed: one failing doesn't hold the other back; a failure keeps its `since` and is retried at each writing run", async () => {
+  for (const [bad, good] of [["health.yml", "pages.yml"], ["pages.yml", "health.yml"]]) {
+    const kv = new FakeKV();
+    const { w, f } = world();
+    const url = bad === "pages.yml" ? PAGES : HEALTH;
+    let failing = true;
+    let kind = 502;
+    const tries: number[] = [];
+    w.override.set(url, () => { tries.push(w.minute); return failing ? new Response("down", { status: kind }) : (w.timed[bad].push(w.minute), new Response(null, { status: 204 })); });
+    await day(kv, w, f, 0, 30);
+    const s1 = timedOf(kv)[bad];
+    assert.deepEqual([s1.error.kind, s1.error.since, s1.sent], ["http", at(15).toISOString(), undefined]);
+    kind = 401; // the kind changes; `since` stays
+    const writesA = await day(kv, w, f, 30, 125);
+    const s2 = timedOf(kv)[bad];
+    assert.deepEqual([s2.error.kind, s2.error.since], ["auth", at(15).toISOString()]);
+    assert.deepEqual(tries, [15, ...writesA], "tried at every writing run, and only then");
+    assert.deepEqual(w.timed[good], [15, 75], `${good} keeps its cadence`);
+    failing = false;
+    await day(kv, w, f, 125, 140);
+    assert.deepEqual(w.timed[bad], [135]);
+    assert.deepEqual(timedOf(kv)[bad], { sent: at(135).toISOString() });
+  }
+});
+
+test("timed: a rate limit holds back the other send; with no retry time it backs off a heartbeat from the run's time", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  await day(kv, w, f, 0, 15);
+  let asked = 0;
+  // A 429 with no retry time.
+  w.override.set(PAGES, () => { asked++; return new Response("slow", { status: 429 }); });
+  await day(kv, w, f, 15, 16);
+  assert.deepEqual(w.timed["health.yml"], [], "health not sent behind a rate limit");
+  const s = timedOf(kv);
+  assert.deepEqual([s["pages.yml"].retryAt, s["health.yml"].retryAt], [at(30).toISOString(), at(30).toISOString()]);
+  w.override.set(PAGES, () => { asked++; w.timed["pages.yml"].push(w.minute); return new Response(null, { status: 204 }); });
+  await day(kv, w, f, 16, 31);
+  assert.deepEqual([asked, w.timed["pages.yml"], w.timed["health.yml"]], [2, [30], [30]], "both at the next heartbeat");
+  // A change at 20 writes before the back-off ends: nothing is sent then;
+  // both go at the next writing run after it.
+  const kv2 = new FakeKV();
+  const { w: w2, f: f2 } = world();
+  await day(kv2, w2, f2, 0, 15);
+  w2.override.set(PAGES, () => new Response("slow", { status: 429 }));
+  await day(kv2, w2, f2, 15, 16);
+  w2.override.delete(PAGES);
+  const wrote = await day(kv2, w2, f2, 16, 40, (m) => { if (m === 20) w2.claude = "2.1.777"; });
+  assert.ok(wrote.includes(20));
+  assert.deepEqual([w2.timed["pages.yml"], w2.timed["health.yml"]], [[35], [35]]);
+});
+
+test("timed: a rate limit's back-off reaches the other workflow whatever its own state, keeping a later one; Retry-After is capped", async () => {
+  // Pages rate limited for an hour; health had a retry saved for sooner,
+  // and is due: it waits the hour too.
+  const kv = new FakeKV();
+  const { w, f } = world();
+  await day(kv, w, f, 0, 1);
+  const st = JSON.parse(kv.data.get("state:a")!);
+  st.timed = { "pages.yml": {}, "health.yml": { retryAt: at(15).toISOString() } };
+  kv.data.set("state:a", JSON.stringify(st));
+  w.override.set(PAGES, () => new Response("slow", { status: 429, headers: { "retry-after": "3600" } }));
+  await day(kv, w, f, 1, 16);
+  // At 15 health's own retry time is over, but pages' new one holds it.
+  assert.deepEqual([timedOf(kv)["pages.yml"].retryAt, timedOf(kv)["health.yml"].retryAt], [at(75).toISOString(), at(75).toISOString()]);
+  w.override.delete(PAGES);
+  await day(kv, w, f, 16, 76);
+  assert.deepEqual([w.timed["pages.yml"], w.timed["health.yml"]], [[75], [75]]);
+  // Health inside its cadence still gets the back-off; a later own one is kept.
+  const kv2 = new FakeKV();
+  const { w: w2, f: f2 } = world();
+  await day(kv2, w2, f2, 0, 1);
+  const st2 = JSON.parse(kv2.data.get("state:a")!);
+  st2.timed = { "pages.yml": {}, "health.yml": { retryAt: at(40).toISOString() } };
+  kv2.data.set("state:a", JSON.stringify(st2));
+  w2.override.set(PAGES, () => new Response("slow", { status: 429, headers: { "retry-after": "60" } }));
+  await day(kv2, w2, f2, 1, 16);
+  assert.deepEqual([timedOf(kv2)["pages.yml"].retryAt, timedOf(kv2)["health.yml"].retryAt], [at(16).toISOString(), at(40).toISOString()]);
+  // A Retry-After of a day is cut to an hour.
+  w2.override.set(PAGES, () => new Response("slow", { status: 429, headers: { "retry-after": "86400" } }));
+  await day(kv2, w2, f2, 16, 31);
+  assert.equal(timedOf(kv2)["pages.yml"].retryAt, at(90).toISOString());
+});
+
+test("timed: a day of failures and rate limits adds no writes", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  const tries = { pages: 0, health: 0 };
+  w.override.set(PAGES, () => { tries.pages++; return new Response("down", { status: 503 }); });
+  w.override.set(HEALTH, () => { tries.health++; return w.minute % 90 < 45 ? new Response("slow", { status: 429 }) : new Response("slow", { status: 403, headers: { "retry-after": "120" } }); });
+  const writesA = await day(kv, w, f, 0, 24 * 60);
+  assert.ok(tries.pages > 20 && tries.health > 5, JSON.stringify(tries));
+  const plain = await control(24 * 60);
+  assert.deepEqual([kv.writes, writesA], [plain.total, plain.writes]);
+});
+
+test("timed: upstream failing doesn't stop the sends", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  w.override.set("https://api.github.com/graphql", () => new Response("down", { status: 502 }));
+  await day(kv, w, f, 0, 80);
+  assert.deepEqual([w.timed["pages.yml"], w.timed["health.yml"]], [[15, 75], [15, 75]]);
+});
+
+test("timed: writes failing stop the sends after a short burst; a new key whose writes fail never sends", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  await day(kv, w, f, 0, 50); // sent at 15; last write at 45
+  kv.failWrites = true;
+  await day(kv, w, f, 50, 24 * 60);
+  for (const name of TIMED) {
+    // Due at 65, which is `written` (45) plus 20 minutes: that one send, then
+    // nothing for the rest of the day.
+    assert.deepEqual(w.timed[name].filter((m) => m >= 50), [65], name);
+  }
+  // Writes failing from 61, after the write at 60: the send due at 75
+  // goes, is lost with its write, and goes again each minute until
+  // `written` (60) is 20 minutes old.
+  const kv2 = new FakeKV();
+  const { w: w2, f: f2 } = world();
+  await day(kv2, w2, f2, 0, 61);
+  kv2.failWrites = true;
+  await day(kv2, w2, f2, 61, 300);
+  for (const name of TIMED) assert.deepEqual(w2.timed[name].filter((m) => m >= 61), [75, 76, 77, 78, 79, 80], name);
+  // A new key that can't be saved: no sends at all.
+  const kv3 = new FakeKV();
+  const { w: w3, f: f3 } = world();
+  kv3.failWrites = true;
+  await day(kv3, w3, f3, 0, 120);
+  assert.deepEqual([w3.timed["pages.yml"], w3.timed["health.yml"]], [[], []]);
+});
+
+test("timed: after a gap in the Worker's runs the first write sends nothing, the next heartbeat does", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  await day(kv, w, f, 0, 16); // sent at 15
+  await day(kv, w, f, 100, 116); // no runs from 16 to 99
+  assert.deepEqual([w.timed["pages.yml"], w.timed["health.yml"]], [[15, 115], [15, 115]]);
+});
+
+test("timed: a KV read that throws ends the run before any send", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  await day(kv, w, f, 0, 15);
+  kv.get = async () => { throw new Error("KV down"); };
+  await assert.rejects(run(A, env(kv), at(15), f));
+  assert.deepEqual(w.timed["pages.yml"], []);
+});
+
+test("timed: an upgrade from a state without the sends (simulated by turning them off) keeps the state and sends both at its next writing run", async () => {
+  // 40 minutes of a watcher without the timed sends: its state has no
+  // `timed` field.
+  const kv = new FakeKV();
+  const { w, f } = world();
+  CRONS[A].timed = false;
+  try {
+    await day(kv, w, f, 0, 40);
+  } finally {
+    CRONS[A].timed = true;
+  }
+  const old = JSON.parse(kv.data.get("state:a")!);
+  assert.equal(old.timed, undefined);
+  // The new version: its first writing run (the heartbeat at 45) sends both.
+  await day(kv, w, f, 40, 46);
+  assert.deepEqual(JSON.parse(kv.data.get("state:a")!).entries, old.entries);
+  assert.deepEqual([w.timed["pages.yml"], w.timed["health.yml"]], [[45], [45]]);
+});
+
+test("timed: pages sent, then health rate limited in the same run: pages keeps its send and gets the back-off", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  await day(kv, w, f, 0, 15);
+  w.override.set(HEALTH, () => new Response("slow", { status: 429, headers: { "retry-after": "3600" } }));
+  await day(kv, w, f, 15, 16);
+  assert.deepEqual(timedOf(kv)["pages.yml"], { sent: at(15).toISOString(), retryAt: at(75).toISOString() });
+  assert.deepEqual(w.timed["pages.yml"], [15]);
+});
+
+test("timed: nothing is sent while the update dispatch is rate limited; a later failure of another kind drops a spent back-off", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  await day(kv, w, f, 0, 15);
+  // The update dispatch is rate limited for an hour; the timed sends wait.
+  const st = JSON.parse(kv.data.get("state:a")!);
+  st.dispatch = { pending: true, error: { kind: "rate-limit", message: "429", since: at(10).toISOString() }, retryAt: at(70).toISOString() };
+  kv.data.set("state:a", JSON.stringify(st));
+  await day(kv, w, f, 15, 70);
+  assert.deepEqual([w.timed["pages.yml"], w.timed["health.yml"]], [[], []]);
+  await day(kv, w, f, 70, 71);
+  assert.deepEqual([w.timed["pages.yml"], w.timed["health.yml"]], [[70], [70]], "once it is over, at the run its dispatch writes");
+  // The update dispatch rate limited in this very run, with no retry time:
+  // the timed sends due with it wait too.
+  const kv3 = new FakeKV();
+  const { w: w3, f: f3 } = world();
+  await day(kv3, w3, f3, 0, 15);
+  w3.override.set("https://api.github.com/repos/boltflake/t3code-nix/actions/workflows/update.yml/dispatches", () => new Response("slow", { status: 429 }));
+  await day(kv3, w3, f3, 15, 16, () => { w3.claude = "2.1.888"; });
+  assert.deepEqual([w3.timed["pages.yml"], w3.timed["health.yml"]], [[], []]);
+  // A rate limit, then a 502: the spent retry time goes with it.
+  const kv2 = new FakeKV();
+  const { w: w2, f: f2 } = world();
+  await day(kv2, w2, f2, 0, 15);
+  w2.override.set(PAGES, () => w2.minute === 15 ? new Response("slow", { status: 429 }) : new Response("down", { status: 502 }));
+  await day(kv2, w2, f2, 15, 31);
+  assert.deepEqual([timedOf(kv2)["pages.yml"].error.kind, timedOf(kv2)["pages.yml"].retryAt], ["http", undefined]);
+});
+
+test("timed: a dispatch to a disabled workflow is an http error naming it, not auth", async () => {
+  const kv = new FakeKV();
+  const { w, f } = world();
+  await day(kv, w, f, 0, 15);
+  w.override.set(PAGES, () => Response.json({ message: "Workflow is disabled", documentation_url: "x" }, { status: 403 }));
+  w.override.set(HEALTH, () => Response.json({ message: "Cannot trigger a 'workflow_dispatch' on a disabled workflow" }, { status: 422 }));
+  await day(kv, w, f, 15, 16);
+  const s = timedOf(kv);
+  assert.deepEqual([s["pages.yml"].error.kind, s["health.yml"].error.kind], ["http", "http"]);
+  assert.match(s["pages.yml"].error.message, /HTTP 403: Workflow is disabled/);
+  assert.match(s["health.yml"].error.message, /HTTP 422: Cannot trigger a 'workflow_dispatch' on a disabled workflow/);
+  // Other 403s are still auth, a body or not.
+  for (const res of [() => Response.json({ message: "Resource not accessible by personal access token" }, { status: 403 }), () => new Response("", { status: 403 }), () => new Response("<html>", { status: 403 })]) {
+    const kv2 = new FakeKV();
+    const { w: w2, f: f2 } = world();
+    await day(kv2, w2, f2, 0, 15);
+    w2.override.set(PAGES, res);
+    await day(kv2, w2, f2, 15, 16);
+    assert.equal(timedOf(kv2)["pages.yml"].error.kind, "auth");
+  }
+  assert.equal(disabledWorkflow("Workflow dispatch is disabled for this token"), false);
+  assert.equal(disabledWorkflow("Cannot dispatch a disabled workflow"), true);
+});
+
+test("timed: a rate limit on either holds back the other even when it isn't due", async () => {
+  for (const [limitedOne, other] of [["health.yml", "pages.yml"], ["pages.yml", "health.yml"]]) {
+    // LIMITEDONE fails once at 15 and is sent at 30; OTHER is sent at 15
+    // and 75. At 90 LIMITEDONE is due and rate limited for an hour (to
+    // 150); OTHER, due again at 125, waits for 150 too.
+    const kv = new FakeKV();
+    const { w, f } = world();
+    const url = limitedOne === "pages.yml" ? PAGES : HEALTH;
+    w.override.set(url, () => w.minute === 15 ? new Response("down", { status: 502 })
+      : w.minute === 90 ? new Response("slow", { status: 429, headers: { "retry-after": "3600" } })
+      : (w.timed[limitedOne].push(w.minute), new Response(null, { status: 204 })));
+    await day(kv, w, f, 0, 91);
+    assert.deepEqual([w.timed[limitedOne], w.timed[other]], [[30], [15, 75]]);
+    assert.deepEqual([timedOf(kv)[limitedOne].retryAt, timedOf(kv)[other].retryAt], [at(150).toISOString(), at(150).toISOString()]);
+    await day(kv, w, f, 91, 151);
+    assert.deepEqual([w.timed[limitedOne], w.timed[other]], [[30, 150], [15, 75, 150]]);
+  }
 });

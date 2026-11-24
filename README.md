@@ -216,7 +216,9 @@ Where to see what the flake has at this moment:
   a newer version found and what it's waiting for, a version being tested,
   or an update held and why. A version changed since your last visit gets a
   lightning strike and a small bolt beside it (only the bolt if your system
-  asks for reduced motion).
+  asks for reduced motion). It is rebuilt about hourly, and says
+  "Out of date" when its last check against upstream is over two hours
+  old.
 - **The GitHub Releases**: one per T3 Code version on the latest channel, listing every
   package in that set (see [Following new releases](#following-new-releases)).
 - **`t3code-nix doctor`** on your machine: the versions your build bundles,

@@ -1,5 +1,8 @@
-# The hourly backstop. Outside update.yml's concurrency group, so a waiting
-# dispatch can't replace it. Two independent jobs:
+# The hourly backstop, started about hourly by the watcher (watcher.ts,
+# sendTimed); the schedule below is GitHub's best-effort fallback, which
+# drops runs, and what runs it while the watcher is down. Outside
+# update.yml's concurrency group, so a waiting dispatch can't replace it.
+# Two independent jobs:
 #   dispatch  starts an ordinary update.yml run, so updates still arrive
 #             while the watcher is dead, and a quiet hour's run retries held
 #             versions (see scripts/update.ts); fails on its own

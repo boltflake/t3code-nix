@@ -7,9 +7,10 @@
 // content is the error), the pins in versions/ and the open issues, and
 // prints {observations} for issues.ts:
 //   watcher-stalled  no reply, a cron key's heartbeat older than 30 min, or
-//                    a source or the dispatch failing for over 6 hours
-//   watcher-auth     GitHub or the dispatch reports an auth error (a 401,
-//                    or a 403 that isn't a rate limit)
+//                    a source, the dispatch or a timed send (pages.yml,
+//                    health.yml) failing for over 6 hours
+//   watcher-auth     GitHub, the dispatch or a timed send reports an auth
+//                    error (a 401, or a 403 that isn't a rate limit)
 //   watcher-healthy  none of these (three in a row close watcher-* issues)
 //   update-lag       a version the watcher saw over 60 minutes ago isn't on
 //                    main, its source isn't failing (its entry may be old),
@@ -79,8 +80,9 @@ export function assess(health: any, error: string | null, pins: Record<string, s
   const failing = states.flatMap((s) => [
     ...Object.entries<any>(s.sources ?? {}).filter(([, v]) => v?.error).map(([name, v]) => ({ name, ...v.error })),
     ...(s.dispatch?.error ? [{ name: "dispatch", ...s.dispatch.error }] : []),
+    ...Object.entries<any>(s.timed ?? {}).filter(([, v]) => v?.error).map(([name, v]) => ({ name, timed: true, ...v.error })),
   ]);
-  const auth = failing.filter((f) => f.kind === "auth" && (f.name === "github" || f.name === "dispatch"));
+  const auth = failing.filter((f) => f.kind === "auth" && (f.name === "github" || f.name === "dispatch" || f.timed));
   const stuck = failing.filter((f) => t - Date.parse(f.since) > STUCK_MS);
   if (auth.length) out.push(obs("watcher-auth", null, null, auth.map((f) => `${f.name}: ${f.message}`).sort().join("; ")));
   if (stuck.length) out.push(obs("watcher-stalled", null, null, `failing for over 6 hours: ${stuck.map((f) => f.name).sort().join(", ")}`));

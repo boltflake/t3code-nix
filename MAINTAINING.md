@@ -28,7 +28,10 @@ git checkout wrangler.jsonc
 ```
 
 `GITHUB_TOKEN` is a fine-grained token for this repository only, with
-Actions read and write (for `workflow_dispatch`) and a one-year expiry;
+Actions read and write (for `workflow_dispatch`: the update run on each
+new version, and `pages.yml` and `health.yml` about hourly, since GitHub's
+own schedule drops runs; those ride on the watcher's existing KV writes and
+add none) and a one-year expiry;
 `HEALTH_TOKEN` is any long random string. Then set, in the repository:
 
 - the secret `WATCHER_HEALTH_TOKEN` to the same `HEALTH_TOKEN`;
@@ -57,7 +60,7 @@ variable `CACHIX_CACHE` (the cache's name) is set, and needs the secret
 
 The update runs, the hourly health check and the weekly tooling check
 (`tooling.yml`) open issues and close them by themselves; every kind is
-listed in `PROBLEMS` in `scripts/ci/issues.ts`. These six need explaining:
+listed in `PROBLEMS` in `scripts/ci/issues.ts`. These seven need explaining:
 
 | Issue | What it means | What to do | It closes when |
 | --- | --- | --- | --- |
@@ -65,7 +68,8 @@ listed in `PROBLEMS` in `scripts/ci/issues.ts`. These six need explaining:
 | `downgrade` | Upstream pulled a release, and `main` followed it back | Nothing; it blocks no update | That pin is back at the pulled version or higher |
 | `integrity` | A pin's file changed without a new version | Nothing when the vendor's checksum vouches for the new file, which is then pinned; for grok, which publishes none, check the file, then re-pin it | `main` pins the new file |
 | `guard-review` | A release's help doesn't match the lists in `lib/guard.nix` | Update the lists | A later published run matches |
-| `watcher-auth` | The watcher's GitHub token stopped working (opened by the hourly health check) | Rotate the token | The watcher reads GitHub again |
+| `watcher-auth` | The watcher's GitHub token was refused: reading GitHub, dispatching the update run, or starting `pages.yml` or `health.yml` (opened by the hourly health check) | Rotate the token | Three health checks in a row find the watcher healthy |
+| `watcher-stalled` | `/health` didn't answer, either cron key's state wasn't saved in the last 30 minutes, or a source, the update dispatch, or the hourly start of `pages.yml` or `health.yml` has failed for over 6 hours (a disabled `pages.yml` shows here after 6 hours; a disabled `health.yml` can't report itself, and once the update run re-enables it, the next successful send can clear the error before health reads it. After a rollback to a watcher version without the hourly starts, a start error saved before it stays in `/health` until the next deploy) | Look at the watcher (`/health`, the Worker's logs) | Three health checks in a row find the watcher healthy |
 | `tooling-outdated` | The CI's own tooling has a newer version that nothing else updates (weekly): a GitHub Ubuntu runner image, a Node LTS line, or the pinned actionlint knowing the labels `.github/actionlint.yaml` names | Do what it says, as an ordinary change | The weekly check finds it current |
 
 **`bump-waiting`.** The nixpkgs bump, the NixOS stable pin
