@@ -82,6 +82,36 @@ test("claude: hashes come from the version's manifest", async () => {
   assert.equal(pin.assets["aarch64-linux"].hash, sri("sha256", hex("b")));
 });
 
+test("claude: `latest` is read once per run, with its Last-Modified", async () => {
+  routes[`${CLAUDE}/2.1.5/manifest.json`] = { version: "2.1.5", platforms: { "linux-x64": { checksum: hex("a") }, "linux-arm64": { checksum: hex("b") } } };
+  routes[`${CLAUDE}/latest`] = [200, "2.1.5\n", { "last-modified": "Fri, 13 Nov 2026 12:30:00 GMT" }];
+  await buildVendorPin("claude-code", null, null);
+  // A retry in the same run: the same answer, without asking again.
+  routes[`${CLAUDE}/latest`] = [503, "down"];
+  assert.deepEqual((await buildVendorPin("claude-code", null, null)).released, { at: "2026-11-13T12:30:00.000Z", kind: "published" });
+  assert.equal(fetched.filter((u) => u === `${CLAUDE}/latest`).length, 1);
+});
+
+test("claude: the release time is when `latest` moved, else the manifest's buildDate", async () => {
+  const manifest = { version: "2.1.5", buildDate: "2026-11-13T09:00:00Z", platforms: { "linux-x64": { checksum: hex("a") }, "linux-arm64": { checksum: hex("b") } } };
+  routes[`${CLAUDE}/2.1.5/manifest.json`] = manifest;
+  routes[`${CLAUDE}/latest`] = [200, "2.1.5\n", { "last-modified": "Fri, 13 Nov 2026 12:30:00 GMT" }];
+  assert.deepEqual((await buildVendorPin("claude-code", null, null)).released, { at: "2026-11-13T12:30:00.000Z", kind: "published" });
+  // Pinned by name: `latest` isn't read. An empty name is refused.
+  clearFetched();
+  fetched = [];
+  assert.deepEqual((await buildVendorPin("claude-code", "2.1.5", null)).released, { at: "2026-11-13T09:00:00Z", kind: "built" });
+  assert.ok(!fetched.includes(`${CLAUDE}/latest`));
+  await assert.rejects(buildVendorPin("claude-code", "", null), /unexpected version string/);
+  // A Last-Modified that is missing or isn't an HTTP date: buildDate.
+  for (const headers of [{}, { "last-modified": "yesterday-ish" }, { "last-modified": "2026-11-13" },
+    { "last-modified": "Fri, 31 Feb 2026 12:30:00 GMT" }]) {
+    clearFetched();
+    routes[`${CLAUDE}/latest`] = [200, "2.1.5\n", headers];
+    assert.deepEqual((await buildVendorPin("claude-code", null, null)).released, { at: "2026-11-13T09:00:00Z", kind: "built" });
+  }
+});
+
 test("claude: a manifest for another version is refused", async () => {
   routes[`${CLAUDE}/2.1.5/manifest.json`] = { version: "2.1.4", platforms: {} };
   await assert.rejects(buildVendorPin("claude-code", "2.1.5", null), /manifest is for 2.1.4/);
@@ -410,7 +440,7 @@ test("released: GitHub pins carry the release's published_at", async () => {
   assert.deepEqual(pin.released, { at: "2026-11-13T10:00:00Z", kind: "published" });
 });
 
-test("released: claude's buildDate, grok's Last-Modified, none for the rest", async () => {
+test("released: claude's buildDate (by name), grok's Last-Modified, none for the rest", async () => {
   routes[`${CLAUDE}/2.0/manifest.json`] = { version: "2.0", buildDate: "2026-11-13T09:00:00Z", platforms: { "linux-x64": { checksum: hex("a") }, "linux-arm64": { checksum: hex("b") } } };
   assert.deepEqual((await buildVendorPin("claude-code", "2.0", null)).released, { at: "2026-11-13T09:00:00Z", kind: "built" });
   for (const p of ["linux-x86_64", "linux-aarch64"]) {

@@ -4,7 +4,7 @@
 // and pinned as downloaded, only for a new version (or by hand, with
 // pin.ts); an unchanged storage MD5 reuses the old hash.
 import { cursorVersion, plausibleVersion, VENDOR_URLS } from "../../shared/sources.ts";
-import { allInOrder, checksumsFor, early, fail, getJson, getText, request, sha256Hex, sri, SYSTEMS, UNVERIFIED, type Asset, type Pin, type Released } from "./util.ts";
+import { allInOrder, checksumsFor, early, fail, getJson, getResponse, getText, request, sha256Hex, sri, SYSTEMS, UNVERIFIED, type Asset, type Pin, type Released } from "./util.ts";
 
 const CLAUDE = VENDOR_URLS.claude;
 const GROK = VENDOR_URLS.grok;
@@ -68,11 +68,30 @@ export async function prefetch(url: string): Promise<string> {
 /** Indirection so tests can stand in for the download. */
 export const io = { prefetch };
 
+/** An HTTP date ("Mon, 23 Nov 2026 21:34:39 GMT") as ISO, or null when it
+ * isn't one: it must read back the same, so "31 Feb" isn't 3 March. */
+const httpDate = (s: string | null) => {
+  const d = new Date(s ? Date.parse(s) : NaN);
+  return Number.isFinite(d.getTime()) && d.toUTCString() === s ? d.toISOString() : null;
+};
+
+// The release is the moment the `latest` pointer moves to the version (the
+// GitHub release follows within seconds); the files and the manifest's
+// buildDate are often hours older. A version asked for by name (pin.ts)
+// falls back to buildDate.
 const claude: Resolver = async (version) => {
-  const v = checkVersion(version ?? (await getText(`${CLAUDE}/latest`)).trim());
+  let movedAt: string | null = null;
+  if (version === null) {
+    const latest = await getResponse(`${CLAUDE}/latest`);
+    version = latest.body.toString("utf8").trim();
+    movedAt = latest.headers.get("last-modified");
+  }
+  const v = checkVersion(version);
   const manifest = await getJson(`${CLAUDE}/${v}/manifest.json`);
   if (manifest?.version !== v) fail(`claude manifest is for ${manifest?.version}, not ${v}`);
-  const released: Released | undefined = typeof manifest.buildDate === "string" ? { at: manifest.buildDate, kind: "built" } : undefined;
+  const published = httpDate(movedAt);
+  const released: Released | undefined = published ? { at: published, kind: "published" }
+    : typeof manifest.buildDate === "string" ? { at: manifest.buildDate, kind: "built" } : undefined;
   const assets: Record<string, Asset> = {};
   for (const [system, plat] of [["x86_64-linux", "linux-x64"], ["aarch64-linux", "linux-arm64"]]) {
     assets[system] = {

@@ -502,8 +502,13 @@ test("released: a new version takes the source's time, or `seen` now when it giv
   assert.deepEqual(at(settle({ ...pin("codex", "1.1"), released: { at: "2026-11-13T11:00:00Z", kind: "published" } }), "codex"),
     { at: "2026-11-13T11:00:00.000Z", kind: "published" });
   assert.deepEqual(at(settle(pin("codex", "1.1")), "codex"), { at: NOW.toISOString(), kind: "seen" });
-  // A time after the run, or not a time, is unknown.
+  // A time well after the run, or not a time, is unknown; one just after
+  // (the pointer moved while the run started) is kept.
   assert.equal(at(settle({ ...pin("codex", "1.1"), released: { at: "2026-11-14T00:00:00Z", kind: "published" } }), "codex"), undefined);
+  const after = (ms: number) => new Date(NOW.getTime() + ms).toISOString();
+  assert.deepEqual(at(settle({ ...pin("codex", "1.1"), released: { at: after(15 * 60_000), kind: "published" } }), "codex"),
+    { at: after(15 * 60_000), kind: "published" });
+  assert.equal(at(settle({ ...pin("codex", "1.1"), released: { at: after(15 * 60_000 + 1000), kind: "published" } }), "codex"), undefined);
   assert.equal(at(settle({ ...pin("codex", "1.1"), released: { at: "soon", kind: "built" } }), "codex"), undefined);
   // A version that moved back is `seen` now, whatever its source says.
   assert.deepEqual(at(settle({ ...pin("codex", "0.9"), released: { at: "2026-10-01T00:00:00Z", kind: "published" } }), "codex"),

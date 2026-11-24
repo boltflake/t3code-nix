@@ -45,11 +45,12 @@ export interface Pin {
   released?: Released;
 }
 
-/** `published`: a GitHub release's published_at; `uploaded`: the file's
+/** `published`: a GitHub release's published_at, or when claude's `latest`
+ * pointer moved to the version (its Last-Modified); `uploaded`: the file's
  * Last-Modified (grok), often hours before the version is announced (the
  * `stable` pointer moves later); `built`: a manifest's build time, before the
- * release (claude); `seen`: no time from the source, so the update run that
- * wrote the pin. */
+ * release (claude, when the `latest` time isn't known); `seen`: no time from
+ * the source, so the update run that wrote the pin. */
 export interface Released {
   at: string;
   kind: "published" | "uploaded" | "built" | "seen";
@@ -99,17 +100,22 @@ export function nixpkgsRev(lock: string | object | null): string | null {
   }
 }
 
+/** How far after the run's start a source's time may be: a pointer can
+ * move between the start and its read. */
+const SKEW = 15 * 60 * 1000;
+
 /** The pin as it's kept: `released` copied from the old pin at the same
  * version (so a same-version resolve compares equal); for a new version,
- * the source's time when it's a real time not after `now`, unknown (left
- * out) when it isn't, and `seen` at `now` when the source gives none or the
- * version moved back (its original release time would show a gap of weeks). */
+ * the source's time when it's a real time not after `now` (give or take
+ * SKEW), unknown (left out) when it isn't, and `seen` at `now` when the
+ * source gives none or the version moved back (its original release time
+ * would show a gap of weeks). */
 export function settleReleased(next: Pin, old: Pin | null, now: Date, movedBack: boolean): Pin {
   const { released, ...rest } = next;
   if (old && old.version === next.version) return old.released ? { ...rest, released: old.released } : rest;
   if (movedBack || !released) return { ...rest, released: { at: now.toISOString(), kind: "seen" } };
   const t = Date.parse(released.at);
-  if (!Number.isFinite(t) || t > now.getTime()) return rest;
+  if (!Number.isFinite(t) || t > now.getTime() + SKEW) return rest;
   return { ...rest, released: { at: new Date(t).toISOString(), kind: released.kind } };
 }
 
@@ -279,17 +285,24 @@ export async function request(url: string,
 
 // Within one run, a URL is fetched once: the four t3code pins share two
 // releases, and their SHA256SUMS, tags and licenses are the same files.
-const fetched = new Map<string, Promise<Buffer>>();
+const fetched = new Map<string, Promise<{ body: Buffer; headers: Headers }>>();
 
-/** The body of a GET, fetched once per run. A failed fetch isn't kept. */
-export function getBytes(url: string): Promise<Buffer> {
+/** A GET's body and headers, fetched once per run. A failed fetch isn't
+ * kept. */
+export function getResponse(url: string): Promise<{ body: Buffer; headers: Headers }> {
   let p = fetched.get(url);
   if (!p) {
-    p = request(url);
+    let headers = new Headers();
+    p = request(url, { onHeaders: (h) => { headers = h; } }).then((body) => ({ body, headers }));
     p.catch(() => fetched.delete(url));
     fetched.set(url, p);
   }
   return p;
+}
+
+/** The body of a GET, fetched once per run. */
+export async function getBytes(url: string): Promise<Buffer> {
+  return (await getResponse(url)).body;
 }
 
 export async function getText(url: string): Promise<string> {
