@@ -48,6 +48,8 @@
     "provider-wrappers"
     "as-shipped"
     "relay-client"
+    "t3code-telemetry-wrapper"
+    "t3-telemetry-sends"
     "completions"
     "boat-self-update-off"
     "fx-upgrade-off"
@@ -73,6 +75,7 @@
     "t3code-nightly-electron-bundled"
     "t3code-nightly-electron-nixpkgs"
     "t3code-nightly-runtime-libs"
+    "t3-nightly-telemetry-sends"
   ];
   # They read a vendor's command line, which nixpkgs doesn't change; their
   # notes would open guard-review issues against main's versions.
@@ -105,5 +108,11 @@
     "electron-choice"
     "electron-fallback"
     "electron-runtime"
+    # Home Manager (master only, lib/hm-checks.nix); the stable suite's
+    # module-eval covers the shared core's NixOS-stable selection.
+    "hm-module-eval"
+    "hm-nixos-eval"
+    "hm-unit-parity"
+    "hm-template"
   ];
 }

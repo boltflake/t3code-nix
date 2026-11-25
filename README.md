@@ -25,6 +25,7 @@ This flake packages the [<img src="docs/logos/t3code.png" height="16" alt=""> T3
 - [Setup](#setup)
 - [Packages](#packages)
 - [The NixOS module](#the-nixos-module)
+- [The Home Manager module](#the-home-manager-module)
 - [Running the server](#running-the-server)
 - [Binary cache](#binary-cache)
 - [Unfree packages](#unfree-packages)
@@ -126,6 +127,50 @@ desktop app:
 
 Then pair your devices with `t3 pair` (see [Running the server](#running-the-server)).
 All module options are documented in [The NixOS module](#the-nixos-module).
+
+</details>
+
+<details id="home-manager">
+<summary><b>Home Manager</b> (NixOS or another Linux distro)</summary>
+<br>
+
+Add t3code-nix and its Home Manager module:
+
+```nix
+{
+  inputs.t3code-nix.url = "github:boltflake/t3code-nix";
+  # Don't add `inputs.t3code-nix.inputs.nixpkgs.follows`: see "Binary cache".
+
+  outputs = { nixpkgs, home-manager, t3code-nix, ... }: {
+    homeConfigurations.amber = home-manager.lib.homeManagerConfiguration {
+      pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      modules = [
+        ./home.nix                                    # your existing Home Manager configuration
+        t3code-nix.homeModules.default
+        {
+          programs.t3code-nix = {
+            enable = true;
+
+            # Optional: uncomment what you need
+            # providers = [ "codex" "claude" ];       # install only these providers (default: all ten)
+            # cli.enable = true;                      # include the headless `t3` CLI
+            # server.enable = true;                   # keep T3 Code running in the background, as your systemd user service
+            # server.home = "%h/.t3-server";          # its own T3 home, beside the app's ~/.t3
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+With Home Manager as a NixOS module, put `t3code-nix.homeModules.default`
+in `home-manager.users.<name>.imports` (or `home-manager.sharedModules`)
+instead. On another distro, set up its GPU drivers first; that, the
+binary cache and the rest are in
+[The Home Manager module](#the-home-manager-module).
+`nix flake init -t github:boltflake/t3code-nix#home-manager` gives you a
+standalone Home Manager flake to fill in.
 
 </details>
 
@@ -310,6 +355,7 @@ What each package is built from is in
 | `providersOnPath` | `true` | puts the bundled providers on `PATH` too, at low priority |
 | `electron` | `null` (the package's own: `"auto"`) | which Electron the desktop app runs on: `"auto"`, `"bundled"`, `"nixpkgs"` or an Electron package (see [The desktop app's Electron](#the-desktop-apps-electron)) |
 | `acpRuntimes` | `null` (the package's own: none) | runtimes for agents T3 Code installs from the ACP registry: `"nodejs"`, `"uv"` (see [ACP registry agents](#acp-registry-agents)) |
+| `telemetry.enable` | `true` | whether T3 Code sends its usage data; `false` turns it off for the app, the CLI and the server (see [Usage data](#usage-data)) |
 | `agentTools.boat.enable` | `false` | installs [boat](#agent-tools), with or without the app |
 | `agentTools.agent-browser.enable` | `false` | installs [agent-browser](#agent-tools), with or without the app |
 | `agentTools.agent-browser.package` | this flake's `agent-browser` | which agent-browser: an `.override { … }` of it, or `pkgs.agent-browser` from the overlay |
@@ -343,18 +389,260 @@ programs.t3code = {
 
 - **A package:** take one from the flake
   (`t3code-nix.packages.${system}.t3code`).
-- **Home Manager:** put the package in `home.packages`
+- **Home Manager:** use [its module](#the-home-manager-module), or put the
+  package in `home.packages`
   (`home.packages = [ t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.t3code ];`).
-  There's no Home Manager module.
 - **The overlay**, `t3code-nix.overlays.default`, puts every package under
   `pkgs.t3code-nix` (`pkgs.t3code-nix.t3`, `pkgs.t3code-nix.codex`), and
   the app and most providers at the top level too. Which ones, and why, is
   under [The overlay](#the-overlay).
 
+### Usage data
+
+T3 Code's desktop app and server send product usage events (provider,
+model, token counts and the like; these carry no prompts, responses or file
+contents) to T3 Code's own endpoint, `ingest.t3.codes`; and, when its
+build has a tracing endpoint, T3 Connect relay connection traces, to
+Axiom. Upstream describes what's in them:
+[Product usage data](https://github.com/pingdotgg/t3code/blob/main/docs/user/telemetry.md).
+It's on, as upstream ships it. To turn it off:
+
+```nix
+programs.t3code.telemetry.enable = false;   # programs.t3code-nix in Home Manager
+```
+
+Without the module, the same on the package:
+`t3code-nix.packages.${system}.t3code.override { telemetry = false; }`
+(or `t3`, `t3code-free`, the overlay's `pkgs.t3code`).
+
+- **What it does:** the app, the CLI and the server start T3 Code with
+  `T3CODE_TELEMETRY_ENABLED=false`. A value you set yourself where the
+  program starts (exported in the terminal you start it from, the server's
+  `environmentFile`, or the user manager's environment) wins; an empty or
+  blank one counts as unset. The desktop app started from your desktop's
+  menu already has the value, so a `T3CODE_TELEMETRY_ENABLED` in your shell
+  profile doesn't change it there, unless your desktop session's
+  environment has it too (`~/.profile`, `environment.d`, Home Manager's
+  `home.sessionVariables`). It doesn't set `DO_NOT_TRACK`, which would
+  reach every agent T3 Code starts.
+- **Other ways:** `DO_NOT_TRACK=1` in T3 Code's environment (in your shell
+  profile, for the desktop app) turns it off too, and wins over
+  `T3CODE_TELEMETRY_ENABLED=true`. So does a
+  [managed policy](https://github.com/pingdotgg/t3code/blob/main/docs/user/managed-policy.md)
+  with `limits.telemetry: false` in `/etc/t3code/policy.json`, for every
+  user, whatever the environment says.
+- **When it applies:** at the next start. A rebuild or switch doesn't
+  restart a running server: `systemctl --user restart t3code-server`
+  (after `systemctl --user daemon-reload` if the unit changed), and quit
+  the desktop app fully and start it again.
+- **Turning it back on** (`true`, the default) only stops setting the
+  variable: an override with `telemetry = false`, a
+  `T3CODE_TELEMETRY_ENABLED=false` or `DO_NOT_TRACK=1` set elsewhere, or
+  a policy still keep it off. (The desktop app keeps the last value it
+  saw in a cache, which it replaces once it has read your login shell: if
+  it can't read it, a start can still be off.)
+- **Agent feedback**, when you've turned it on in T3 Code, is kept on your
+  machine and not sent while usage data is off. (Reports you send are
+  separate from usage events, and can include what you chose to attach.)
+- **The desktop app's own `t3`:** the app writes a `t3` launcher of its own
+  (`~/.t3/bin/t3`, and on first launch it may link it into `~/.local/bin`)
+  that runs T3 Code without this flake's wrapper: a `t3 serve` started
+  through it doesn't get this setting (nor the bundled providers). The
+  `t3` commands agents run through it inherit the app's server's
+  environment, so they follow its setting. Use the
+  module's `t3` (`cli.enable`) instead; the doctor warns about a `t3` on
+  `PATH` that isn't from Nix.
+- **Not covered:** OpenTelemetry export to endpoints you configure
+  (Settings → Diagnostics, `T3CODE_OTLP_*`), which is yours; the mobile
+  app, which has its own switches (and its activity publishing); the
+  hosted web app, which has no switch (a browser opened from your own
+  T3 Code server follows that server); a T3 Code backend on another
+  machine, or one over SSH with upstream's downloads
+  ([`runtimeCompat`](#t3-code-over-ssh-runtimecompat)), which follows its
+  own environment; [upstream's own service](#upstreams-own-service); and
+  a T3 Code installed outside this flake.
+- **The doctor** says what this build does, and warns when your shell sets
+  a value that turns it back on or that T3 Code rejects, or when the
+  running server started without this build's setting.
+
+## The Home Manager module
+
+`programs.t3code-nix` (`t3code-nix.homeModules.default`, also as
+`homeManagerModules`) has the NixOS module's options that make sense for one
+user, with the same names, defaults and meaning: `enable`, `channel`,
+`nixpkgs`, `providers`, `excludeProviders`, `providersOnPath`, `electron`,
+`acpRuntimes`, `telemetry.enable` ([Usage data](#usage-data)), `agentTools.*`,
+`cli.*`, `package`, and `server.*` without
+`users` and `openFirewall`. It installs into your profile (`home.packages`),
+and `server.enable` writes `t3code-server` as your own systemd user service.
+It works on NixOS and on other Linux distros (x86_64 and aarch64); it's tested
+with Home Manager's master branch, and should work with release-26.05.
+
+The NixOS module takes `programs.t3code-nix` too, as another name for
+`programs.t3code`, so a block of these options reads the same in both.
+
+### What Home Manager can't do
+
+These are machine settings. Setting one under Home Manager stops the
+switch with a message saying where it lives.
+
+| NixOS option | Under Home Manager |
+| --- | --- |
+| `binaryCache` | add the [binary cache](#binary-cache) yourself (below) |
+| `claudeCodePolicy` | write the policy file yourself (below), or let the NixOS module do it |
+| `runtimeCompat` | nix-ld is a system setting: on NixOS, the NixOS module's; elsewhere your system's own loader runs T3 Code's downloads (best effort) |
+| `server.openFirewall` | open the port in your system's firewall |
+| `server.users` | the unit is yours alone |
+
+**With Home Manager as a NixOS module** and this flake's NixOS module
+imported (no `programs.t3code.enable` needed), the NixOS module does both
+for every Home Manager user with `programs.t3code-nix`: it writes the
+Claude Code policy when one of them bundles claude-code, and adds the
+binary cache when one of them uses the app, the server or an agent tool,
+by its own `claudeCodePolicy` and `binaryCache` (both on by default). A
+user whose `enable` (or providers) depends on what those settings write,
+say on `osConfig.environment.etc`, makes an infinite recursion; that isn't
+supported.
+
+**Home Manager on NixOS, standalone** (not as a NixOS module): the NixOS
+module can't see your Home Manager config, so add these lines to the NixOS
+config yourself:
+
+```nix
+# The Claude Code policy (as the NixOS module writes it: a copy, not a link).
+environment.etc."claude-code/managed-settings.d/10-t3code-nix.json" = {
+  mode = "0444";
+  text = builtins.toJSON {
+    env = { DISABLE_UPDATES = "1"; DISABLE_AUTOUPDATER = "1"; DISABLE_INSTALLATION_CHECKS = "1"; };
+  };
+};
+# The binary cache.
+nix.settings = {
+  substituters = [ "https://t3code-nix.cachix.org" ];
+  trusted-public-keys = [ "t3code-nix.cachix.org-1:FwZvqgRcnUjCSEUmdosysof1pTedbm/TTmlk8IeDsJA=" ];
+};
+```
+
+**On another distro:** put the cache's two values in `/etc/nix/nix.conf`
+as `extra-substituters` and `extra-trusted-public-keys` and restart the
+daemon (see [Binary cache](#binary-cache)), and the policy, the JSON
+`{"env":{"DISABLE_UPDATES":"1","DISABLE_AUTOUPDATER":"1","DISABLE_INSTALLATION_CHECKS":"1"}}`,
+in `/etc/claude-code/managed-settings.d/10-t3code-nix.json`. `t3code-nix
+doctor` checks both and says which fix applies where you are.
+
+### Other Linux distros
+
+- **GPU drivers.** The desktop app is Electron and needs your system's
+  graphics drivers. Set up Home Manager's `targets.genericLinux.gpu`
+  (drivers in `/run/opengl-driver` after a one-time `sudo` step, no
+  wrapper), as Home Manager recommends. Or, if you use Home Manager's nixGL
+  (`targets.genericLinux.nixGL.packages`), the module runs the desktop app
+  through it. nixGL sets `LD_LIBRARY_PATH` and driver variables, which
+  everything the app starts inherits: its server, the providers, its
+  terminal and the commands agents run there, your system's own programs
+  included, which may then load Nix's graphics libraries. That's one more
+  reason to prefer `targets.genericLinux.gpu`. Don't set up both (Home
+  Manager warns).
+- **User namespaces.** Electron's sandbox, like Chromium's, needs
+  unprivileged user namespaces. Where they're restricted (Ubuntu 23.10 and
+  later, by default), the app quits at start with "The SUID sandbox helper
+  binary was found, but is not configured correctly", asking for
+  `chrome-sandbox` to be owned by root with mode 4755. That can't be done
+  in the Nix store, and isn't the fix: turn the restriction off, or allow
+  `userns` for the app in an AppArmor profile, as the note under
+  [Agent tools](#agent-tools) says for agent-browser. (Tested on Ubuntu:
+  the app quits with the restriction on and starts with it off.)
+- **Starting the server at boot** needs lingering, which Home Manager can't
+  set: `loginctl enable-linger $USER` (on NixOS, `users.users.<name>.linger
+  = true`).
+- **The overlay:** standalone Home Manager imports its own nixpkgs, so an
+  overlay goes in `nixpkgs.overlays` in your Home Manager config, not on
+  the `pkgs` you pass in. The module itself needs no overlay.
+
+### Home Manager's own `programs.t3code`
+
+Home Manager has a `programs.t3code` of its own (settings, keybindings,
+themes and a server). It stays usable beside this module, for its
+settings, keybindings and themes. When its `enable` is on:
+
+- With this module's app on, its `package` becomes `null` (below
+  `mkDefault`), so it doesn't install a second app; its settings still
+  apply. If you set its `package` anyway, the switch stops, naming both.
+- With only this module's server on, its `package` stays: you can keep its
+  app and use this server. This module's `t3` wins in your profile.
+- Its server and this module's server can't both be on (they would contend
+  for port 3773 and `~/.t3`); the switch stops with a message. Its server
+  with this module's app (and not this module's server) stops too: use
+  `programs.t3code-nix.server.enable`.
+- Its settings, keybindings and themes go to `~/.t3/userdata`: the desktop
+  app's home, not a separate `server.home`. Its `userSettings` are written
+  to the Nix store, even in its mutable mode, so keep secrets out of them.
+  When you remove its module, its mutable settings files and the themes it
+  copied stay in `~/.t3` (the links of its immutable ones go).
+
+On a Home Manager without that module, none of this applies.
+
+### The server under Home Manager
+
+Everything in [Running the server](#running-the-server) applies, with these
+differences:
+
+- **Switching.** The unit is wanted by `default.target`. With Home
+  Manager's default `systemd.user.startServices` (`sd-switch`) and your user
+  manager running, the first switch starts it. A switch to a new version
+  doesn't restart a running server (`X-SwitchMethod = keep-old`): there's
+  one user manager and one server across all your sessions, so the new
+  version starts at the unit's next start (a reboot with lingering, your
+  first session after the manager stopped, or `systemctl --user restart
+  t3code-server`). Logging in again while the manager runs doesn't.
+  Rollbacks work the same way. `sd-switch` is the supported mode: with
+  `startServices = "suggest"`, Home Manager only prints what to do (and its
+  suggestions ignore `keep-old`), and with your user manager not running,
+  nothing is reloaded. Then run `systemctl --user daemon-reload`, and
+  start, restart or stop `t3code-server` yourself.
+- **`systemd.user.enable`** must be on (the default on Linux): it writes
+  the unit, and the switch stops without it.
+- **First boot with lingering** (Home Manager as a NixOS module): your user
+  manager can start before Home Manager's activation writes the unit; the
+  activation then starts it. With `home-manager.startAsUserService`, the
+  same should hold, untested.
+- **Turning it off:** the next switch removes the unit and stops it; your
+  T3 home and its [database copies](#database-copies) stay. When no switch
+  will stop it (removing Home Manager or your `home-manager.users.<name>`,
+  rolling back to a generation from before the module, or turning off
+  `systemd.user.enable` in the same switch), switch first to a generation
+  with the server off, then remove. If that's no longer possible:
+  `systemctl --user disable --now t3code-server`, delete
+  `t3code-server.service` from `systemd/user/` in Home Manager's
+  `xdg.configHome` (`~/.config` unless you changed it) and its link from
+  that folder's `default.target.wants/`, and run
+  `systemctl --user daemon-reload`.
+- **Moving between servers** (the NixOS module's, upstream's own, Home
+  Manager's own or this one): the checks see the configuration, not what's
+  running. Stop the old one first, then check with `systemctl --user status
+  t3code-server` (and `t3code-nix doctor`) that the right unit runs.
+- **Both modules' servers** for the same user, with Home Manager as a NixOS
+  module: the Home Manager module warns. Your unit, in
+  `~/.config/systemd/user`, shadows the system's for you; other users may
+  still run the system's on the same port. The doctor says which one
+  systemd loaded.
+- **Several users on one machine** each need their own `port` (two on
+  3773 can't both start, whichever module runs each), and their own T3
+  home.
+- **`environmentFile`** must be readable by you: a user unit reads it as
+  you.
+- **Tailscale Serve** is supported with Home Manager as a NixOS module and
+  `services.tailscale` there (the unit gets its `tailscale`, and the switch
+  stops without it). Elsewhere `t3` looks for `tailscale` on the `PATH` it
+  reads; untested. Its HTTPS port is the machine's, so two users serving on
+  the same `tailscaleServe.port` contend.
+
 ## Running the server
 
 `programs.t3code.server` runs this flake's `t3 serve` as a systemd user
 service, `t3code-server`, so your other devices can reach this machine.
+Home Manager's `programs.t3code-nix.server` runs the same, as your own
+user service (see [The server under Home Manager](#the-server-under-home-manager)).
 
 - It has the same channel and providers as the app.
 - It needs no nix-ld, and its version comes from the flake like everything
@@ -435,9 +723,10 @@ tunnel), and `t3 connect logout` signs out.
 (`journalctl --user -u t3code-server`), pairing details included, so
 whoever can read your journal can read those too.
 
-**Upgrades.** A rebuild doesn't restart a running server, since that would
-end any agent turns it's running. The new version starts the next time the
-server does (at boot, or at login without linger), or when you run
+**Upgrades.** A rebuild (or a Home Manager switch) doesn't restart a
+running server, since that would end any agent turns it's running. The new
+version starts the next time the server does (at boot, or at your first
+login after your user manager stopped, without linger), or when you run
 `systemctl --user restart t3code-server`.
 
 ### Database copies
@@ -541,8 +830,10 @@ Three ways to use it:
 
 - **The NixOS module** adds it whenever it installs anything: the app,
   the server or an agent tool (`programs.t3code.binaryCache`, on by
-  default). It takes effect from the rebuild after the one that turns it
-  on.
+  default), and for Home Manager users with `programs.t3code-nix` when Home
+  Manager is a NixOS module. It takes effect from the rebuild after the one
+  that turns it on. The Home Manager module can't add it: see
+  [What Home Manager can't do](#what-home-manager-cant-do).
 - **`nix run` and other flake commands** are offered it by this flake's
   `nixConfig`. Nix asks first (or pass `--accept-flake-config`), and then
   uses it only if you're in `trusted-users` or the machine already trusts
@@ -670,8 +961,8 @@ same revision, you still get a second copy of the libraries.
 
 ## When something isn't working: `t3code-nix doctor`
 
-`programs.t3code.enable` (or `server.enable`) installs `t3code-nix
-doctor`, which checks the usual reasons T3 Code or a provider misbehaves
+`programs.t3code.enable` (or `server.enable`) in the NixOS module, or
+`programs.t3code-nix.enable` in the Home Manager module, installs `t3code-nix doctor`, which checks the usual reasons T3 Code or a provider misbehaves
 on NixOS, usually in a few seconds (asking claude about its machine
 policy can take up to 30). Without the module, run
 `nix run github:boltflake/t3code-nix#doctor`. That one doesn't know your
@@ -1169,7 +1460,9 @@ downloads.
 
 ### Supported systems
 
-`x86_64-linux` and `aarch64-linux`.
+`x86_64-linux` and `aarch64-linux`: NixOS, and other Linux distros with Nix
+(the packages, the overlay and [the Home Manager
+module](#the-home-manager-module), given GPU drivers for the desktop app).
 
 ## Maintainer notes
 

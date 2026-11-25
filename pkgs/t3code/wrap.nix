@@ -29,10 +29,23 @@
 #
 # T3 Connect's relay client is nixpkgs' cloudflared, named by
 # T3CODE_CLOUDFLARED_PATH (unless the user sets it to something; t3 takes an
-# empty or blank one as unset, so the wrapper does too, for ASCII blanks).
+# empty or blank one as unset, so the wrapper does too, for whitespace as
+# the shell's locale reads [:space:]).
 # t3 looks there before its own downloads in ~/.t3/tools/cloudflared and
 # before PATH, so an older download (from upstream's install) is never used
 # and none is made. It's on PATH too.
+#
+# T3 Code's usage data (product events and relay traces, upstream's
+# docs/user/telemetry.md) is on unless turned off:
+#
+#   t3code.override { telemetry = false; }
+#
+# which starts every program here with T3CODE_TELEMETRY_ENABLED=false when
+# the variable is unset, empty or only whitespace (as the shell's locale
+# reads [:space:]; T3 Code takes an empty one as unset, so usage data would
+# stay on). Any other value is the user's and stays as it is. DO_NOT_TRACK
+# is never set: it would reach every agent T3 Code starts. With the
+# default, the wrappers are as without this.
 #
 # The CLI refuses `t3 update`, `t3 service install`, `t3 up` and plain
 # `t3 connect` (lib/guard.nix); for upstream's own service on purpose (with
@@ -94,6 +107,7 @@ let
       acpRuntimes ? [ ],
       guard,
       allowUpstreamService ? false,
+      telemetry ? true,
       # Put into the name: "-free" for t3code-free and t3-free.
       variant ? "",
       # The CLI inside the desktop app (withCli): the same channel's unwrapped
@@ -192,6 +206,14 @@ let
         ]
       );
       cloudflaredRun = ''case "''${T3CODE_CLOUDFLARED_PATH-}" in *[![:space:]]*) ;; *) export T3CODE_CLOUDFLARED_PATH=${cloudflared}/bin/cloudflared ;; esac'';
+      telemetryRun = ''case "''${T3CODE_TELEMETRY_ENABLED-}" in *[![:space:]]*) ;; *) export T3CODE_TELEMETRY_ENABLED=false ;; esac'';
+      # After cloudflaredRun on the same line, so that with the default the
+      # wrappers' build script (and so the derivation) is unchanged.
+      telemetryFlags =
+        if !builtins.isBool telemetry then
+          throw "t3code: telemetry takes true or false, not ${builtins.typeOf telemetry}"
+        else
+          lib.optionalString (!telemetry) " --run ${lib.escapeShellArg telemetryRun}";
 
       # The CLI inside the desktop app.
       innerCli =
@@ -229,7 +251,7 @@ let
             ${lib.concatStringsSep " " guardFlags} \
             --prefix PATH : ${pathFlag} \
             ${lib.escapeShellArgs runtimeFlags} \
-            --run ${lib.escapeShellArg cloudflaredRun} \
+            --run ${lib.escapeShellArg cloudflaredRun}${telemetryFlags} \
             ${lib.escapeShellArgs browserFlags}
         done
       ''
@@ -244,7 +266,7 @@ let
             ${lib.concatStringsSep " " (lib.optional (!allowUpstreamService) guard.refuseT3)} \
             --prefix PATH : ${pathFlag} \
             ${lib.escapeShellArgs runtimeFlags} \
-            --run ${lib.escapeShellArg cloudflaredRun} \
+            --run ${lib.escapeShellArg cloudflaredRun}${telemetryFlags} \
             ${lib.escapeShellArgs (browserFlagsFor "1" cliPreviewBrowser)}
         ''
         + completions "${innerCli}/bin/t3"
@@ -262,6 +284,9 @@ let
         previewBrowser = if withPreviewBrowser then previewBrowser else null;
         cliPreviewBrowser = if withCli && withPreviewBrowser then cliPreviewBrowser else null;
         inherit withCli unknownArgMessage;
+        # Whether usage data is left on (false: turned off), and the line that
+        # turns it off (for the telemetry-wrapper check).
+        inherit telemetry telemetryRun;
         # For the preview-browser-link check.
         inherit linkPreviewBrowser;
       };
