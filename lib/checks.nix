@@ -6025,6 +6025,8 @@ let
     # The status page's package list is checked against these, and the
     # workflows' and actions' wiring that tests read.
     cp ${../README.md} $out/README.md
+    # status.ts copies the link preview's image into the site.
+    mkdir $out/docs && cp ${../docs/social-card.png} $out/docs/social-card.png
     # Not the snapshot: only the stable checks read it, so moving it changes
     # no other check (the equivalence step relies on that).
     cp -r ${
@@ -6052,7 +6054,7 @@ let
   # and composite actions for security problems, offline (the sandbox has no
   # GitHub API) and failing on a file it can't read; zizmor also on the
   # Dependabot config (its cooldown audit wants 7 days); and
-  # shellcheck on scripts/ci/*.sh, which actionlint doesn't see. The
+  # shellcheck on scripts/**/*.sh, which actionlint doesn't see. The
   # copy has no .git, so the files are found and named. Findings we accept are
   # ignored where they occur, with the reason next to them (.github/zizmor.yml
   # has the settings).
@@ -6066,7 +6068,7 @@ let
           pkgs.zizmor
           pkgs.util-linux # unshare, for tests/smoke.test.ts
           pkgs.jq # ci.yml's `tested` script, run by tests/ci.test.ts
-          pkgs.shellcheck # scripts/ci/*.sh (actionlint checks only run: steps)
+          pkgs.shellcheck # scripts/**/*.sh (actionlint checks only run: steps)
         ];
       }
       ''
@@ -6087,8 +6089,8 @@ let
         # Its config names the runner labels it doesn't know yet.
         actionlint -config-file .github/actionlint.yaml "''${workflows[@]}"
         zizmor "''${workflows[@]}" "''${actions[@]}" .github/dependabot.yml
-        found=$(find scripts/ci -name '*.sh')
-        [ -n "$found" ] || { echo "no scripts/ci/*.sh found"; exit 1; }
+        found=$(find scripts -name '*.sh')
+        [ -n "$found" ] || { echo "no scripts/**/*.sh found"; exit 1; }
         mapfile -t shells <<< "$found"
         shellcheck "''${shells[@]}"
         # The linters still catch something with these settings: a broken

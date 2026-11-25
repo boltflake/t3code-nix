@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import vm from "node:vm";
-import { escape, html, minifyCss, minifyJs, SCRIPT, SCRIPT_HASH, STYLE, utc } from "../scripts/status-page.ts";
+import { escape, html, minifyCss, minifyJs, PREVIEW, SCRIPT, SCRIPT_HASH, siteUrl, STYLE, utc } from "../scripts/status-page.ts";
 import type { Delivery, Row, StableView } from "../scripts/status.ts";
 import type { Live, PinState } from "../scripts/status-live.ts";
 
@@ -27,13 +27,31 @@ test("page: nothing loaded from anywhere, the policy, the title and the mark", (
   const page = html([row("codex", { notes: "https://github.com/openai/codex/releases/tag/v1.0" })], "o/r", live({ codex: { state: "up-to-date" } }), "id1");
   const urls = [...page.matchAll(/(?:https?:)?\/\/[^\s"'<>)]+/g)].map((m) => m.index!);
   assert.ok(urls.length > 0);
-  for (const at of urls) assert.match(page.slice(Math.max(0, at - 6), at), /href="$/, `a URL outside an href: ${page.slice(at, at + 60)}`);
+  // Links, and the link preview's address and image, which only a site
+  // showing the preview reads.
+  for (const at of urls) assert.match(page.slice(Math.max(0, at - 40), at), /(?:href="|<meta property="og:(?:url|image)" content=")$/, `a URL outside an href or the preview's tags: ${page.slice(at, at + 60)}`);
   assert.ok(!/\bsrc=|url\((?!#(?:hatch|mark-blur)\))|@import|<link\b|<img\b|<iframe\b/i.test(page), "nothing loaded");
   assert.ok(page.includes(`content="default-src 'none'; style-src 'unsafe-inline'; script-src '${SCRIPT_HASH}'; connect-src 'self'; base-uri 'none'; form-action 'none'"`));
   assert.equal(SCRIPT_HASH, `sha256-${createHash("sha256").update(page.match(/<script>([\s\S]*?)<\/script>/)![1]).digest("base64")}`);
   assert.equal(SCRIPT.split("fetch(").length, 2, "one fetch, of the site's own live.json");
   assert.ok(SCRIPT.includes(`fetch("live.json?t=" + Date.now()`));
   assert.ok(page.includes("<title>Package status · t3code-nix</title>"));
+  // The link preview: a large image card, at the site's absolute address.
+  assert.equal(siteUrl("Boltflake/t3code-nix"), "https://boltflake.github.io/t3code-nix/");
+  for (const tag of [
+    '<meta property="og:type" content="website">',
+    '<meta property="og:title" content="Package status · t3code-nix">',
+    '<meta property="og:url" content="https://o.github.io/r/">',
+    '<meta property="og:image" content="https://o.github.io/r/social-card.png">',
+    '<meta property="og:image:type" content="image/png">',
+    '<meta property="og:image:width" content="1200">',
+    '<meta property="og:image:height" content="630">',
+    '<meta name="twitter:card" content="summary_large_image">',
+  ]) assert.ok(page.includes(tag), tag);
+  assert.ok(page.includes(`<meta property="og:image:alt" content="${escape(PREVIEW.alt)}">`));
+  assert.ok(page.includes(`<meta name="twitter:image:alt" content="${escape(PREVIEW.alt)}">`), "X doesn't read og:image:alt");
+  assert.ok(page.includes("packaged for Nix within minutes: each package&#39;s version"), "escaped");
+  assert.ok(page.includes(`<meta property="og:description" content="${escape(PREVIEW.description)}">`) && page.includes(`<meta name="description" content="${escape(PREVIEW.description)}">`));
   assert.match(page, /<header class="top">\n<div class="title"><a class="brand" href="https:\/\/github\.com\/o\/r"><svg class="mark"[^]*?<span>t3code-nix<\/span><\/a><div class="crumb"><span class="slash" aria-hidden="true">\/<\/span><h1>Package status<\/h1><\/div><\/div>/, "the title is in the header, after the name");
   assert.ok(!page.includes("packaged for Nix: the versions on"), "no intro line");
   assert.match(page, /<svg class="mark" viewBox="0 0 100 100" aria-hidden="true">/);

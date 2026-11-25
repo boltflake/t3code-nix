@@ -8,7 +8,8 @@
 //
 // Reads the pins and their history at REF (default HEAD) from git, and the
 // watcher's /health reply and the live job's reads (status-reads.ts) when
-// given. Writes OUT_DIR/index.html, OUT_DIR/status.json, OUT_DIR/live.json and
+// given. Writes OUT_DIR/index.html, OUT_DIR/status.json, OUT_DIR/live.json,
+// OUT_DIR/social-card.png (the link preview's image) and
 // OUT_DIR/badges/<package>.json, and prints {digest, live, error, deploy,
 // fail} as JSON: `live` false when the reads were missing or unusable, with
 // why, and whether to deploy against the live site's status.json (--site;
@@ -23,7 +24,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { git, releaseNotes, tryRun, type Pin, type Released, shownVersion } from "./lib/util.ts";
 import { REPO } from "./ci/gh.ts";
-import { html, KIND, median } from "./status-page.ts";
+import { html, KIND, median, PREVIEW } from "./status-page.ts";
 import { liveView, type OpenIssue, type Run } from "./status-live.ts";
 import { differing, SNAPSHOT } from "./lib/snapshot.ts";
 import { CHANNELS, electronNote, type Channel, type Reader } from "./lib/electron-fallback.ts";
@@ -313,10 +314,10 @@ export function badge(row: Row): { schemaVersion: 1; label: string; message: str
 
 /** SHA-256 over every file but status.json, sorted by name, each as
  * name\0length\0bytes, then status.json without its digest, the same way. */
-export function digest(files: Record<string, string>, status: unknown): string {
+export function digest(files: Record<string, string | Buffer>, status: unknown): string {
   const h = createHash("sha256");
-  const add = (name: string, text: string) => {
-    const bytes = Buffer.from(text, "utf8");
+  const add = (name: string, text: string | Buffer) => {
+    const bytes = typeof text === "string" ? Buffer.from(text, "utf8") : text;
     h.update(`${name}\0${bytes.length}\0`);
     h.update(bytes);
   };
@@ -351,7 +352,10 @@ export function build(out: string, ref = "HEAD", repo = REPO, reads: LiveReads |
   const stable = stableView(ref, reads?.issues ?? null);
   const base = { packages: list, live, stable, delivery: medianDelivery(all) };
   const id = dataId(base);
-  const files: Record<string, string> = { "index.html": html(list, repo, live, id, stable, base.delivery) };
+  const files: Record<string, string | Buffer> = { "index.html": html(list, repo, live, id, stable, base.delivery) };
+  // The link preview's image, from this checkout like the page's code
+  // (scripts/social-card.sh renders it).
+  files[PREVIEW.image] = readFileSync(new URL("../docs/social-card.png", import.meta.url));
   for (const r of list) files[`badges/${r.name}.json`] = `${JSON.stringify(badge(r))}\n`;
   // All an open tab checks for (see status-page.ts SCRIPT): the page's id and
   // the check time, in a few bytes instead of the whole status.json.

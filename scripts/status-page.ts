@@ -445,9 +445,25 @@ function section(id: string, title: string, count: number | null, body: string, 
 </section>`;
 }
 
+/** The site's address on GitHub Pages, from the repository's owner/name. */
+export const siteUrl = (repo: string) => {
+  const [owner, name] = repo.split("/");
+  return `https://${owner.toLowerCase()}.github.io/${name}/`;
+};
+
+/** The words of the link preview (Open Graph and X's card), with
+ * docs/social-card.png as its image; previews need absolute addresses. */
+export const PREVIEW = {
+  title: "Package status · t3code-nix",
+  description: "T3 Code and all agent providers, packaged for Nix within minutes: each package's version, and how soon after upstream's release it reached main.",
+  image: "social-card.png",
+  alt: "t3code-nix, Package status: T3 Code and all agent providers, packaged for Nix within minutes",
+};
+
 export function html(list: Row[], repo: string, live: Live | null = null, id = "", stable: StableView | null = null, delivery: DeliveryFigure | null = null): string {
   const by = new Map(list.map((r) => [r.name, r]));
   const repoUrl = `https://github.com/${escape(repo)}`;
+  const site = siteUrl(repo);
   const g = groups(list);
   const ul = (names: string[], level: 3 | 4) => `<ul class="pkgs" role="list">\n${names.map((n) => row(by.get(n)!, repo, live, level)).join("\n")}\n</ul>`;
   const t3Count = g.t3.reduce((a, p) => a + p.names.length, 0);
@@ -472,7 +488,20 @@ ${ul(c.names, 4).replace('<ul class="pkgs"', '<ul class="pkgs kids"')}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src '${SCRIPT_HASH}'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
-<title>Package status · t3code-nix</title>
+<title>${escape(PREVIEW.title)}</title>
+<meta name="description" content="${escape(PREVIEW.description)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="t3code-nix">
+<meta property="og:title" content="${escape(PREVIEW.title)}">
+<meta property="og:description" content="${escape(PREVIEW.description)}">
+<meta property="og:url" content="${escape(site)}">
+<meta property="og:image" content="${escape(site + PREVIEW.image)}">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="${escape(PREVIEW.alt)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image:alt" content="${escape(PREVIEW.alt)}">
 <style>${minifyCss(STYLE)}</style>
 </head>
 <body>

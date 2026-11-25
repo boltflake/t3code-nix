@@ -89,6 +89,18 @@ test("status: the output is deterministic, and the digest covers every file", ()
   const d2 = build(two, "HEAD", "o/r").digest;
   assert.equal(d1, d2);
   for (const f of ["index.html", "status.json", "badges/a.json"]) assert.equal(readFileSync(join(one, f), "utf8"), readFileSync(join(two, f), "utf8"));
+  // The link preview's image, byte for byte (a PNG, 1200x630).
+  const png = readFileSync(join(one, "social-card.png"));
+  assert.deepEqual(png, readFileSync(new URL("../docs/social-card.png", import.meta.url)));
+  assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1200, 630]);
+  // The digest status.json carries is over every file written, the image
+  // included.
+  const { digest: carried, ...written } = JSON.parse(readFileSync(join(one, "status.json"), "utf8"));
+  const read = (f: string) => (f.endsWith(".png") ? readFileSync(join(one, f)) : readFileSync(join(one, f), "utf8"));
+  const names = readdirSync(one, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name).slice(one.length + 1)).filter((f) => f !== "status.json");
+  assert.ok(names.includes("social-card.png"));
+  assert.equal(digest(Object.fromEntries(names.map((f) => [f, read(f)])), written), carried);
   assert.equal(JSON.parse(readFileSync(join(one, "status.json"), "utf8")).digest, d1);
   // Rebuilt in place after a package is gone: its badge goes too.
   rmSync(join(tmp, "versions", "a.json"));
@@ -102,6 +114,11 @@ test("status: the output is deterministic, and the digest covers every file", ()
   assert.notEqual(digest({ "a": "bd" }, status), base);
   assert.notEqual(digest({ "ab": "c" }, status), base);
   assert.notEqual(digest({ "a": "bc" }, { packages: [{ name: "x" }] }), base);
+  // A binary file counts by its bytes.
+  assert.equal(digest({ "a": Buffer.from("bc") }, status), base);
+  // Bytes that aren't UTF-8 stay distinct (a text round trip would make
+  // both U+FFFD).
+  assert.notEqual(digest({ "a": Buffer.from([0xff]) }, status), digest({ "a": Buffer.from([0xfe]) }, status));
 });
 
 test("status: durations and dates read naturally", () => {
