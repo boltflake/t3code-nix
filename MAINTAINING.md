@@ -236,9 +236,9 @@ issue open until they agree.
   boolean option takes (a name only one channel lists is fine). For a new
   command, read what it does in the bundle: if it installs upstream's own
   `t3` or service, refuse it in `refuseT3` (a `connect` one: list it in
-  `t3ConnectRefused`); then add it to `t3Commands`. The issue names each
-  new command whole (`t3 workflow withdraw`); `t3Commands` lists it
-  without the `t3`.
+  `t3ConnectRefused`); then add it to `t3Commands`. The issue starts with
+  the new commands, each named whole (`t3 workflow withdraw`);
+  `t3Commands` lists them without the `t3`.
 - `codex-guard-flags`: codex's top-level commands, its hidden ones, and the
   options that take one value or several, at the top level and under
   `app-server`, `app-server daemon` and `remote-control`, and its short
