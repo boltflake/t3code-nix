@@ -4814,15 +4814,19 @@ let
     # note PACKAGE TEXT
     note() { printf '%s\t%s\n' "$1" "$2" >> "$notes"; }
   '';
-  # Notes `what`, then the names, if ./have lists anything `list` lacks. What
-  # only `list` has (a name one channel or an older release lacks) is just
-  # printed.
-  reviewed = pkg: what: list: ''
+  # Notes `what`, then the names (joined by `shown`, a filter from lines to
+  # one line), if ./have lists anything `list` lacks. What only `list` has (a
+  # name one channel or an older release lacks) is just printed.
+  reviewedShown = shown: pkg: what: list: ''
     sort -u -o have have
     printf '%s\n' ${lib.escapeShellArgs list} | sort -u > want
-    [ -z "$(comm -13 want have)" ] || note ${lib.escapeShellArg pkg} ${lib.escapeShellArg what}" $(comm -13 want have | paste -sd ' ')"
+    [ -z "$(comm -13 want have)" ] || note ${lib.escapeShellArg pkg} ${lib.escapeShellArg what}" $(comm -13 want have | ${shown})"
     comm -23 want have | sed 's/^/(not listed by this t3: /; s/$/)/'
   '';
+  reviewed = reviewedShown "paste -sd ' '";
+  # Command paths as whole commands, so `workflow withdraw` reads as one:
+  # `t3 workflow withdraw`, `t3 feedback`.
+  asT3Commands = "sed 's/.*/`t3 &`/' | paste -sd , | sed 's/,/, /g'";
   # Notes `what` if an option in `list` (one the guard skips a value after)
   # takes no value in the help `file` (a boolean, or an optional `=value`):
   # the guard would skip the subcommand after it. Absent from it is fine
@@ -4887,10 +4891,10 @@ let
         printf '%s\n' ${lib.escapeShellArgs guard.t3Commands} > reviewed-commands
         ${walk} ${bin} reviewed-commands > have || exit 1
         grep -qx update have || { echo "the command walk found no \`update\`"; exit 1; }
-        ${reviewed pkg (
+        ${reviewedShown asT3Commands pkg (
           "commands lib/guard.nix's t3Commands hasn't reviewed. Read what each does in the"
           + " bundle; if it installs upstream's own t3 or service, refuse it in refuseT3 (a `connect` one:"
-          + " list it in t3ConnectRefused); then add it to t3Commands:"
+          + " list it in t3ConnectRefused); then add it to t3Commands, without the `t3`:"
         ) guard.t3Commands}
       ) || note ${pkg} "couldn't read this t3's help (see the t3-guard-flags log), so the guard's lists weren't compared"
     '';
@@ -4936,6 +4940,10 @@ let
           "b"
         ]}
         grep -qx 'x	new: c' selftest || { echo "reviewed: missed c"; exit 1; }
+        : > selftest
+        printf '%s\n' 'a b' c d > have
+        ${reviewedShown asT3Commands "x" "new:" [ "d" ]}
+        grep -qxF 'x	new: `t3 a b`, `t3 c`' selftest || { echo "reviewedShown: got $(cat selftest)"; exit 1; }
         notes=$out/notes
         # The walk, on a fake t3: one whose every help repeats the root's ends;
         # one whose `browser --help` fails fails it.
