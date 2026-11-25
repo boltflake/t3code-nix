@@ -35,25 +35,28 @@ let
   # program's environment (a user's exported `n` or `prompt` stays theirs).
   run = body: "--run ${lib.escapeShellArg "(\n${body}\n) || exit 1"}";
   stop = name: stopWith (message name);
-  # Upstream's own service, on purpose: `t3.override { allowUpstreamService
-  # = true; }`, or programs.t3code.cli.allowUpstreamService.
-  optOut = " To use T3 Code's own service anyway, override t3 with allowUpstreamService = true.";
-  t3Update =
-    message "t3"
-    + " For a background server that Nix updates, use programs.t3code.server"
-    + " in the NixOS module."
-    + optOut;
+  # Upstream's own service, on purpose: the modules' cli.allowUpstreamService,
+  # or `.override { allowUpstreamService = true; }` of the package this `t3`
+  # is in (t3, or an app with withCli).
+  optOut =
+    " To use T3 Code's own service anyway, set programs.t3code-nix.cli.allowUpstreamService"
+    + " for the module's t3, or override the package this t3 comes from (t3, or the app"
+    + " with withCli) with allowUpstreamService = true.";
+  # The modules' server: programs.t3code-nix.server works in both (the
+  # NixOS module takes that name too).
+  server = "programs.t3code-nix.server (the NixOS or Home Manager module)";
+  t3Update = message "t3" + " For a background server that Nix updates, use ${server}." + optOut;
   t3Service =
     "t3 is installed by Nix (t3code-nix): `t3 service install` would set up"
     + " a service running T3 Code's own download instead, without the bundled"
-    + " providers. Use programs.t3code.server in the NixOS module."
+    + " providers. Use ${server}."
     + optOut;
   t3Up =
     "t3 is installed by Nix (t3code-nix): `t3 up` (and plain `t3 connect`,"
     + " which is `t3 up --connect`) would install a service running T3 Code's"
     + " own download instead, without the bundled providers. For your other"
-    + " devices, use programs.t3code.server in the NixOS module (lan, host or"
-    + " tailscaleServe) and `t3 pair`; for T3 Connect, run `t3 connect link`,"
+    + " devices, use ${server}, with lan, host or tailscaleServe, and"
+    + " `t3 pair`; for T3 Connect, run `t3 connect link`,"
     + " then restart t3code-server."
     + optOut;
 
@@ -803,7 +806,7 @@ assert lib.intersectLists t3ConnectSubcommands t3ConnectRefused == [ ];
   # sets up a user service that runs upstream's t3 from ~/.t3/runtime, as
   # `t3 up` and plain `t3 connect` (`t3 up --connect`) do (tested: a 438 MB
   # download). All bypass Nix and the bundled providers, so
-  # programs.t3code.server stands in. The other `t3 service` commands only act
+  # the modules' server stands in. The other `t3 service` commands only act
   # on upstream's service, if one is installed, and `t3 connect`'s
   # subcommands only handle T3 Connect's sign-in and link (`t3 connect link`
   # plus the Nix server is T3 Connect without upstream's service, tested):

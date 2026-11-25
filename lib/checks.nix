@@ -30,6 +30,9 @@
   # The flake's packages with ci/electron-fallback.json ignored, for the
   # checks that compare the overlay (which never reads it) with them.
   noFallback ? packages,
+  # Home Manager's source (ci/home-manager.json), for the hm-* checks
+  # (lib/hm-checks.nix) only.
+  homeManager ? throw "lib/checks.nix: no Home Manager source given",
 }:
 let
   pinOf = name: lib.importJSON (pinsDir + "/${name}.json");
@@ -44,6 +47,120 @@ let
   # a real optional browser (chromium, google-chrome): their problems report.
   standIn =
     name: runCommand name { meta.mainProgram = name; } "mkdir -p $out/bin && touch $out/bin/${name}";
+  # t3-telemetry-sends and its nightly twin (below). The analytics host is
+  # T3CODE_TELEMETRY_HOST from T3 Code 0.1.13 on, T3CODE_POSTHOG_HOST before
+  # (the stable set's may be older): both are set.
+  telemetrySends =
+    t3:
+    let
+      listen = pkgs.writeText "listen.py" ''
+        import http.server, sys
+        log = open(sys.argv[2], "ab", buffering=0)
+        class H(http.server.BaseHTTPRequestHandler):
+            # Every request is recorded once parsed, before its method is
+            # dispatched (any method), but the probe, GET /__listening.
+            def parse_request(self):
+                ok = super().parse_request()
+                if ok and (self.command, self.path) != ("GET", "/__listening"):
+                    log.write(self.command.encode() + b" " + self.path.encode() + b"\n")
+                return ok
+            def do_GET(self):
+                if self.path == "/__listening":
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"listening")
+                else:
+                    self.do_POST()
+            def do_POST(self):
+                # The body read with a bound.
+                self.connection.settimeout(10)
+                body = self.rfile.read(int(self.headers.get("content-length", 0)))
+                log.write(self.path.encode() + b" " + body + b"\n")
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status":1}')
+            do_PUT = do_PATCH = do_HEAD = do_OPTIONS = do_DELETE = do_POST
+            def log_message(self, *a):
+                pass
+        server = http.server.HTTPServer(("127.0.0.1", 0), H)
+        open(sys.argv[1], "w").write(str(server.server_address[1]))
+        server.serve_forever()
+      '';
+      off = t3.override { telemetry = false; };
+    in
+    runCommand "${lib.getName t3}-telemetry-sends"
+      {
+        nativeBuildInputs = [
+          pkgs.python3
+          pkgs.curl
+        ];
+      }
+      ''
+        # The listener answers (a GET it doesn't record).
+        listening() { [ "$(curl -sf --noproxy '*' --max-time 2 http://127.0.0.1:$1/__listening)" = listening ]; }
+        freeport() { python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
+        # $1 the t3, $2 a name. Sets server, listener, lport, and ready (the
+        # time, in s, the server first answered).
+        start() {
+          local home=$PWD/$2 port
+          mkdir -p $home
+          : > $home/sent
+          python3 -I ${listen} $home/lport $home/sent &
+          listener=$!
+          for i in $(seq 100); do [ -s $home/lport ] && break; sleep 0.1; done
+          lport=$(cat $home/lport)
+          listening $lport || { echo "$2: the listener didn't start"; exit 1; }
+          port=$(freeport)
+          env -i HOME=$home PATH=${lib.makeBinPath [ pkgs.coreutils ]} T3CODE_HOME=$home/.t3 \
+            T3CODE_PORT=$port T3CODE_NO_BROWSER=1 \
+            T3CODE_TELEMETRY_HOST=http://127.0.0.1:$lport T3CODE_POSTHOG_HOST=http://127.0.0.1:$lport \
+            $1/bin/t3 serve > $home/log 2>&1 &
+          server=$!
+          for i in $(seq 120); do
+            if curl -sf --noproxy '*' --max-time 5 -o /dev/null http://127.0.0.1:$port/; then
+              ready=$(date +%s)
+              return
+            fi
+            kill -0 $server 2>/dev/null || { echo "$2: t3 serve exited"; cat $home/log; exit 1; }
+            sleep 1
+          done
+          echo "$2: no answer on $port"; cat $home/log; exit 1
+        }
+        # Stopped as systemd stops it: SIGTERM, a clean exit (130, as the
+        # unit's SuccessExitStatus, or 0), with the listener still up.
+        stop() { # name
+          listening $lport || { echo "$1: the listener stopped answering"; exit 1; }
+          kill -TERM $server
+          for i in $(seq 30); do kill -0 $server 2>/dev/null || break; sleep 0.5; done
+          ! kill -0 $server 2>/dev/null || { echo "$1: t3 serve didn't stop"; exit 1; }
+          rc=0; wait $server || rc=$?
+          [ "$rc" = 0 ] || [ "$rc" = 130 ] || { echo "$1: t3 serve exited with $rc"; cat $1/log; exit 1; }
+          # Still answering after the server's exit: anything it sent is in.
+          listening $lport || { echo "$1: the listener stopped answering"; exit 1; }
+          kill $listener; wait $listener 2>/dev/null || true
+        }
+
+        # On: something is sent (any request: an upstream rename of its
+        # events doesn't fail this), and how long after the first answer.
+        start ${t3} on
+        for i in $(seq 120); do [ -s on/sent ] && break; sleep 1; done
+        [ -s on/sent ] || { echo "on: nothing sent in 120 s"; cat on/log; exit 1; }
+        took=$(($(date +%s) - ready))
+        stop on
+
+        # Off: up at least as long as the on run took to send, plus a
+        # margin, and past the 10 s flush interval (15 s at least); stopped
+        # (its shutdown flush); nothing sent.
+        wait=$((took + 10)); [ "$wait" -ge 15 ] || wait=15
+        echo "on: sent $took s after its first answer; off waits $wait s"
+        start ${off} off
+        sleep $wait
+        kill -0 $server 2>/dev/null || { echo "off: t3 serve exited"; cat off/log; exit 1; }
+        stop off
+        [ -e off/sent ] && [ ! -s off/sent ] || { echo "off: sent usage data:"; cut -c1-300 off/sent; exit 1; }
+        touch $out
+      '';
   # A set without nightly packages (the stable set) leaves their entries out.
   present = builtins.filter (x: x != null);
   presentRows = builtins.filter (r: builtins.head r != null);
@@ -990,7 +1107,13 @@ let
         publicKey = "example.cachix.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
       };
       withCache = import ../nixos/module.nix {
-        inherit (self) packages;
+        core = import ./module-core.nix {
+          inherit (self) packages;
+          cache = example;
+          serverBackup.${pkgs.stdenv.hostPlatform.system}.unstable = import ./server-backup.nix {
+            inherit pkgs;
+          };
+        };
         cache = example;
       };
       real = system self.nixosModules.default { enable = true; };
@@ -1272,6 +1395,11 @@ let
         c: builtins.filter (p: builtins.elem (lib.getName p) allProviders) c.environment.systemPackages;
       sortedDrvs = ps: lib.sort lib.lessThan (map (p: p.drvPath) ps);
       onPath = c: sortedDrvs (providersInstalled c);
+      # The app as a store path given as a string (types.package keeps it).
+      appString = system self.nixosModules.default {
+        enable = true;
+        package = "${pkgs.hello}";
+      };
       # The app of another kind, with the CLI: the CLI's providers.
       otherCli = system self.nixosModules.default {
         enable = true;
@@ -1314,8 +1442,198 @@ let
       };
       highPrio = p: (p.meta.priority or 5) < 5;
       doctorOf = c: builtins.head (installed c "t3code-nix-doctor");
+      # Usage data (telemetry.enable).
+      telemetryOf = c: name: map (p: p.passthru.telemetry) (installed c name);
+      telOff = system self.nixosModules.default {
+        enable = true;
+        cli.enable = true;
+        telemetry.enable = false;
+      };
+      telServer = system self.nixosModules.default {
+        server.enable = true;
+        server.users = [ "u" ];
+        telemetry.enable = false;
+      };
+      telPicked = system self.nixosModules.default {
+        enable = true;
+        cli.enable = true;
+        providers = [ "codex" ];
+        acpRuntimes = [ "nodejs" ];
+        telemetry.enable = false;
+      };
+      telKept = system self.nixosModules.default {
+        enable = true;
+        cli.enable = true;
+        package = packages.t3code.override { telemetry = false; };
+      };
+      telOther = system self.nixosModules.default {
+        enable = true;
+        package = pkgs.hello;
+        providers = [ "codex" ];
+        acpRuntimes = [ "nodejs" ];
+        telemetry.enable = false;
+      };
+      # A wrapper from before telemetry: providers and acpRuntimes, no
+      # telemetry.
+      telOlderPkg = plain // {
+        providers = [ ];
+        passthru.providers = [ ];
+        passthru.acpRuntimes = [ ];
+        override = args: if args ? telemetry then throw "unexpected argument telemetry" else telOlderPkg;
+      };
+      # The server without the app, whatever `package` is: its t3 takes it.
+      telServerOther = system self.nixosModules.default {
+        package = pkgs.hello;
+        server.enable = true;
+        server.users = [ "u" ];
+        telemetry.enable = false;
+      };
+      telServerOlder = system self.nixosModules.default {
+        package = telOlderPkg;
+        server.enable = true;
+        server.users = [ "u" ];
+        telemetry.enable = false;
+      };
+      telOlder = system self.nixosModules.default {
+        enable = true;
+        package = telOlderPkg;
+        providers = [ "codex" ];
+        acpRuntimes = [ "nodejs" ];
+        telemetry.enable = false;
+      };
+      telemetryFails =
+        c:
+        builtins.any (
+          a:
+          !a.assertion
+          &&
+            a.message
+            == "programs.t3code: telemetry.enable = false needs a package from a t3code-nix that has it (t3code, t3code-nightly, t3code-free, t3 … or an .override of one), not ${
+              c.programs.t3code.package.name or "this package"
+            }; or set T3CODE_TELEMETRY_ENABLED=false in its environment yourself."
+        ) c.assertions;
     in
     conditions "module-eval" {
+      "telemetry.enable = false reaches the app and the CLI" =
+        telemetryOf telOff "t3code" == [ false ] && telemetryOf telOff "t3" == [ false ];
+      "on by default, app and CLI" =
+        telemetryOf real "t3code" == [ true ] && telemetryOf srvDefault "t3" == [ true ];
+      "a server-only host's t3 has it, and the server runs that t3" =
+        telemetryOf telServer "t3" == [ false ]
+        && lib.hasPrefix "${(packages.t3.override { telemetry = false; })}/bin/" (exec telServer);
+      "it goes with providers and acpRuntimes" =
+        telemetryOf telPicked "t3code" == [ false ]
+        && telemetryOf telPicked "t3" == [ false ]
+        && providersOf telPicked "t3code" == [ [ "codex" ] ]
+        && providersOf telPicked "t3" == [ [ "codex" ] ]
+        && acpOf telPicked "t3code" == [ [ "nodejs" ] ]
+        && acpOf telPicked "t3" == [ [ "nodejs" ] ]
+        && !failedAssertion telPicked;
+      "a package overridden off stays off with the option at its default, and the CLI follows" =
+        telemetryOf telKept "t3code" == [ false ] && telemetryOf telKept "t3" == [ false ];
+      "an app given as a store path string still gives a doctor" =
+        let
+          # (lib.getName can't read the string: the doctor among the rest.)
+          doctor = builtins.head (
+            builtins.filter (
+              p: builtins.isAttrs p && lib.getName p == "t3code-nix-doctor"
+            ) appString.environment.systemPackages
+          );
+        in
+        lib.hasSuffix ".drv" doctor.drvPath && doctor.appInner == null;
+      "the doctor knows the CLI's unwrapped package, which a running server's path shows" =
+        let
+          path = (doctorOf srvDefault).cliUnwrappedPath;
+        in
+        path != ""
+        &&
+          path == builtins.unsafeDiscardStringContext (
+            toString (builtins.head (installed srvDefault "t3")).passthru.unwrapped
+          );
+      "telemetry: a server without the app turns it off whatever the package" =
+        telemetryOf telServerOther "t3" == [ false ]
+        && telemetryOf telServerOlder "t3" == [ false ]
+        && !failedAssertion telServerOther
+        && !failedAssertion telServerOlder;
+      "telemetry: a package that can't take it fails with its own message" =
+        telemetryFails telOther && !failedAssertion other;
+      "telemetry: so does a wrapper from before it, rather than an evaluation error" =
+        telemetryFails telOlder
+        && (builtins.tryEval (builtins.deepSeq (map (p: p.name) telOlder.environment.systemPackages) true))
+          .success;
+      "telemetry: a foreign app with the option at its default still evaluates" =
+        !failedAssertion otherCli
+        && (builtins.tryEval (builtins.deepSeq (map (p: p.name) otherCli.environment.systemPackages) true))
+          .success;
+      "the doctor gets the app's and the CLI's usage data settings" =
+        (doctorOf telOff).appTelemetry == false
+        && (doctorOf telOff).cliTelemetry == false
+        && (doctorOf real).appTelemetry == true
+        && (doctorOf telServer).appTelemetry == "none"
+        && (doctorOf telServer).cliTelemetry == false;
+      "the server's unit carries the Description the doctor knows this flake's units by" =
+        lib.hasInfix "\nDescription=${packages.doctor.unitDescription}\n"
+          srvDefault.systemd.user.units."t3code-server.service".text;
+      "programs.t3code-nix is another name for programs.t3code, option by option (mkDefault, mkIf, mkForce)" =
+        let
+          aliased =
+            (import (path + "/nixos/lib/eval-config.nix") {
+              system = null;
+              modules = [
+                self.nixosModules.default
+                {
+                  nixpkgs.pkgs = pkgs;
+                  programs.t3code-nix = {
+                    enable = true;
+                    providers = [ "codex" ];
+                    telemetry.enable = false;
+                    server.enable = true;
+                    server.users = [ "alice" ];
+                  };
+                }
+              ];
+            }).config;
+          direct = system self.nixosModules.default {
+            enable = true;
+            providers = [ "codex" ];
+            telemetry.enable = false;
+            server.enable = true;
+            server.users = [ "alice" ];
+          };
+          # Properties on single options, and both names mixed: an alias of
+          # the whole set would leave these wrapped.
+          withProperties =
+            (import (path + "/nixos/lib/eval-config.nix") {
+              system = null;
+              modules = [
+                self.nixosModules.default
+                {
+                  nixpkgs.pkgs = pkgs;
+                  programs.t3code-nix.enable = lib.mkDefault true;
+                  programs.t3code-nix.server = lib.mkIf true {
+                    enable = true;
+                    users = [ "alice" ];
+                  };
+                  programs.t3code-nix.cli.enable = lib.mkForce true;
+                  programs.t3code.cli.enable = false;
+                  programs.t3code.providers = [ "codex" ];
+                }
+              ];
+            }).config.programs.t3code;
+        in
+        withProperties.enable
+        && withProperties.server.enable
+        && withProperties.server.users == [ "alice" ]
+        && withProperties.cli.enable
+        && withProperties.providers == [ "codex" ]
+        && aliased.programs.t3code.enable
+        && aliased.programs.t3code.server.users == [ "alice" ]
+        && providersOf aliased "t3code" == [ [ "codex" ] ]
+        && telemetryOf aliased "t3code" == [ false ]
+        && exec aliased == exec direct
+        &&
+          map (p: p.drvPath) aliased.environment.systemPackages
+          == map (p: p.drvPath) direct.environment.systemPackages;
       "the module's t3 goes on PATH at high priority, so an app's own t3 (withCli) can't win by list order" =
         builtins.all highPrio (installed appCli "t3")
         && installed appCli "t3" != [ ]
@@ -1780,6 +2098,12 @@ let
         (cd / && T3CODE_HOME='~\tilde' $backup)
         one $HOME/tilde/t3code-nix-backups/statev2-unknown-*.sqlite
 
+        # An absolute one, as an environmentFile sets it (the unit's own
+        # T3CODE_HOME, from `home`, comes first and is replaced).
+        mkdir -p $HOME/abs/userdata && cp $db $HOME/abs/userdata/statev2.sqlite
+        (cd / && T3CODE_HOME=$HOME/abs $backup)
+        one $HOME/abs/t3code-nix-backups/statev2-unknown-*.sqlite
+
         # Trimmed, as t3 does; blank is ~/.t3.
         rm -r $HOME/tilde/t3code-nix-backups
         (cd / && T3CODE_HOME=' ~/tilde
@@ -1918,6 +2242,34 @@ let
         pi
       ] "on";
       serverOff = doctorWith [ codex ] "off";
+      # Home Manager's doctor (home-manager/module.nix): standalone, as a
+      # NixOS module, and with this flake's NixOS module there too; and the
+      # NixOS module's.
+      hmWith =
+        server: args:
+        (doctorWith [
+          codex
+          claude
+        ] server).override
+          ({ module = "home-manager"; } // args);
+      hmOn = hmWith "on" { };
+      hmOff = hmWith "off" { };
+      hmAsModule = hmWith "on" { asNixosModule = true; };
+      # With Home Manager's unit folder elsewhere (its xdg.configHome).
+      hmUnitsAt = dir: hmWith "on" { userUnits = "~/${dir}/systemd/user"; };
+      hmWithNixos = hmWith "on" {
+        asNixosModule = true;
+        nixosModule = true;
+      };
+      nixosOn = (doctorWith [ codex ] "on").override { module = "nixos"; };
+      nixosOff = (doctorWith [ codex ] "off").override { module = "nixos"; };
+      # Home Manager's nixGL wrapper around an app with its own t3: its bin/t3
+      # runs the app's.
+      glApp = runCommand "t3code-0.1.9" { } ''
+        mkdir -p $out/bin
+        printf '#!/bin/sh\nexec %s "$@"\n' ${appWithCli}/bin/t3 > $out/bin/t3
+        chmod +x $out/bin/t3
+      '';
       # claude bundled but not on this machine (another build's doctor).
       goneClaude = doctorWith [
         codex
@@ -1988,6 +2340,50 @@ let
         bundled = "44.10.1";
         reason = "set to a package (44.9.3, older than bundled 44.10.1)";
       };
+      # Usage data: this build's setting for the app and the CLI.
+      telemetryWith =
+        module: app: cli:
+        (doctorWith [ codex ] "on").override {
+          inherit module;
+          appTelemetry = app;
+          cliTelemetry = cli;
+          # The CLI's unwrapped package, as a running server's path shows it.
+          cliUnwrapped = "/nix/store/00000000000000000000000000000000-t3-unwrapped-0.1.13";
+        };
+      telemetryOn = telemetryWith "nixos" true true;
+      # The app given as a store path string.
+      appStringDoctor = (doctorWith [ codex ] "on").override {
+        t3code = "${pkgs.hello}";
+        # And a wrapper's inner app, as a string too.
+        appInner = "${pkgs.cowsay}";
+      };
+      telemetryOff = telemetryWith "nixos" false false;
+      telemetryOffHm = telemetryWith "home-manager" false false;
+      telemetryMixed = telemetryWith "nixos" false true;
+      telemetryServerOnly = telemetryWith "nixos" "none" false;
+      telemetryStandalone = telemetryWith null false false;
+      telemetryStandaloneOn = telemetryWith null true true;
+      telemetryUnknown = telemetryWith "nixos" null null;
+      telemetryServerOff = (telemetryWith "nixos" false false).override { server = "off"; };
+      telemetryServerExcluded = (telemetryWith "nixos" false false).override { serverUsers = [ "bob" ]; };
+      telemetryAppOnly = (telemetryWith "nixos" false false).override { cliInstalled = false; };
+      # Off, installing a CLI, with another app's (or its own app's) t3 first.
+      telemetryCliAt = app: (telemetryAppAt app).override { cliInstalled = true; };
+      telemetryCliShadowed = telemetryCliAt otherCli;
+      telemetryCliOwnApp = telemetryCliAt appWithCli;
+      # Under nixGL: installed as a wrapper, its app inside.
+      telemetryCliInner = (telemetryCliAt glApp).override { appInner = appWithCli; };
+      # An off configuration's app at a known path, with no CLI of its own.
+      telemetryAppAt =
+        app:
+        (telemetryWith "nixos" false false).override {
+          cliInstalled = false;
+          t3code = {
+            name = "t3code-0.1.9";
+            outPath = toString app;
+            passthru.providers = [ codex ];
+          };
+        };
       drivers = builtins.attrNames (import ../pkgs/t3code/providers.nix packages);
     in
     assert lib.assertMsg (
@@ -2024,10 +2420,19 @@ let
           *) exit 1 ;;
         esac
         SH
+        # t3code-server's state from the scenario's unit file; t3code.service's
+        # from its upstream-unit file, or no answer (as without a user bus).
         cat > $work/bin/systemctl <<SH
         #!${stdenv.shell}
         echo "systemctl \$*" >> $work/calls
-        cat $work/scenario/unit
+        case "\$*" in
+          # The server's PID; with mainpid-next, a new one from the next call on.
+          *MainPID*)
+            cat $work/scenario/mainpid 2>/dev/null || true
+            [ ! -e $work/scenario/mainpid-next ] || mv $work/scenario/mainpid-next $work/scenario/mainpid ;;
+          *" t3code.service "*) cat $work/scenario/upstream-unit 2>/dev/null || true ;;
+          *) cat $work/scenario/unit ;;
+        esac
         SH
         chmod +x $work/bin/*
 
@@ -2133,6 +2538,8 @@ let
         has "PROBLEM  upstream's service is installed"
         has "without nix-ld its downloaded T3 Code can't start"
         has "systemctl --user disable --now t3code.service"
+        # Judged by its unit file: check before removing.
+        has "check what it runs first (\`systemctl --user cat t3code.service\`; this goes by its unit file, not drop-ins);"
         has "runtimeCompat (nix-ld): off"
         has "PROBLEM  server: t3code-server has failed"
         has "WARN     t3: $work/scenario/path/t3 isn't from Nix"
@@ -2545,6 +2952,25 @@ let
         printf 'masked\nactive\n' > $work/scenario/unit
         run ${serverForAlice} server-masked-running 0
         has "WARN     server: t3code-server is masked, but still running"
+        # Masked in your own config folder (a link to /dev/null, systemd's
+        # FragmentPath) over the NixOS module's: the mask, not another
+        # owner's unit, nor a second unit.
+        mkdir -p $work/scenario/root/etc/systemd/user $work/scenario/home/.config/systemd/user
+        echo ${lib.escapeShellArg "Description=${packages.doctor.unitDescription}"} > $work/scenario/root/etc/systemd/user/t3code-server.service
+        ln -s /dev/null $work/scenario/home/.config/systemd/user/t3code-server.service
+        printf 'masked\ninactive\n%s\n' $work/home/.config/systemd/user/t3code-server.service > $work/scenario/unit
+        run ${nixosOn} server-masked-own 0
+        has "WARN     server: t3code-server is masked, so it can't start"
+        has "systemctl --user unmask t3code-server"
+        hasnt "systemd loaded"
+        hasnt "there are two t3code-server units"
+        # An empty file is a mask too.
+        rm $work/scenario/home/.config/systemd/user/t3code-server.service
+        : > $work/scenario/home/.config/systemd/user/t3code-server.service
+        run ${nixosOn} server-masked-own-empty 0
+        has "WARN     server: t3code-server is masked, so it can't start"
+        hasnt "there are two t3code-server units"
+        rm $work/scenario/home/.config/systemd/user/t3code-server.service $work/scenario/root/etc/systemd/user/t3code-server.service
         printf 'bad-setting\ninactive\n' > $work/scenario/unit
         run ${serverForAlice} server-bad-setting 1
         has "PROBLEM  server: t3code-server's unit couldn't be loaded"
@@ -2578,11 +3004,537 @@ let
         run ${appCliWith true} app-t3-shadows 0
         has "WARN     t3: $work/scenario/path/t3 is the app's own t3 (withCli, t3code-0.1.9), ahead of the t3 this configuration installs"
         has "put the profile with programs.t3code's t3 first on PATH, or remove the app with withCli from the other profile"
+        # With usage data off: another app's t3 may not have the setting.
+        run ${telemetryCliShadowed} app-t3-shadows-telemetry 0
+        has "ahead of the t3 this configuration installs; this build's telemetry setting may not apply to it"
+        run ${telemetryCliInner} app-inner-t3-shadows-telemetry 0
+        has "ahead of the t3 this configuration installs"
+        hasnt "may not apply to it"
+        run ${telemetryCliOwnApp} app-own-t3-shadows-telemetry 0
+        has "ahead of the t3 this configuration installs"
+        hasnt "may not apply to it"
+        has "→ put the profile with programs.t3code's t3 first on PATH"
+        hasnt "or remove the app with withCli"
 
-        # Only reads: nothing but `config show`, `store info` and `show`.
+        # An app's own t3 behind Home Manager's nixGL wrapper is still the
+        # app's own.
         scenario
+        ln -sf ${glApp}/bin/t3 $work/scenario/path/t3
+        run ${appCliWith false} app-own-t3-nixgl 0
+        has "OK       t3: the app's own ($work/scenario/path/t3, withCli)"
+
+        # Home Manager's doctor: its options' names, lingering, and no
+        # ConditionUser (a UID below 1000 runs it too).
+        scenario
+        printf 'not-found\ninactive\n' > $work/scenario/unit
+        run ${hmOff} hm-server-off 0
+        has "OK       server (programs.t3code-nix.server): not enabled"
+        printf 'loaded\ninactive\n' > $work/scenario/unit
+        echo root > $work/scenario/user
+        echo 0 > $work/scenario/uid
+        run ${hmOn} hm-server-stopped 0
+        has "WARN     server: t3code-server isn't running"
+        has "at boot it needs lingering: \`loginctl enable-linger\` (on NixOS, users.users.<you>.linger = true)"
+        hasnt "every user that isn't a system user"
+        rm $work/scenario/user $work/scenario/uid
+        printf 'not-found\nactive\n' > $work/scenario/unit
+        run ${hmOff} hm-server-off-running 0
+        has "WARN     server: programs.t3code-nix.server is off, but t3code-server is still running from before (a switch didn't stop it)"
+        printf 'not-found\ninactive\n' > $work/scenario/unit
+        run ${hmOn} hm-server-not-loaded 0
+        has "check that you switched with Home Manager's systemd integration on"
+
+        # The machine settings' fixes, by where Home Manager runs.
+        machine() { # doctor, name, expected fix
+          echo "https://cache.nixos.org/" > $work/scenario/system-substituters
+          echo 'Auto-updates: enabled' > $work/scenario/root/claude-doctor
+          run $1 $2 1
+          has "PROBLEM  binary cache: not set up for the system"
+          has "WARN     claude-code: no machine policy turns its updates off"
+          [ "$(grep -cF -- "$3" $work/out)" = 2 ] || { echo "$2: not twice: $3"; exit 1; }
+        }
+        scenario
+        machine ${hmWithNixos} hm-fix-nixos-module "this flake's NixOS module does it for you: programs.t3code."
+        has "programs.t3code.binaryCache = true (the default) in the NixOS config"
+        has "programs.t3code.claudeCodePolicy = true (the default) in the NixOS config"
+        machine ${hmAsModule} hm-fix-as-module "Home Manager can't: import this flake's NixOS module in the NixOS config"
+        machine ${hmOn} hm-fix-standalone-nixos "the NixOS module can't see a standalone Home Manager: add the README's lines"
+        rm $work/scenario/root/etc/NIXOS
+        machine ${hmOn} hm-fix-elsewhere "Home Manager can't (it's a machine setting): "
+        has "add ${cacheUrl} and its key to /etc/nix/nix.conf"
+        has "in /etc/claude-code/managed-settings.d/10-t3code-nix.json"
+
+        # This flake's units carry its Description; others in the same
+        # places are someone else's.
+        ourunit() { mkdir -p "$(dirname "$1")"; echo ${lib.escapeShellArg "Description=${packages.doctor.unitDescription}"} > "$1"; }
+        otherunit() { mkdir -p "$(dirname "$1")"; echo 'Description=Something else' > "$1"; }
+        sysu=$work/scenario/root/etc/systemd/user/t3code-server.service
+        ownu=$work/scenario/home/.config/systemd/user/t3code-server.service
+
+        # Both modules' units, and which one systemd loaded as it reports it
+        # (unknown, then each case).
+        scenario
+        ourunit $sysu; ourunit $ownu
+        run ${hmOn} two-units 0
+        has "WARN     server: there are two t3code-server units, the NixOS module's ($sysu) and your own, from Home Manager ($work/home/.config/systemd/user/t3code-server.service)"
+        has "turn one of them off: programs.t3code.server in the NixOS config, or programs.t3code-nix.server in Home Manager's"
+        # No FragmentPath: unknown.
+        has "which one systemd uses couldn't be read"
+        printf 'loaded\ninactive\n%s\n' $work/home/.config/systemd/user/t3code-server.service > $work/scenario/unit
+        run ${hmOn} two-units-own-loaded 0
+        has "and your own, from Home Manager ($work/home/.config/systemd/user/t3code-server.service); yours shadows the system one for you"
+        printf 'loaded\ninactive\n/etc/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        run ${hmOn} two-units-system-loaded 0
+        has "; systemd loaded the system one, so yours isn't used"
+        printf 'loaded\ninactive\n%s\n' $work/home/.config/systemd/user/other/t3code-server.service > $work/scenario/unit
+        run ${hmOn} two-units-third-loaded 0
+        has "; systemd loaded neither, but $work/home/.config/systemd/user/other/t3code-server.service"
+        # Yours a link to the system one, which systemd reports loading. This
+        # pins the outcome only: under the fake root the unrooted
+        # FragmentPath doesn't exist, so it can't tell the order of the exact
+        # and -ef comparisons apart (that needs an empty root).
+        rm $ownu; ln -s $sysu $ownu
+        printf 'loaded\ninactive\n/etc/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        run ${hmOn} two-units-linked 0
+        has "; systemd loaded the system one, so yours isn't used"
+        rm $ownu; ourunit $ownu
+        printf 'not-found\ninactive\n\n' > $work/scenario/unit
+        run ${hmOn} two-units-none-loaded 0
+        has "; systemd has loaded neither yet"
+        # Masked elsewhere (--runtime, as systemd reports it) over two real
+        # units: still two units, and the mask.
+        mkdir -p $work/scenario/root/run/user/1000/systemd/user
+        ln -s /dev/null $work/scenario/root/run/user/1000/systemd/user/t3code-server.service
+        printf 'masked\ninactive\n/run/user/1000/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        run ${hmOn} two-units-runtime-mask 0
+        has "there are two t3code-server units"
+        has "systemd loaded a mask over both (/run/user/1000/systemd/user/t3code-server.service;"
+        has "t3code-server is masked, so it can't start"
+        rm -r $work/scenario/root/run/user/1000/systemd
+        # From what systemd reports, not the file: masked with none there.
+        run ${hmOn} two-units-runtime-mask-reported 0
+        has "systemd loaded a mask over both (/run/user/1000/systemd/user/t3code-server.service;"
+        # Your mask replaced by a unit before a daemon-reload: still the mask.
+        printf 'masked\ninactive\n%s\n' $work/home/.config/systemd/user/t3code-server.service > $work/scenario/unit
+        run ${hmOn} two-units-mask-replaced 0
+        has "systemd loaded a mask over both ($work/home/.config/systemd/user/t3code-server.service;"
+        hasnt "yours shadows the system one"
+        # Back to the scenario's own answer (loaded, running) for what follows.
+        printf 'loaded\nactive\n' > $work/scenario/unit
+        # An app given as a store path string: the doctor still knows its path.
+        data=$(sed -n 's|^\. \(/nix/store/[^ ]*-t3code-nix-doctor-data\)$|\1|p' ${appStringDoctor}/bin/t3code-nix-doctor)
+        grep -qE "^APP='?${builtins.unsafeDiscardStringContext "${pkgs.hello}"}'?$" "$data" \
+          || { echo "the doctor's data has no APP for an app given as a string"; exit 1; }
+        grep -qE "^APP_INNER='?${builtins.unsafeDiscardStringContext "${pkgs.cowsay}"}'?$" "$data" \
+          || { echo "the doctor's data has no APP_INNER for an inner app given as a string"; exit 1; }
+        # Someone else's in /etc (on NixOS, from the NixOS config), and in
+        # your folder: named as such, with fixes that apply to them.
+        otherunit $sysu; otherunit $ownu
+        run ${nixosOn} two-units-others 0
+        has "there are two t3code-server units, a system-wide one, not t3code-nix's ($sysu) and your own, not t3code-nix's ($work/home/.config/systemd/user/t3code-server.service)"
+        has "turn one of them off: whatever in the NixOS config writes it, or remove $work/home/.config/systemd/user/t3code-server.service"
+        hasnt "programs.t3code.server in the NixOS config"
+
+        # Not on NixOS, someone else's unit in /etc.
+        scenario
+        rm $work/scenario/root/etc/NIXOS
+        otherunit $sysu; ourunit $ownu
+        printf 'loaded\nactive\n/etc/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        run ${hmOn} system-unit-elsewhere 0
+        has "a system-wide one, not t3code-nix's ($sysu)"
+        has "remove $sysu"
+        has "systemd loaded a system-wide (not t3code-nix's) t3code-server unit"
+        hasnt "the NixOS module's"
+
+        # The unit systemd loaded is the other module's: said so, and none of
+        # this configuration's claims about it.
+        scenario
+        ourunit $sysu
+        printf 'loaded\nactive\n/etc/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        run ${hmOn} loaded-nixos-hm-on 0
+        has "WARN     server: systemd loaded the NixOS module's t3code-server unit (/etc/systemd/user/t3code-server.service, active), not this configuration's"
+        run ${hmOff} loaded-nixos-hm-off 0
+        has "OK       server: systemd loaded the NixOS module's t3code-server unit (/etc/systemd/user/t3code-server.service, active); programs.t3code-nix.server is off"
+        hasnt "still running from before"
+        # The NixOS doctor with its server off and someone else's unit in /etc.
+        otherunit $sysu
+        run ${nixosOff} loaded-system-nixos-off 0
+        has "OK       server: systemd loaded a system-wide (not t3code-nix's) t3code-server unit (/etc/systemd/user/t3code-server.service, active); programs.t3code.server is off"
+        scenario
+        ourunit $ownu
+        printf 'loaded\nactive\n%s\n' $work/home/.config/systemd/user/t3code-server.service > $work/scenario/unit
+        run ${nixosOff} loaded-hm-nixos-off 0
+        has "OK       server: systemd loaded Home Manager's t3code-server unit ($work/home/.config/systemd/user/t3code-server.service, active); programs.t3code.server is off"
+        run ${nixosOn} loaded-hm-nixos-on 0
+        has "WARN     server: systemd loaded Home Manager's t3code-server unit"
+        # Its own: the usual checks.
+        run ${hmOn} loaded-own 0
+        has "OK       server: t3code-server is running"
+        # A unit of your own there that isn't this flake's.
+        otherunit $ownu
+        run ${nixosOn} loaded-user-nixos-on 0
+        has "WARN     server: systemd loaded your own (not t3code-nix's) t3code-server unit"
+        # Someone else's from anywhere else (~/.local/share/systemd/user).
+        otheru=$work/home/.local/share/systemd/user/t3code-server.service
+        mkdir -p $work/scenario/home/.local/share/systemd/user
+        echo 'Description=Something else' > $work/scenario/home/.local/share/systemd/user/t3code-server.service
+        printf 'loaded\nactive\n%s\n' $otheru > $work/scenario/unit
+        run ${hmOff} loaded-foreign-hm-off 0
+        has "OK       server: systemd loaded another (not t3code-nix's) t3code-server unit ($otheru, active); programs.t3code-nix.server is off"
+        hasnt "still running from before"
+        # Home Manager's own t3code.service, in Home Manager's folder.
+        scenario
+        mkdir -p $work/scenario/home/hm-config/systemd/user
+        echo 'ExecStart=/nix/store/00000000000000000000000000000000-t3code-0.1.8/bin/t3 serve' > $work/scenario/home/hm-config/systemd/user/t3code.service
+        run ${hmUnitsAt "hm-config"} nix-unit-hm-folder 0
+        has "runs a T3 Code from Nix (Home Manager's own programs.t3code.server, likely), beside t3code-server"
+
+        # A running unit whose file is gone (removed with no switch to stop
+        # it): whose is unknown, so the usual warning, still running.
+        scenario
+        printf 'loaded\nactive\n%s\n' $work/home/.config/systemd/user/t3code-server.service > $work/scenario/unit
+        run ${hmOff} unit-file-gone 0
+        has "WARN     server: programs.t3code-nix.server is off, but t3code-server is still running from before"
+        # t3code.service in both folders: each is checked.
+        scenario
+        upstream
+        mkdir -p $work/scenario/home/hm-config/systemd/user
+        echo 'ExecStart=/nix/store/00000000000000000000000000000000-t3code-0.1.8/bin/t3 serve' > $work/scenario/home/hm-config/systemd/user/t3code.service
+        run ${hmUnitsAt "hm-config"} t3code-service-both 0
+        has "upstream's service is installed ($work/home/.config/systemd/user/t3code.service)"
+        has "t3code.service ($work/home/hm-config/systemd/user/t3code.service) runs a T3 Code from Nix"
+        # systemd's answer decides: the unit it loaded, not a copy elsewhere;
+        # a mask isn't a service; one it has none of isn't loaded.
+        scenario
+        upstream
+        mkdir -p $work/scenario/home/hm-config/systemd/user
+        echo 'ExecStart=/nix/store/00000000000000000000000000000000-t3code-0.1.8/bin/t3 serve' > $work/scenario/home/hm-config/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/home/.config/systemd/user/t3code.service > $work/scenario/upstream-unit
+        run ${hmUnitsAt "hm-config"} t3code-service-loaded 0
+        has "upstream's service is installed ($work/home/.config/systemd/user/t3code.service)"
+        hasnt "hm-config/systemd/user/t3code.service"
+        printf 'masked\ninactive\n/dev/null\n' > $work/scenario/upstream-unit
+        noloader
+        run ${hmUnitsAt "hm-config"} t3code-service-masked 0
+        has "OK       t3code.service is masked (not in use)"
+        hasnt "upstream's service is installed"
+        printf 'masked\nactive\n/dev/null\n' > $work/scenario/upstream-unit
+        run ${hmUnitsAt "hm-config"} t3code-service-masked-running 0
+        has "WARN     t3code.service is masked, but still running"
+        # systemd has none: neither copy is loaded, upstream's (no nix-ld
+        # here) nor the Nix one.
+        printf 'not-found\ninactive\n\n' > $work/scenario/upstream-unit
+        run ${hmUnitsAt "hm-config"} t3code-service-not-loaded 0
+        has "OK       t3code.service ($work/home/.config/systemd/user/t3code.service) is there, but systemd hasn't loaded it"
+        has "OK       t3code.service ($work/home/hm-config/systemd/user/t3code.service) is there, but systemd hasn't loaded it"
+        hasnt "can't start"
+
+        # Loaded from a file removed since, still running; and one installed
+        # for every user in /etc (no per-user uninstall advice).
+        scenario
+        printf 'loaded\nactive\n%s\n' $work/home/.config/systemd/user/t3code.service > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-file-gone 0
+        has "WARN     t3code.service is still running, from a unit file that's gone ($work/home/.config/systemd/user/t3code.service)"
+        hasnt "upstream's own service: not installed"
+        scenario
+        mkdir -p $work/scenario/root/etc/systemd/user
+        touch $work/scenario/root/etc/systemd/user/t3code.service
+        printf 'loaded\ninactive\n/etc/systemd/user/t3code.service\n' > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-system 0
+        has "it's installed for every user ($work/scenario/root/etc/systemd/user/t3code.service): have it removed from the system's configuration"
+        hasnt "t3 service uninstall"
+
+        # Deleted and reloaded while it runs: systemd has none, and it runs.
+        scenario
+        printf 'not-found\nactive\n\n' > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-gone-reloaded 0
+        has "WARN     t3code.service is still running, though its unit file is gone"
+        hasnt "upstream's own service: not installed"
+        # Your config folder outside your home folder (XDG_CONFIG_HOME): yours.
+        scenario
+        mkdir -p $work/xdg/systemd/user
+        touch $work/xdg/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/xdg/systemd/user/t3code.service > $work/scenario/upstream-unit
+        XDG_CONFIG_HOME=$work/xdg run ${hmOn} t3code-service-xdg 0
+        has "t3 service uninstall"
+        hasnt "installed for every user"
+        rm -r $work/xdg
+        # Even as an XDG_CONFIG_HOME, a system folder's unit is everyone's.
+        scenario
+        mkdir -p $work/scenario/root/etc/systemd/user
+        touch $work/scenario/root/etc/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/scenario/root/etc/systemd/user/t3code.service > $work/scenario/upstream-unit
+        XDG_CONFIG_HOME=$work/scenario/root/etc run ${hmOn} t3code-service-xdg-system 0
+        has "it's installed for every user ($work/scenario/root/etc/systemd/user/t3code.service)"
+        hasnt "t3 service uninstall"
+        # A distribution's package, outside /etc: installed for every user.
+        scenario
+        mkdir -p $work/scenario/pkgunits
+        touch $work/scenario/pkgunits/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/scenario/pkgunits/t3code.service > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-package 0
+        has "it's installed for every user ($work/scenario/pkgunits/t3code.service)"
+        hasnt "t3 service uninstall"
+
+        # From your own NixOS per-user profile: a package in your configs.
+        scenario
+        mkdir -p $work/scenario/root/etc/profiles/per-user/alice/share/systemd/user
+        touch $work/scenario/root/etc/profiles/per-user/alice/share/systemd/user/t3code.service
+        printf 'loaded\ninactive\n/etc/profiles/per-user/alice/share/systemd/user/t3code.service\n' > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-own-profile 0
+        has "it comes from a package in your NixOS per-user profile ($work/scenario/root/etc/profiles/per-user/alice/share/systemd/user/t3code.service): remove that package"
+        has "users.users.<you>.packages in the NixOS config, or Home Manager's home.packages with useUserPackages; then rebuild"
+
+        # A runtime unit of yours (systemd-run --user, edit --runtime):
+        # disable and delete it, nothing to remove from any configuration.
+        scenario
+        mkdir -p $work/scenario/rt/systemd/transient
+        touch $work/scenario/rt/systemd/transient/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/scenario/rt/systemd/transient/t3code.service > $work/scenario/upstream-unit
+        XDG_RUNTIME_DIR=$work/scenario/rt run ${hmOn} t3code-service-runtime 0
+        has "it's a runtime unit of yours ($work/scenario/rt/systemd/transient/t3code.service): \`systemctl --user disable --runtime --now t3code.service\`"
+        hasnt "installed for every user"
+
+        # The same folder spelt another way (here a link): reported once.
+        scenario
+        upstream
+        ln -s .config $work/scenario/home/cfg-link
+        run ${hmUnitsAt "cfg-link"} t3code-service-once 0
+        [ "$(grep -c "upstream's service is installed" $work/out)" = 1 ] || { echo "reported more than once"; exit 1; }
+
+        # The flake's doctor doesn't know a module: the usual checks.
+        scenario
+        ourunit $sysu
+        printf 'loaded\nactive\n/etc/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        run ${doctor} loaded-unknown 0
+        has "OK       server: t3code-server is running"
+
+        # A t3code.service that runs from the store isn't upstream's (Home
+        # Manager's own module's, likely): no uninstall advice; a warning
+        # only beside our server.
+        scenario
+        mkdir -p $work/scenario/home/.config/systemd/user
+        echo 'ExecStart=/nix/store/00000000000000000000000000000000-t3code-0.1.8/bin/t3 serve' > $work/scenario/home/.config/systemd/user/t3code.service
+        run ${doctor} nix-unit-beside-ours 0
+        has "WARN     t3code.service ($work/home/.config/systemd/user/t3code.service) runs a T3 Code from Nix"
+        hasnt "t3 service uninstall"
+        printf 'not-found\ninactive\n' > $work/scenario/unit
+        run ${serverOff} nix-unit-alone 0
+        has "OK       t3code.service ($work/home/.config/systemd/user/t3code.service) runs a T3 Code from Nix"
+        echo 'ExecStart=-"/nix/store/00000000000000000000000000000000-t3code-0.1.8/bin/t3" serve' > $work/scenario/home/.config/systemd/user/t3code.service
+        run ${serverOff} nix-unit-quoted 0
+        has "OK       t3code.service ($work/home/.config/systemd/user/t3code.service) runs a T3 Code from Nix"
+        echo "ExecStart = '/nix/store/00000000000000000000000000000000-t3code-0.1.8/bin/t3' serve" > $work/scenario/home/.config/systemd/user/t3code.service
+        run ${serverOff} nix-unit-spaced 0
+        has "OK       t3code.service ($work/home/.config/systemd/user/t3code.service) runs a T3 Code from Nix"
+
+        # Usage data: this build's setting, app and CLI apart.
+        scenario
+        run ${telemetryOn} telemetry-on 0
+        has "OK       the app: on (T3 Code's default)"
+        has "→ to turn it off, set programs.t3code.telemetry.enable = false"
+        has "OK       t3 (the CLI and server): on (T3 Code's default)"
+        run ${telemetryOff} telemetry-off 0
+        has "OK       the app: off (this build's telemetry setting)"
+        has "OK       t3 (the CLI and server): off (this build's telemetry setting)"
+        hasnt "WARN"
+        run ${telemetryServerOnly} telemetry-server-only 0
+        hasnt "the app:"
+        has "OK       t3 (the CLI and server): off"
+        # An app-only install has no CLI of its own to judge.
+        run ${telemetryAppOnly} telemetry-app-only 0
+        has "OK       the app: off"
+        hasnt "t3 (the CLI and server)"
+        # A t3 from outside Nix (upstream's, or the desktop app's launcher).
+        echo '#!/bin/sh' > $work/scenario/home/t3; chmod +x $work/scenario/home/t3
+        ln -sfn $work/home/t3 $work/scenario/path/t3
+        run ${telemetryOff} telemetry-t3-outside 0
+        has "isn't this flake's wrapper (no bundled providers; upstream's updates itself); this build's telemetry setting may not apply to it"
+        # Another t3code-nix app's own t3 (withCli) first on PATH, and this
+        # configuration's.
+        ln -sfn ${appWithCli}/bin/t3 $work/scenario/path/t3
+        run ${telemetryAppAt otherCli} telemetry-other-app-t3 0
+        has "is another t3code-nix app's own t3 (withCli, t3code-0.1.9), not this configuration's app; this build's telemetry setting may not apply to it"
+        run ${telemetryAppAt appWithCli} telemetry-own-app-t3 0
+        has "OK       t3: the app's own ($work/scenario/path/t3, withCli)"
+        # Another Nix package's t3 first on PATH.
+        ln -sfn ${foreignCli}/bin/t3 $work/scenario/path/t3
+        run ${telemetryOff} telemetry-t3-other-package 0
+        has "not t3code-nix; this build's telemetry setting may not apply to it"
+        run ${telemetryOn} telemetry-t3-other-package-on 0
+        hasnt "may not apply to it"
+        scenario
+        run ${telemetryStandaloneOn} telemetry-standalone 0
+        has "on (T3 Code's default); this doctor knows this flake's default packages, not one you overrode"
+        has "→ to turn it off, use the package with .override { telemetry = false; }"
+        # This shell's environment, judged per program.
+        export T3CODE_TELEMETRY_ENABLED=true
+        run ${telemetryOff} telemetry-env-on 0
+        has "WARN     this shell sets T3CODE_TELEMETRY_ENABLED to true: the app and t3 started from here can send usage data, though this build turns it off"
+        export DO_NOT_TRACK=' YES '
+        run ${telemetryOff} telemetry-env-on-dnt 0
+        hasnt "WARN"
+        has "OK       this shell: T3CODE_TELEMETRY_ENABLED true, DO_NOT_TRACK set (asks programs started from here to send no usage data, which T3 Code 0.1.12 and later honour)"
+        # Trimmed at its ends only, as T3 Code reads it.
+        export DO_NOT_TRACK='Y ES'
+        run ${telemetryOff} telemetry-env-on-dnt-inner 0
+        has "DO_NOT_TRACK set, but not to an opt-out"
+        has "can send usage data"
+        unset DO_NOT_TRACK
+        run ${telemetryUnknown} telemetry-env-on-unknown 0
+        hasnt "WARN"
+        has "OK       the app: unknown (a package without t3code-nix's telemetry setting)"
+        run ${telemetryOn} telemetry-env-on-build-on 0
+        hasnt "WARN"
+        for v in maybe FALSE; do
+          export T3CODE_TELEMETRY_ENABLED=$v
+          run ${telemetryOff} "telemetry-env-$v" 0
+          has "WARN     this shell's T3CODE_TELEMETRY_ENABLED is a value T3 Code rejects (rejected): the app and t3 started from here won't start its server"
+        done
+        export T3CODE_TELEMETRY_ENABLED='  '
+        run ${telemetryOff} telemetry-env-blank-off 0
+        hasnt "WARN"
+        run ${telemetryOn} telemetry-env-blank-on 0
+        has "WARN     this shell's T3CODE_TELEMETRY_ENABLED is a value T3 Code rejects (blank): the app and t3 started"
+        run ${telemetryMixed} telemetry-env-blank-mixed 0
+        has "rejects (blank): t3 started from here"
+        hasnt "the app and t3"
+        export T3CODE_TELEMETRY_ENABLED=
+        run ${telemetryOn} telemetry-env-empty-on 0
+        hasnt "WARN"
+        has "OK       this shell: T3CODE_TELEMETRY_ENABLED unset, DO_NOT_TRACK unset"
+        export T3CODE_TELEMETRY_ENABLED=$'x\nWARN forged'
+        run ${telemetryOff} telemetry-env-control 0
+        hasnt "forged"
+        unset T3CODE_TELEMETRY_ENABLED
+        # The running server: its starting environment, this flake's unit.
+        scenario
+        ourunit $sysu
+        printf 'loaded\nactive\n/etc/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        echo 4242 > $work/scenario/mainpid
+        mkdir -p $work/scenario/root/proc/4242
+        senv() { printf '%b' "$1" > $work/scenario/root/proc/4242/environ; }
+        senv 'A=1\0T3CODE_TELEMETRY_ENABLED=false\0'
+        run ${telemetryOff} telemetry-server-match 0
+        has "OK       server: started with T3CODE_TELEMETRY_ENABLED false, DO_NOT_TRACK unset"
+        senv 'A=1\0'
+        run ${telemetryOff} telemetry-server-stale 0
+        has "WARN     server: started with T3CODE_TELEMETRY_ENABLED absent, DO_NOT_TRACK unset, but this build turns usage data off: it started from an older build"
+        has "systemctl --user daemon-reload"
+        # Running though this configuration's server is off: only the stop
+        # advice, no restart.
+        run ${telemetryServerOff} telemetry-server-stale-off 0
+        has "still running from before"
+        has "OK       server: started with T3CODE_TELEMETRY_ENABLED absent"
+        hasnt "older build"
+        # The same for a user server.users leaves out (alice isn't bob).
+        run ${telemetryServerExcluded} telemetry-server-stale-excluded 0
+        has "still running for you (alice), from before"
+        has "OK       server: started with T3CODE_TELEMETRY_ENABLED absent"
+        hasnt "older build"
+        senv 'T3CODE_TELEMETRY_ENABLED=\0'
+        run ${telemetryOff} telemetry-server-empty 0
+        has "it started from an older build"
+        senv 'T3CODE_TELEMETRY_ENABLED=  \0'
+        run ${telemetryOff} telemetry-server-blank 0
+        has "T3CODE_TELEMETRY_ENABLED blank, DO_NOT_TRACK unset, but this build turns usage data off: it started from an older build"
+        senv 'T3CODE_TELEMETRY_ENABLED=true\0'
+        run ${telemetryOff} telemetry-server-explicit 0
+        has "but this build turns usage data off: the server's environment sets it"
+        has "or from the unit or a drop-in for it (\`systemctl --user cat t3code-server\` shows both; after changing one, \`systemctl --user daemon-reload\`)"
+        # DO_NOT_TRACK keeps it off for a server of this build, which honours
+        # it, not for another (T3 Code before 0.1.12 ignored it). The doctor
+        # is given the CLI's unwrapped path it compares with.
+        data=$(sed -n 's|^\. \(/nix/store/[^ ]*-t3code-nix-doctor-data\)$|\1|p' ${telemetryOff}/bin/t3code-nix-doctor)
+        grep -qxF "CLI_UNWRAPPED=${telemetryOff.cliUnwrappedPath}" "$data" \
+          || grep -qxF "CLI_UNWRAPPED='${telemetryOff.cliUnwrappedPath}'" "$data" \
+          || { echo "the doctor's data has no CLI_UNWRAPPED for ${telemetryOff.cliUnwrappedPath}"; exit 1; }
+        senv 'T3CODE_TELEMETRY_ENABLED=true\0DO_NOT_TRACK=1\0'
+        printf '%s/libexec/t3/t3\0serve\0' ${telemetryOff.cliUnwrappedPath} > $work/scenario/root/proc/4242/cmdline
+        run ${telemetryOff} telemetry-server-dnt 0
+        has "OK       server: started with T3CODE_TELEMETRY_ENABLED true, DO_NOT_TRACK set"
+        senv 'DO_NOT_TRACK=1\0'
+        printf '/nix/store/00000000000000000000000000000000-t3-unwrapped-0.1.11/libexec/t3/t3\0serve\0' > $work/scenario/root/proc/4242/cmdline
+        run ${telemetryOff} telemetry-server-dnt-older 0
+        has "WARN     server: started with T3CODE_TELEMETRY_ENABLED absent, DO_NOT_TRACK set, but this build turns usage data off: it started from an older build"
+        rm $work/scenario/root/proc/4242/cmdline
+        # Traced (bash -x), the doctor shows nothing of the server's
+        # environment, not even the two values it reads.
+        senv 'API_KEY=sentinel-secret\0DO_NOT_TRACK=sentinel-dnt\0T3CODE_TELEMETRY_ENABLED=sentinel-tel\0'
+        run ${telemetryOff} telemetry-server-traced 0
+        # The shell's own two values too.
+        T3CODE_DOCTOR_USER=alice T3CODE_DOCTOR_UID=1000 HOME=$work/home T3CODE_DOCTOR_ROOT=$work/scenario/root \
+          T3CODE_TELEMETRY_ENABLED=sentinel-shell-tel DO_NOT_TRACK=sentinel-shell-dnt \
+          PATH="$work/scenario/path:$work/bin:$PATH" bash -x ${telemetryOff}/bin/t3code-nix-doctor > /dev/null 2> $work/trace || true
+        grep -q 'set +x' $work/trace || { echo "telemetry-server-traced: no trace"; exit 1; }
+        ! grep -q sentinel $work/trace || { echo "telemetry-server-traced: the server's environment reached the trace"; grep sentinel $work/trace | head -3; exit 1; }
+        senv 'T3CODE_TELEMETRY_ENABLED=false\0'
+        run ${telemetryOn} telemetry-server-own-off 0
+        has "OK       server: started with T3CODE_TELEMETRY_ENABLED false"
+        hasnt "WARN"
+        # A standalone doctor, and the other module's, report it only.
+        senv 'A=1\0'
+        run ${telemetryStandalone} telemetry-server-standalone 0
+        has "OK       server: started with T3CODE_TELEMETRY_ENABLED absent"
+        run ${telemetryOffHm} telemetry-server-other-module 0
+        has "OK       server: started with T3CODE_TELEMETRY_ENABLED absent"
+        hasnt "older build"
+        # Unreadable, and a process that changed while it was read.
+        rm $work/scenario/root/proc/4242/environ
+        run ${telemetryOff} telemetry-server-unreadable 0
+        has "OK       server: its usage data setting is unknown"
+        senv 'A=1\0'
+        echo 4343 > $work/scenario/mainpid-next
+        run ${telemetryOff} telemetry-server-pid-changed 0
+        has "OK       server: its usage data setting is unknown"
+        # There, but the read fails; and still the wrapper's shell.
+        rm -f $work/scenario/mainpid-next; echo 4242 > $work/scenario/mainpid
+        chmod 000 $work/scenario/root/proc/4242/environ
+        run ${telemetryOff} telemetry-server-read-fails 0
+        has "OK       server: its usage data setting is unknown"
+        chmod 644 $work/scenario/root/proc/4242/environ
+        printf '/nix/store/00000000000000000000000000000000-bash-5.3/bin/bash\0/nix/store/x-t3/bin/t3\0serve\0' > $work/scenario/root/proc/4242/cmdline
+        run ${telemetryOff} telemetry-server-before-exec 0
+        has "OK       server: its usage data setting is unknown"
+        printf '/nix/store/00000000000000000000000000000000-t3-unwrapped-0.1.9/bin/t3\0serve\0' > $work/scenario/root/proc/4242/cmdline
+        run ${telemetryOff} telemetry-server-after-exec 0
+        has "it started from an older build"
+        # Another t3code.service isn't configured by the switch.
+        scenario
+        upstream
+        run ${telemetryOff} telemetry-upstream 0
+        has "programs.t3code.telemetry.enable doesn't configure that service, so it may send usage data"
+        run ${telemetryOn} telemetry-upstream-on 0
+        hasnt "doesn't configure that service"
+        # Home Manager's own store-backed one, and one whose file is gone.
+        echo 'ExecStart=/nix/store/00000000000000000000000000000000-t3code-0.1.8/bin/t3 serve' > $work/scenario/home/.config/systemd/user/t3code.service
+        run ${telemetryOff} telemetry-nix-unit 0
+        has "runs a T3 Code from Nix (Home Manager's own programs.t3code.server, likely), beside t3code-server: on the same port or T3 home, the two contend; programs.t3code.telemetry.enable doesn't configure that service"
+        has "or give them different ports and T3 homes"
+        # Home Manager's module allows only one of them, whatever the ports;
+        # a standalone doctor can't tell whose t3code-server it is.
+        run ${telemetryOffHm} telemetry-nix-unit-hm 0
+        has "turn one of them off"
+        hasnt "different ports"
+        run ${telemetryStandalone} telemetry-nix-unit-standalone 0
+        has "turn one of them off"
+        hasnt "different ports"
+        scenario
+        printf 'not-found\nactive\n' > $work/scenario/upstream-unit
+        run ${telemetryOff} telemetry-unit-gone 0
+        has "t3code.service is still running, though its unit file is gone; programs.t3code.telemetry.enable doesn't configure that service"
+
+        # Only reads: nothing but `config show`, `store info` and `show`, with
+        # this flake's unit running (so the server's environment is read).
+        scenario
+        ourunit $sysu
+        printf 'loaded\nactive\n/etc/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        echo 4242 > $work/scenario/mainpid
+        mkdir -p $work/scenario/root/proc/4242
+        printf 'A=1\0' > $work/scenario/root/proc/4242/environ
         run ${doctor} calls 0
-        if grep -v "^nix --extra-experimental-features nix-command config show \|^nix --extra-experimental-features nix-command store info --json$\|^systemctl --user show t3code-server.service " $work/calls; then
+        has "server: started with T3CODE_TELEMETRY_ENABLED absent"
+        if grep -v "^nix --extra-experimental-features nix-command config show \|^nix --extra-experimental-features nix-command store info --json$\|^systemctl --user show t3code-server.service \|^systemctl --user show -p MainPID --value t3code-server.service$\|^systemctl --user show t3code.service " $work/calls; then
           echo "a call that isn't a read"; exit 1
         fi
         touch $out
@@ -3173,6 +4125,8 @@ let
       "every flake output is there; `default` (the app again) isn't at the top level" =
         plain.flake.packages.${system}.t3.drvPath == packages.t3.drvPath
         && plain.flake ? nixosModules
+        # Evaluated in a Home Manager config by hm-module-eval.
+        && plain ? homeModules.default
         && plain.flake ? overlays
         && !(plain ? default);
       "its NixOS module installs T3 Code" = builtins.elem packages.t3code.drvPath (
@@ -3244,24 +4198,34 @@ let
   cache-settings =
     let
       nixConfig = (import ../flake.nix).nixConfig or null;
-      # The template gives the same lines to new users' flakes.
+      # The templates give the same lines to new users' flakes.
       templateConfig = (import ../templates/default/flake.nix).nixConfig or null;
+      hmTemplateConfig = (import ../templates/home-manager/flake.nix).nixConfig or null;
       readme = builtins.readFile ../README.md;
     in
     conditions "cache-settings" (
       if cache.publicKey == null then
         {
           "no cache (lib/cache.nix has no key), so flake.nix must have no nixConfig" = nixConfig == null;
-          "no cache, so the template must have no nixConfig either" = templateConfig == null;
+          "no cache, so the templates must have no nixConfig either" =
+            templateConfig == null && hmTemplateConfig == null;
           "no cache, so the README must not give a key" = !lib.hasInfix ".cachix.org-1:" readme;
         }
       else
         {
-          "the template's nixConfig must be exactly lib/cache.nix's substituter and key" =
-            templateConfig == {
-              extra-substituters = [ cache.url ];
-              extra-trusted-public-keys = [ cache.publicKey ];
-            };
+          "the templates' nixConfig must be exactly lib/cache.nix's substituter and key" =
+            builtins.all
+              (
+                c:
+                c == {
+                  extra-substituters = [ cache.url ];
+                  extra-trusted-public-keys = [ cache.publicKey ];
+                }
+              )
+              [
+                templateConfig
+                hmTemplateConfig
+              ];
           "flake.nix's nixConfig must be exactly lib/cache.nix's substituter and key" =
             nixConfig == {
               extra-substituters = [ cache.url ];
@@ -5322,6 +6286,116 @@ let
             ])
         + "touch $out"
       );
+  # T3 Code's usage data (pkgs/t3code/wrap.nix, `telemetry`). The line an
+  # off build's wrappers run: unset, empty and blank become false, anything
+  # else stays (tried under makeWrapper, as guard-environment does). Then the
+  # wiring, as relay-client reads it: with the default no wrapper mentions
+  # the variable (nothing changes for anyone who leaves it on); off, every
+  # program has the line on its own, before its (first) exec, the overlay's
+  # t3code (withCli: its inner t3 and t3code-desktop link) too. The overlay
+  # is the unstable one, so the stable suites leave it out.
+  t3code-telemetry-wrapper =
+    let
+      run = packages.t3.passthru.telemetryRun;
+      onDefault = pkgs.path == overlayAllowed.path;
+      ons = present (
+        [
+          packages.t3code
+          (packages.t3code-nightly or null)
+          (packages.t3code-free or null)
+          packages.t3
+          (packages.t3-nightly or null)
+          (packages.t3-free or null)
+        ]
+        ++ lib.optional onDefault overlayAllowed.t3code
+      );
+      offs = map (p: p.override { telemetry = false; }) ons;
+      # The programs each must have: its own, and with withCli its t3 and, on
+      # the latest channel, t3code-desktop.
+      expected =
+        p:
+        [ p.meta.mainProgram ]
+        ++ lib.optionals (p.passthru.withCli or false) (
+          [ "t3" ] ++ lib.optional (p.meta.mainProgram == "t3code") "t3code-desktop"
+        );
+      programs = pkg: ''
+        for name in ${toString (expected pkg)}; do
+          [ -x ${pkg}/bin/$name ] || { echo "${pkg.name}: no bin/$name"; exit 1; }
+        done
+      '';
+      cases = [
+        [
+          "unset"
+          "false"
+        ]
+        [
+          ""
+          "false"
+        ]
+        [
+          "  "
+          "false"
+        ]
+        [
+          "\t"
+          "false"
+        ]
+        [
+          "true"
+          "true"
+        ]
+        [
+          "0"
+          "0"
+        ]
+        [
+          "FALSE"
+          "FALSE"
+        ]
+        [
+          "maybe"
+          "maybe"
+        ]
+      ];
+    in
+    runCommand "t3code-telemetry-wrapper" { nativeBuildInputs = [ pkgs.makeWrapper ]; } (
+      ''
+        makeWrapper ${pkgs.writeShellScript "print-telemetry" ''printf '%s\n' "''${T3CODE_TELEMETRY_ENABLED-<unset>}"''} w --run ${lib.escapeShellArg run}
+      ''
+      + lib.concatMapStrings (c: ''
+        value=${lib.escapeShellArg (builtins.head c)}
+        if [ "$value" = unset ]; then got=$(env -u T3CODE_TELEMETRY_ENABLED ./w); else got=$(T3CODE_TELEMETRY_ENABLED="$value" ./w); fi
+        [ "$got" = ${lib.escapeShellArg (lib.last c)} ] || { echo "T3CODE_TELEMETRY_ENABLED='$value': got '$got', expected '${lib.last c}'"; exit 1; }
+      '') cases
+      + lib.concatMapStrings (pkg: ''
+        ${programs pkg}
+        for bin in ${pkg}/bin/*; do
+          rc=0; grep -q T3CODE_TELEMETRY_ENABLED "$(readlink -f "$bin")" || rc=$?
+          [ "$rc" = 1 ] || { echo "$bin (telemetry on) mentions T3CODE_TELEMETRY_ENABLED, or can't be read"; exit 1; }
+        done
+      '') ons
+      + lib.concatMapStrings (pkg: ''
+        ${programs pkg}
+        for bin in ${pkg}/bin/*; do
+          f=$(readlink -f "$bin")
+          at=$(grep -nxF -- ${lib.escapeShellArg run} "$f" | head -1 | cut -d: -f1 || true)
+          first=$(grep -n '^exec ' "$f" | head -1 | cut -d: -f1 || true)
+          [ -n "$at" ] && [ -n "$first" ] && [ "$at" -lt "$first" ] \
+            || { echo "$bin (telemetry = false): the line isn't before its exec"; exit 1; }
+        done
+      '') offs
+      + "touch $out"
+    );
+  # What leaves the server, analytics only (relay traces need T3 Connect):
+  # `t3 serve` with T3 Code's analytics host at a loopback listener. On by
+  # default, something is sent (a server.boot.heartbeat batch, today); with
+  # telemetry = false, a server that answers, runs as long as the on run
+  # took to send plus a margin and past the 10 s flush interval
+  # (FLUSH_INTERVAL_MS), and stops on SIGTERM (its shutdown flush) sends
+  # nothing. Each run has its own HOME, free ports and listener, and only
+  # the variables set here.
+  t3-telemetry-sends = telemetrySends packages.t3;
+  t3-nightly-telemetry-sends = telemetrySends (packages.t3-nightly or null);
   # Every .nix file is as `nix fmt` leaves it (run that to fix one). Branch
   # CI only (scripts/ci/test.ts BRANCH_ONLY): a nixpkgs bump with a newer
   # nixfmt never fails on it.
@@ -6640,8 +7714,28 @@ let
         touch $out
       '';
 
+  hmChecks = import ./hm-checks.nix {
+    inherit
+      lib
+      pkgs
+      path
+      runCommand
+      self
+      cache
+      packages
+      overlayAllowed
+      homeManager
+      conditions
+      ;
+  };
 in
 {
+  inherit (hmChecks)
+    hm-module-eval
+    hm-nixos-eval
+    hm-unit-parity
+    hm-template
+    ;
   inherit
     update-guards
     updater-switches
@@ -6654,6 +7748,9 @@ in
     codex-guard-flags
     provider-commands
     relay-client
+    t3code-telemetry-wrapper
+    t3-telemetry-sends
+    t3-nightly-telemetry-sends
     nix-format
     unit
     typecheck

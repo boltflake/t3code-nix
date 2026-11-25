@@ -6,7 +6,7 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -691,6 +691,36 @@ test("default-nix-lazy: lists the packages with NixOS stable swapped for an abor
     assert.equal(seen, 'let\n  stableSrc = abort "default-nix-lazy: NixOS stable was evaluated";\nin { }\n');
     assert.deepEqual(lazyFailures("x86_64-linux", tree(flake), () => ({ status: 1, stdout: "", stderr: "aborted" })), ["default-nix-lazy"]);
     assert.deepEqual(lazyFailures("x86_64-linux", tree("{ }\n"), list), ["default-nix-lazy"]);
+  } finally {
+    console.error = err;
+  }
+});
+
+test("home-manager-lazy: every check but hm-* evaluates with Home Manager swapped for an abort, and can't pass vacuously", async () => {
+  const { homeManagerLazyFailures } = await import("../scripts/ci/test.ts");
+  const flake = 'let\n  homeManagerSrc = builtins.fetchTarball {\n    url = "https://x/${homeManagerPin.rev}.tar.gz";\n    sha256 = homeManagerPin.narHash;\n  };\nin { }\n';
+  const tree = (text: string) => () => { const d = mkdtempSync(join(tmp, "copy-")); writeFileSync(join(d, "flake.nix"), text); return d; };
+  let seen = "";
+  const evaluate = (stdout: string) => (dir: string) => { seen = readFileSync(join(dir, "flake.nix"), "utf8"); return { status: 0, stdout, stderr: "" }; };
+  const listed = JSON.stringify({ unit: "/nix/store/a-unit.drv", "hm-module-eval": null });
+  const err = console.error;
+  console.error = () => {};
+  try {
+    assert.deepEqual(homeManagerLazyFailures("x86_64-linux", tree(flake), evaluate(listed)), []);
+    assert.equal(seen, 'let\n  homeManagerSrc = abort "home-manager-lazy: Home Manager was evaluated";\nin { }\n');
+    // A check that forces the fetch: the evaluation aborts.
+    assert.deepEqual(homeManagerLazyFailures("x86_64-linux", tree(flake), () => ({ status: 1, stdout: "", stderr: "aborted" })), ["home-manager-lazy"]);
+    // Nothing to swap, or no hm-* checks: not a pass.
+    assert.deepEqual(homeManagerLazyFailures("x86_64-linux", tree("{ }\n"), evaluate(listed)), ["home-manager-lazy"]);
+    assert.deepEqual(homeManagerLazyFailures("x86_64-linux", tree(flake), evaluate(JSON.stringify({ unit: "/nix/store/a-unit.drv" }))), ["home-manager-lazy"]);
+    // A zero exit with no check list (empty, or not an object): not a pass.
+    assert.deepEqual(homeManagerLazyFailures("x86_64-linux", tree(flake), evaluate("")), ["home-manager-lazy"]);
+    assert.deepEqual(homeManagerLazyFailures("x86_64-linux", tree(flake), evaluate("[]")), ["home-manager-lazy"]);
+    // Only hm-* checks: no other check's drvPath was evaluated.
+    assert.deepEqual(homeManagerLazyFailures("x86_64-linux", tree(flake), evaluate(JSON.stringify({ "hm-module-eval": null }))), ["home-manager-lazy"]);
+    // The copied flake can't be written: a failure, not a crash.
+    const readOnly = () => { const d = tree(flake)(); chmodSync(join(d, "flake.nix"), 0o444); return d; };
+    if (process.getuid?.() !== 0) assert.deepEqual(homeManagerLazyFailures("x86_64-linux", readOnly, evaluate(listed)), ["home-manager-lazy"]);
   } finally {
     console.error = err;
   }

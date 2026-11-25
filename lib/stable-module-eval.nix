@@ -16,9 +16,13 @@
 let
   inherit (pkgs.stdenv.hostPlatform) system;
   module = import ../nixos/module.nix {
-    inherit (self) packages;
+    core = import ./module-core.nix {
+      inherit (self) packages;
+      inherit cache;
+      stable.${system} = set;
+      serverBackup.${system}.stable = import ./server-backup.nix { inherit pkgs; };
+    };
     inherit cache;
-    stable.${system} = set;
   };
   eval =
     settings:
@@ -90,6 +94,12 @@ let
     nixpkgs = "stable";
     runtimeCompat = true;
   };
+  telemetryOff = eval {
+    enable = true;
+    nixpkgs = "stable";
+    cli.enable = true;
+    telemetry.enable = false;
+  };
   withNightly = eval {
     enable = true;
     nixpkgs = "stable";
@@ -107,6 +117,10 @@ let
       lib.sort lib.lessThan (
         drvs (builtins.filter (p: builtins.elem (lib.getName p) names) onStable.environment.systemPackages)
       ) == lib.sort lib.lessThan (drvs set.t3code.providers);
+    "telemetry.enable = false gives the stable set's app and CLI, off" =
+      drvs (installed telemetryOff "t3code") == [ (set.t3code.override { telemetry = false; }).drvPath ]
+      && drvs (installed telemetryOff "t3") == [ (set.t3.override { telemetry = false; }).drvPath ]
+      && !failedAssertion telemetryOff;
     "the server runs the stable set's t3" =
       lib.hasPrefix "${set.t3}/bin/" server.systemd.user.services.t3code-server.serviceConfig.ExecStart;
     "an explicit package wins; the CLI stays stable, with the app's providers" =

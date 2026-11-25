@@ -32,6 +32,18 @@
         "aarch64-darwin"
       ];
       cache = import ./lib/cache.nix;
+      # What the NixOS and Home Manager modules share (lib/module-core.nix).
+      core = import ./lib/module-core.nix {
+        inherit (self) packages;
+        # nixpkgs = "stable": only evaluated when chosen.
+        stable = lib.mapAttrs (_: l: l.stable) self.legacyPackages;
+        inherit cache;
+        # The server's database copy, from the flake's own package set.
+        serverBackup = forAllSystems (system: {
+          unstable = import ./lib/server-backup.nix { pkgs = pkgsFor system; };
+          stable = import ./lib/server-backup.nix { pkgs = stablePkgsFor system; };
+        });
+      };
 
       # Running this flake's own outputs is the opt-in to the unfree
       # packages it bundles, and to those only (see README, "Unfree
@@ -55,6 +67,13 @@
       stableSrc = builtins.fetchTarball {
         url = "https://github.com/NixOS/nixpkgs/archive/${stablePin.rev}.tar.gz";
         sha256 = stablePin.narHash;
+      };
+      # Home Manager master, for the hm-* checks (lib/hm-checks.nix) and
+      # vmTests.homeManager: fetched only when one of them is evaluated.
+      homeManagerPin = lib.importJSON ./ci/home-manager.json;
+      homeManagerSrc = builtins.fetchTarball {
+        url = "https://github.com/nix-community/home-manager/archive/${homeManagerPin.rev}.tar.gz";
+        sha256 = homeManagerPin.narHash;
       };
       stablePkgsFor =
         system:
@@ -117,6 +136,7 @@
             freeSet
             noFallback
             ;
+          homeManager = homeManagerSrc;
           # nixpkgs as an overlay user without allowUnfree has it.
           overlayPkgs = import nixpkgs {
             inherit system;
@@ -213,14 +233,17 @@
         });
 
       nixosModules = rec {
-        t3code = import ./nixos/module.nix {
-          inherit (self) packages;
-          # programs.t3code.nixpkgs = "stable": only evaluated when chosen.
-          stable = lib.mapAttrs (_: l: l.stable) self.legacyPackages;
-          inherit cache;
-        };
+        t3code = import ./nixos/module.nix { inherit core cache; };
         default = t3code;
       };
+
+      # programs.t3code-nix for Home Manager (home-manager/module.nix).
+      homeModules = rec {
+        t3code-nix = import ./home-manager/module.nix { inherit core; };
+        default = t3code-nix;
+      };
+      # The same, under the name older guides use.
+      homeManagerModules = self.homeModules;
 
       # Every package builds and passes its version probe, plus the smoke tests.
       checks = forAllSystems (
@@ -278,11 +301,33 @@
         '';
       };
 
+      # `nix flake init -t github:boltflake/t3code-nix#home-manager`: a
+      # standalone Home Manager flake with the module (templates/home-manager;
+      # checked by `hm-template`).
+      templates.home-manager = {
+        path = ./templates/home-manager;
+        description = "Home Manager with T3 Code from t3code-nix, on NixOS or another Linux";
+        welcomeText = ''
+          Wrote flake.nix: Home Manager with T3 Code. Set your user name,
+          home folder and system in it (the lines marked), then run this,
+          with YOUR_USERNAME replaced by that user name:
+
+          ```
+          nix run github:nix-community/home-manager/master -- switch --flake '.#YOUR_USERNAME'
+          ```
+        '';
+      };
+
       # Too heavy for `checks` (they need KVM); see lib/vm-test.nix.
       legacyPackages = forAllSystems (system: {
         vmTests.server = import ./lib/vm-test.nix {
           inherit self;
           pkgs = pkgsFor system;
+        };
+        vmTests.homeManager = import ./lib/vm-test-home-manager.nix {
+          inherit self;
+          pkgs = pkgsFor system;
+          homeManager = homeManagerSrc;
         };
         # NixOS stable (programs.t3code.nixpkgs = "stable"). Not evaluated by
         # `nix flake show` or `nix flake check`, so nothing fetches the stable

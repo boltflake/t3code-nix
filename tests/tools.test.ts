@@ -114,6 +114,8 @@ case "$1" in
   eval) case " $* " in *" --raw "*) ls "${join(tmp, "out")}"/candidate-${SYS}*.json >/dev/null 2>&1 && touch "$state/raw-after-result"; exit 1 ;; esac
     # A part asks for the names first, then only its checks.
     case " $* " in *" builtins.attrNames "*) echo '${JSON.stringify(names)}'; exit 0 ;; esac
+    # home-manager-lazy, on a copy of the tree: the list with an hm-* check.
+    case " $* " in *" path:"*"#checks.${SYS} "*) touch "$state/hm-lazy"; echo '{"a":"/nix/store/a.drv","hm-module-eval":null}'; exit 0 ;; esac
     echo x >> "$state/evals"
     case " $* " in *"inherit (cs)"*) for a; do last=$a; done
       ${process.execPath} -e 'const want = [...process.argv[1].matchAll(/"([a-z0-9-]+)"/g)].map((m) => m[1]); const all = JSON.parse(process.argv[2]); console.log(JSON.stringify(Object.fromEntries(Object.entries(all).filter(([n]) => want.includes(n)))))' "$last" '${evaled}' ;;
@@ -153,7 +155,7 @@ esac
   // A checkout for default-nix-lazy's copy (the sandbox has no git repository).
   const repo = join(tmp, "repo");
   mkdirSync(repo);
-  writeFileSync(join(repo, "flake.nix"), 'let\n  stableSrc = builtins.fetchTarball {\n    url = "x";\n  };\nin { }\n');
+  writeFileSync(join(repo, "flake.nix"), 'let\n  stableSrc = builtins.fetchTarball {\n    url = "x";\n  };\n  homeManagerSrc = builtins.fetchTarball {\n    url = "y";\n  };\nin { }\n');
   writeFileSync(join(repo, "default.nix"), "{ }\n");
   const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
   for (const args of [["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "x"]]) execFileSync("git", args, { cwd: repo, env: gitEnv });
@@ -204,6 +206,8 @@ test("test.ts: failures are built once more, and only they are", () => {
   assert.ok(manifestAt > 0 && manifestAt < src.indexOf("\n  write();\n"), "manifest, then the result");
   // default-nix-lazy listed default.nix (from a copy) without flakes.
   assert.match(readFileSync(join(tmp, "state", "nix-env"), "utf8"), /^--option experimental-features {2}-qa -f \/.*\/default\.nix --argstr system x86_64-linux\n$/);
+  // home-manager-lazy evaluated the checks from a copy, Home Manager swapped.
+  assert.ok(existsSync(join(tmp, "state", "hm-lazy")));
 });
 
 test("test.ts: a part builds only its own checks and runs only its own smokes and evaluations, into its own files", async () => {
@@ -214,6 +218,7 @@ test("test.ts: a part builds only its own checks and runs only its own smokes an
   assert.deepEqual(result.failed, ["t3code-nightly", "desktop-smoke", "desktop-smoke-electron-bundled", "desktop-smoke-nightly"]);
   assert.deepEqual(result.electron.channels.t3code.passed, ["t3code-electron-bundled"], "the desktop part vouches for the bundled app it built");
   assert.ok(!existsSync(join(tmp, "state", "nix-env")), "the lazy evaluation is rest2's");
+  assert.ok(!existsSync(join(tmp, "state", "hm-lazy")), "so is Home Manager's");
   assert.ok(!existsSync(join(tmp, "state", "raw-after-result")), "the stable evaluation is rest2's");
   rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true });
   // rest2: its share of the others, no desktop or agent-browser smoke, the
@@ -249,6 +254,8 @@ test("parts: every check has exactly one part, by the rules in scripts/lib/parts
   assert.equal(testPart("t3code-nightly-electron-bundled"), "desktop");
   assert.equal(testPart("agent-browser"), "rest1");
   assert.equal(testPart("agent-browser-stable-chromium"), "rest1");
+  assert.equal(testPart("module-eval"), "desktop");
+  for (const n of ["hm-module-eval", "hm-nixos-eval", "hm-unit-parity", "hm-template"]) assert.equal(testPart(n), "desktop");
   for (const n of ["codex", "fx", "unit", "provider-wrappers"]) {
     assert.ok(["rest1", "rest2"].includes(testPart(n)));
     assert.equal(testPart(n), testPart(n), "the same every time");

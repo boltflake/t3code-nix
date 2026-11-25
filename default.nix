@@ -5,6 +5,7 @@
 #   t3code-nix = import (fetchTarball "https://github.com/boltflake/t3code-nix/archive/main.tar.gz") { };
 #     t3code-nix.t3code               this system's packages, at the top level
 #     t3code-nix.nixosModules.default the NixOS module
+#     t3code-nix.homeModules.default  the Home Manager module
 #     t3code-nix.overlays.default     the overlay
 #     t3code-nix.flake                every flake output, by system
 #
@@ -48,7 +49,7 @@ in
 # A system without packages keeps its stub (lib/unsupported.nix).
 (if packages ? t3code then removeAttrs packages [ "default" ] else packages)
 // {
-  inherit (flake) nixosModules overlays;
+  inherit (flake) nixosModules homeModules overlays;
   inherit flake;
   # NixOS stable (the stable toggle) for this system; fetched only when used.
   stable = flake.legacyPackages.${system}.stable or { };

@@ -320,6 +320,68 @@ export function lazyFailures(system: string, copy = () => unpack(workingTree()),
   }
 }
 
+/** home-manager-lazy: the check list, and the drvPath of every check but
+ * the hm-* ones, with Home Manager's source replaced by an abort
+ * (flake.nix's homeManagerSrc, in a copy of the tree). So only the hm-*
+ * checks fetch or evaluate Home Manager, and a store path already present
+ * can't hide a fetch some other check forces (CI reads every check's
+ * drvPath). A flake.nix whose homeManagerSrc isn't found, or a list
+ * without hm-* checks, fails it too, so it can't pass vacuously. */
+export function homeManagerLazyFailures(system: string, copy = () => unpack(workingTree()),
+  evaluate = (dir: string, sys: string) => tryRun("nix", ["eval", "--json", `path:${dir}#checks.${sys}`, "--apply",
+    'cs: builtins.mapAttrs (n: c: if builtins.substring 0 3 n == "hm-" then null else c.drvPath) cs'])): string[] {
+  let dir: string;
+  try {
+    dir = copy();
+  } catch (e: any) {
+    console.error(`home-manager-lazy: couldn't copy the tree: ${e?.message ?? e}`);
+    return ["home-manager-lazy"];
+  }
+  try {
+    let flake: string, swapped: string;
+    try {
+      flake = readFileSync(join(dir, "flake.nix"), "utf8");
+      swapped = flake.replace(/homeManagerSrc = builtins\.fetchTarball \{[\s\S]*?\n\s*\};/, 'homeManagerSrc = abort "home-manager-lazy: Home Manager was evaluated";');
+      if (swapped !== flake) writeFileSync(join(dir, "flake.nix"), swapped);
+    } catch (e: any) {
+      console.error(`home-manager-lazy: couldn't prepare the copied flake: ${e?.message ?? e}`);
+      return ["home-manager-lazy"];
+    }
+    if (swapped === flake) {
+      console.error("home-manager-lazy: flake.nix has no `homeManagerSrc = builtins.fetchTarball { … };` to swap");
+      return ["home-manager-lazy"];
+    }
+    const r = evaluate(dir, system);
+    if (r.status !== 0) {
+      console.error(`home-manager-lazy: ${r.stderr.slice(-800)}`);
+      return ["home-manager-lazy"];
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(r.stdout);
+    } catch {
+      parsed = null;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      console.error(`home-manager-lazy: the evaluation printed no check list (${r.stdout.slice(0, 200)})`);
+      return ["home-manager-lazy"];
+    }
+    const listed = Object.entries(parsed as Record<string, string | null>);
+    if (!listed.some(([n]) => n.startsWith("hm-"))) {
+      console.error("home-manager-lazy: no hm-* checks were listed");
+      return ["home-manager-lazy"];
+    }
+    // Some other check's drvPath was evaluated, so the abort was in reach.
+    if (!listed.some(([n, drv]) => !n.startsWith("hm-") && typeof drv === "string" && drv.endsWith(".drv"))) {
+      console.error("home-manager-lazy: no other check's drvPath was evaluated");
+      return ["home-manager-lazy"];
+    }
+    return [];
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** The checks' outputs and .drvs, plus the desktop apps' Electron choice
  * and the forced variants' "not applicable" marker. */
 export const CHECKS_APPLY = `builtins.mapAttrs (_: c: { out = c.outPath; drv = c.drvPath;
@@ -410,6 +472,7 @@ export async function main(argv: string[]): Promise<void> {
   if (has("rest2")) {
     failed.push(...noFlakesFailures(system, checks));
     failed.push(...lazyFailures(system));
+    failed.push(...homeManagerLazyFailures(system));
   }
 
   // Packages are checks too, so their store paths are already known; the

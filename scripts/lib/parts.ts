@@ -5,8 +5,9 @@
 // runs' narrowing), they run everything.
 //
 // - The default suite (test.ts) in three: `desktop` (the T3 Code desktop
-//   apps, `t3code*`, their desktop smokes, and `module-eval`, the costliest
-//   evaluation), `rest1` (the agent-browser
+//   apps, `t3code*`, their desktop smokes, `module-eval`, the costliest
+//   evaluation, and the Home Manager checks, `hm-*`, which evaluate
+//   configurations too and build profiles with the desktop app), `rest1` (the agent-browser
 //   checks, `agent-browser*`, and the agent-browser smoke, which needs them
 //   built) and `rest2` (also the evaluations without flakes, lazily and of
 //   NixOS stable, which build nothing, and agent-browser's optional
@@ -33,7 +34,7 @@ export function testPart(name: string): TestPart {
   // The costliest evaluation (NixOS configurations): each part evaluates
   // only its own checks, and desktop's are otherwise few (its time goes on
   // the smokes, which evaluate nothing).
-  if (name === "module-eval") return "desktop";
+  if (name === "module-eval" || name.startsWith("hm-")) return "desktop";
   return half(name) === 0 ? "rest1" : "rest2";
 }
 
