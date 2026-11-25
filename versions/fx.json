@@ -1,29 +1,29 @@
 {
   "name": "fx",
-  "version": "0.0.17",
-  "tag": "v0.0.17",
+  "version": "0.0.18",
+  "tag": "v0.0.18",
   "assets": {
     "x86_64-linux": {
-      "url": "https://github.com/vercel-labs/fx/releases/download/v0.0.17/fx-linux-x86_64.tar.gz",
-      "hash": "sha256-eMFV1Z+lnkL9VtkwN/11BBhoycZ4ZejH8MptzfrCPnU=",
-      "assetId": 748854097,
-      "digest": "sha256:78c155d59fa59e42fd56d93037fd75041868c9c67865e8c7f0ca6dcdfac23e75"
+      "url": "https://github.com/vercel-labs/fx/releases/download/v0.0.18/fx-linux-x86_64.tar.gz",
+      "hash": "sha256-5JEgQMH7KhzaQWL9j0D8ZqqAoaCjBq9jMrVCa9ysmbY=",
+      "assetId": 792334773,
+      "digest": "sha256:e4912040c1fb2a1cda4162fd8f40fc66aa80a1a0a306af6332b5426bdcac99b6"
     },
     "aarch64-linux": {
-      "url": "https://github.com/vercel-labs/fx/releases/download/v0.0.17/fx-linux-aarch64.tar.gz",
-      "hash": "sha256-tGM7iYfsQ/G5RU5GKfO1pPHghqrja4SuT+/qzWpTdh8=",
-      "assetId": 748854099,
-      "digest": "sha256:b4633b8987ec43f1b9454e4629f3b5a4f1e086aae36b84ae4fefeacd6a53761f"
+      "url": "https://github.com/vercel-labs/fx/releases/download/v0.0.18/fx-linux-aarch64.tar.gz",
+      "hash": "sha256-Qyo0O30PsV3ORUqx4QBAHfHuTwH7HmiaZFV+a5pX7OU=",
+      "assetId": 792334791,
+      "digest": "sha256:432a343b7d0fb15dce454ab1e100401df1ee4f01fb1e689a64557e6b9a57ece5"
     }
   },
   "licenses": {
     "LICENSE": {
-      "url": "https://raw.githubusercontent.com/vercel-labs/fx/d1d4a883382daf8f2e7447dc361978312cf403d2/LICENSE",
+      "url": "https://raw.githubusercontent.com/vercel-labs/fx/6196071b3c1b8bca22614164a5597e4a11c1b2e7/LICENSE",
       "hash": "sha256-8ZMtq7SFbrb2y6aDvoZDOOZUASSSZCrrWeXkhIP4NsQ="
     }
   },
   "released": {
-    "at": "2026-11-14T21:37:54.000Z",
+    "at": "2026-11-25T16:50:38.000Z",
     "kind": "published"
   }
 }
