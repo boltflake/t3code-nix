@@ -1,29 +1,29 @@
 {
   "name": "pi",
-  "version": "1.6.0",
-  "tag": "v1.6.0",
+  "version": "1.6.1",
+  "tag": "v1.6.1",
   "assets": {
     "x86_64-linux": {
-      "url": "https://github.com/earendil-works/pi/releases/download/v1.6.0/pi-linux-x64.tar.gz",
-      "hash": "sha256-73fb5DebO960JaHhuGL6PJFcJVAA3+SWXJju6WpXZdE=",
-      "assetId": 771562455,
-      "digest": "sha256:ef77dbe4379b3bdeb425a1e1b862fa3c915c255000dfe4965c98eee96a5765d1"
+      "url": "https://github.com/earendil-works/pi/releases/download/v1.6.1/pi-linux-x64.tar.gz",
+      "hash": "sha256-PH8AcV61EuFlwNqMrTFNc8g7VNW/d0i+Stxhj8g1e2g=",
+      "assetId": 791633919,
+      "digest": "sha256:3c7f00715eb512e165c0da8cad314d73c83b54d5bf7748be4adc618fc8357b68"
     },
     "aarch64-linux": {
-      "url": "https://github.com/earendil-works/pi/releases/download/v1.6.0/pi-linux-arm64.tar.gz",
-      "hash": "sha256-VARUe5c5vlltUK5xQsUlNYmejn3Tenus6b5ZPgNVtGg=",
-      "assetId": 771562443,
-      "digest": "sha256:5404547b9739be596d50ae7142c52535899e8e7dd37a7bace9be593e0355b468"
+      "url": "https://github.com/earendil-works/pi/releases/download/v1.6.1/pi-linux-arm64.tar.gz",
+      "hash": "sha256-r95kHWxZBNJpYN20Ijv1Y7CGDPGg68RDuF3v9n0Eh1M=",
+      "assetId": 791633931,
+      "digest": "sha256:afde641d6c5904d26960ddb4223bf563b0860cf1a0ebc443b85deff67d048753"
     }
   },
   "licenses": {
     "LICENSE": {
-      "url": "https://raw.githubusercontent.com/earendil-works/pi/faac585884ae2c013a6b1400f3e9e77f10b34bac/LICENSE",
+      "url": "https://raw.githubusercontent.com/earendil-works/pi/ef4a1cfcca62b77ad3558337ff3e1c7f6beeadfe/LICENSE",
       "hash": "sha256-BFf1vOw7OyEWBd+10aSQQv1jjzaGpBD+CZwkolrxPEg="
     }
   },
   "released": {
-    "at": "2026-11-20T11:35:03.000Z",
+    "at": "2026-11-25T13:41:35.000Z",
     "kind": "published"
   }
 }
