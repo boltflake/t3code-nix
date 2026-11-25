@@ -44,6 +44,7 @@ import { join } from "node:path";
 import { Failed, readJson, SYSTEMS, VERSIONS } from "../lib/util.ts";
 import { load as loadCandidate, type Input } from "./candidate.ts";
 import { ALL, obs, type Observation } from "../update.ts";
+import { canonical, clip } from "./guard-issue.ts";
 import { activeChannels, bundledList, CHANNELS, pairOf, ROLES, samePair, type Channel, type Pair, type Reader } from "../lib/electron-fallback.ts";
 import type { ChannelEvidence, ElectronEvidence, SmokeState } from "./test.ts";
 
@@ -96,7 +97,7 @@ export function load(dir: string, trusted: Trusted | null = null): Map<string, S
     for (const n of r.notes ?? []) {
       if (!ALL.includes(n?.package) || typeof n.detail !== "string") continue;
       if (!s.notes.has(n.package)) s.notes.set(n.package, new Set());
-      s.notes.get(n.package)!.add(n.detail.slice(0, 2000));
+      s.notes.get(n.package)!.add(clip(canonical(n.detail), 2000));
     }
     s.systems.add(r.system);
     sets.set(r.set, s);

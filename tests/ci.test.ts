@@ -198,27 +198,80 @@ test("narrow: guard notes only for our packages, and the same note keeps its ver
 
 test("issues: guard-review opens per package and closes on guard-reviewed", async () => {
   const gh = new Fake();
-  await issues.apply([obs("guard-review", "codex", "3", "new option"), obs("guard-review", "t3", null, "new command")], gh, now);
-  assert.deepEqual(gh.issueList.map((i) => [i.title, i.state]), [["guard-review: codex", "open"], ["guard-review: t3", "open"]]);
+  const opt = (...names: string[]) => ["codex-value-option", "", ...names].join("\t");
+  await issues.apply([obs("guard-review", "codex", "3", opt("--a")), obs("guard-review", "t3", null, "t3-command\t\tup")], gh, now);
+  assert.deepEqual(gh.issueList.map((i) => [i.title, i.state]),
+    [["codex: new option not checked yet", "open"], ["t3: new command not checked yet", "open"]]);
   assert.deepEqual(issues.heldVersions(gh.issueList), [], "holds nothing");
-  await issues.apply([obs("guard-review", "codex", "3", "new option")], gh, hours(0.5)); // the same again: no comment
+  await issues.apply([obs("guard-review", "codex", "3", opt("--a"))], gh, hours(0.5)); // the same again: no comment
   assert.equal(gh.issueList[0].comments!.length, 0);
   await issues.apply([obs("guard-reviewed", "codex", "4", "")], gh, hours(1));
   assert.deepEqual(gh.issueList.map((i) => i.state), ["closed", "open"]);
-  // A later release adds another option: the same issue reopens, saying
-  // the detail is different, not that the reviewed one came back.
-  await issues.apply([obs("guard-review", "codex", "5", "newer option")], gh, hours(2));
+  assert.equal(gh.issueList[0].comments!.at(-1)!, "Closed: everything in codex 4 has been checked.");
+  // A later release adds another option: the same issue reopens, naming it,
+  // and its title and body follow.
+  await issues.apply([obs("guard-review", "codex", "5", opt("--a", "--b"))], gh, hours(2));
   assert.equal(gh.issueList[0].state, "open");
-  assert.equal(gh.issueList[0].comments!.at(-1)!, "Reopened at ` 5 `, with a different detail than it closed with:\n\n```\nnewer option\n```");
-  // Closed again, then the same detail back: that one is "It's back", at
-  // the version it's back in.
+  assert.equal(gh.issueList[0].comments!.at(-1)!,
+    "Reopened: codex 5 has 2 options that take a value, and the guard doesn't know them yet: `--a`, `--b`");
+  assert.equal(gh.issueList[0].title, "codex: new options not checked yet");
+  assert.match(gh.issueList[0].body, /^- `--b`$/m);
+  // Closed again, then the same items back: still not checked.
   await issues.apply([obs("guard-reviewed", "codex", "5", "")], gh, hours(3));
-  await issues.apply([obs("guard-review", "codex", "6", "newer option")], gh, hours(4));
-  assert.equal(gh.issueList[0].comments!.at(-1)!, "It's back at ` 6 `.\n\n```\nnewer option\n```");
-  // Closed by hand, then reported again at the same version: no version named.
-  gh.issueList[0].state = "closed";
-  await issues.apply([obs("guard-review", "codex", "6", "newer option")], gh, hours(5));
-  assert.equal(gh.issueList[0].comments!.at(-1)!, "It's back.\n\n```\nnewer option\n```");
+  await issues.apply([obs("guard-review", "codex", "6", opt("--b"))], gh, hours(4));
+  assert.equal(gh.issueList[0].comments!.at(-1)!, "Reopened: still not checked in codex 6: `--b`");
+  // Changed while open: a second kind, so two things to check.
+  await issues.apply([obs("guard-review", "codex", "7", `${opt("--b")}\ncodex-short-flag\t\tq`)], gh, hours(4.5));
+  assert.equal(gh.issueList[0].title, "codex: 2 things to check");
+  assert.equal(gh.issueList[0].comments!.at(-1)!, "Now to check:\n\n"
+    + "- codex 7 has an option that takes a value, and the guard doesn't know it yet: `--b`\n"
+    + "- codex 7 has a short flag that the guard doesn't know: `-q`");
+  // A day on: the reminder names them.
+  await issues.apply([obs("guard-review", "codex", "7", `${opt("--b")}\ncodex-short-flag\t\tq`)], gh, hours(29));
+  assert.equal(gh.issueList[0].comments!.at(-1)!, "Still not checked: `--b`, `-q`");
+});
+
+test("issues: a guard check's items become the issue's words, end to end", async () => {
+  // A check's output as lib/checks.nix writes it (`item`).
+  const out = join(tmp, "guard-out");
+  mkdirSync(out);
+  writeFileSync(join(out, "checked"), "codex\nt3\n");
+  writeFileSync(join(out, "notes"), "codex\tcodex-level-new\tapp-server daemon\tlogs\ncodex\tunreadable\tcodex-guard-flags\t\n");
+  const { checked, notes } = notesOf([out]);
+  const s: narrow.SetResult = { passed: true, failed: new Set(), systems: new Set(SYSTEMS), checked: new Set(checked), notes: new Map(), perSystem: new Map() };
+  for (const n of notes) s.notes.set(n.package, new Set([...(s.notes.get(n.package) ?? []), n.detail]));
+  const found = narrow.guardReview(s, [], () => "3");
+  const gh = new Fake();
+  await issues.apply(found, gh, now, "https://example.test/run/1");
+  assert.equal(gh.issueList.length, 1);
+  const [issue] = gh.issueList;
+  assert.equal(issue.title, "codex: 2 things to check");
+  assert.match(issue.body, /^codex 3 has a command under `codex app-server daemon` that t3code-nix hasn't checked:\n\n- `codex app-server daemon logs`$/m);
+  assert.match(issue.body, /The guard check couldn't read codex 3's help/);
+  assert.match(issue.body, /Found by \[this run\]\(https:\/\/example\.test\/run\/1\)\.$/);
+  // The same items grouped differently (one system's lines, then both
+  // joined): no change, no comment.
+  await issues.apply([obs("guard-review", "codex", "3", "codex-short-flag\t\tq\ncodex-short-flag\t\tr")], gh, hours(1));
+  const comments = issue.comments!.length;
+  await issues.apply([obs("guard-review", "codex", "3", "codex-short-flag\t\tq\tr")], gh, hours(2));
+  assert.equal(gh.issueList[0].comments!.length, comments);
+  // The same names kept, but now cut short: that's a change.
+  await issues.apply([obs("guard-review", "codex", "3", "codex-short-flag\t\tq\tr\ncut\t")], gh, hours(3));
+  assert.equal(gh.issueList[0].comments!.length, comments + 1);
+  assert.match(gh.issueList[0].body, /This list was cut short/);
+  // Closed, then back with nothing that fits (cut only): reopened as new,
+  // never as "still not checked".
+  await issues.apply([obs("guard-reviewed", "codex", "3", "")], gh, hours(4));
+  await issues.apply([obs("guard-review", "codex", "4", "cut\t")], gh, hours(5));
+  assert.match(gh.issueList[0].comments!.at(-1)!, /^Reopened: /);
+  assert.doesNotMatch(gh.issueList[0].comments!.at(-1)!, /still not checked/);
+  // Closed with every name shown, back cut short with those names visible:
+  // the hidden ones may be new, so not "still not checked".
+  const shortFlags = (n: number) => ["codex-short-flag", "", ...Array.from({ length: n }, (_, i) => `f${String(i).padStart(3, "0")}`)].join("\t");
+  await issues.apply([obs("guard-review", "codex", "5", shortFlags(10))], gh, hours(6));
+  await issues.apply([obs("guard-reviewed", "codex", "5", "")], gh, hours(7));
+  await issues.apply([obs("guard-review", "codex", "6", shortFlags(10) + "\ncut\t")], gh, hours(8));
+  assert.doesNotMatch(gh.issueList[0].comments!.at(-1)!, /still not checked/);
 });
 
 test("issues: a reopen is \"It's back\" for part of the detail it closed with, or none", async () => {

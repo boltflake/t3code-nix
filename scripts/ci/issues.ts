@@ -19,6 +19,8 @@
 //                    move), such as a guard-review for commands added after
 //                    the last ones were reviewed; either names a new version
 //                    (not a downgrade's)
+// A guard-review's title, body and comments say what the guard checks found
+// in plain words (guard-issue.ts), and its title follows what it lists.
 //
 // --run-ok: the run had no infrastructure failure (closes update-failed).
 // Environment: RUN_URL, DRY_RUN, SEEN_AT, GITHUB_RUN_ATTEMPT.
@@ -36,6 +38,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { SYSTEMS } from "../lib/util.ts";
 import { ALL, compareVersions, type Observation } from "../update.ts";
 import { client, type Client, type Issue } from "./gh.ts";
+import * as guard from "./guard-issue.ts";
+import { inline, shown } from "./markdown.ts";
 
 export const PROBLEMS = new Set(["test-failed", "combination-failed", "integrity", "no-match", "env-broken",
   "nondeterministic", "update-failed", "latest-mismatch", "resolve-failed", "tag-mismatch",
@@ -226,23 +230,16 @@ const sorted = (m: Meta) => JSON.stringify(Object.fromEntries(Object.entries(m).
 /** How much of a detail (often upstream's text) is kept; a run's details
  * for one key, joined, three times that. */
 export const DETAIL_MAX = 2000;
-/** Text inside an inline code span, so Markdown, HTML and @mentions in it
- * do nothing: the fence is one backtick longer than any run inside, and
- * padded with spaces so a backtick at either end can't join it. */
-const inline = (text: string) => {
-  const fence = "`".repeat(Math.max(1, ...[...text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
-  return `${fence} ${text.replace(/\n/g, " ")} ${fence}`;
-};
-/** A detail as shown: in a code block, so Markdown and @mentions in
- * upstream's text do nothing. */
-const shown = (text: string) => {
-  if (!text) return "";
-  const fence = "`".repeat(Math.max(3, ...[...text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
-  return `${fence}\n${text}\n${fence}`;
-};
+// A detail is shown in code (markdown.ts), so Markdown and @mentions in
+// upstream's text do nothing.
 
-function render(o: Observation, meta: Meta): string {
+/** An issue's body. A guard-review's names the run that found what it
+ * lists. */
+function render(o: Observation, meta: Meta, runUrl = ""): string {
   if (o.kind === "downgrade") return renderDowngrade(o, meta);
+  if (o.kind === "guard-review") {
+    return [`<!-- t3code-nix: ${sorted(meta)} -->`, guard.body(o.package ?? "-", meta.version, o.detail ?? "", runUrl)].join("\n");
+  }
   let who = o.package ?? "all packages";
   if (o.channel) who += ` (${o.channel})`;
   return [`<!-- t3code-nix: ${sorted(meta)} -->`,
@@ -261,6 +258,7 @@ function renderDowngrade(o: Observation, meta: Meta): string {
 }
 const title = (o: Observation, meta?: Meta) => o.kind === "downgrade"
   ? `downgrade: ${o.package ?? "all"} (${meta?.version ?? o.from ?? o.version} pulled)`
+  : o.kind === "guard-review" ? guard.title(o.package ?? "-", o.detail ?? "")
   : `${o.kind}: ${o.package ?? "all"}${o.channel ? ` (${o.channel})` : ""}`;
 /** Whether a pin at `at` (its `pass`) is back from a downgrade: at or above
  * the tracked version, or not orderable against it but above the last
@@ -284,7 +282,11 @@ export async function apply(observations: Observation[], gh: Client, now: Date, 
   const seen = seenAt !== null && Number.isFinite(Date.parse(seenAt)) ? new Date(Date.parse(seenAt)).toISOString() : null;
   const counts = (meta: Meta) => seen === null || meta.seen === null || Date.parse(seen) >= Date.parse(meta.seen);
   const newest = (meta: Meta) => (seen !== null && counts(meta) ? seen : meta.seen);
-  observations = observations.map((o) => ({ ...o, detail: (o.detail ?? "").slice(0, DETAIL_MAX) }));
+  // A guard-review's detail is put in one form and cut between its items, so
+  // the same items always keep the same ones.
+  const cut = (o: Observation, text: string, max: number) =>
+    (o.kind === "guard-review" ? guard.clip(guard.canonical(text), max) : text.slice(0, max));
+  observations = observations.map((o) => ({ ...o, detail: cut(o, o.detail ?? "", DETAIL_MAX) }));
   // One issue per key. Should two share one (a hand-edited body fixed after
   // a replacement was opened), the open one counts, else the newest; an
   // older open one is closed as a duplicate, so it holds nothing.
@@ -311,13 +313,14 @@ export async function apply(observations: Observation[], gh: Client, now: Date, 
   const stamp = now.toISOString();
   // The run's link after the note; on its own line after a code block.
   const say = (text: string) => (runUrl ? `${text}${text.includes("\n") ? "\n\n" : " "}${runUrl}` : text);
-  const close = async (key: string, reason: string) => {
+  // `reason` after "Closing: ", or `text` in its place.
+  const close = async (key: string, reason: string, text = `Closing: ${reason}.`) => {
     const { issue, meta } = byKey.get(key)!;
     // The closing reading is recorded too, so an earlier run's late report
     // can't reopen it.
     const closed = { ...meta, seen: newest(meta) };
     const body = withMeta(issue.body, closed);
-    await gh.comment(issue.number, say(`Closing: ${reason}.`));
+    await gh.comment(issue.number, say(text));
     await gh.editIssue(issue.number, body === issue.body ? { state: "closed" } : { body, state: "closed" });
     byKey.set(key, { issue: { ...issue, body, state: "closed" }, meta: closed });
   };
@@ -347,12 +350,14 @@ export async function apply(observations: Observation[], gh: Client, now: Date, 
     if (!details.has(key)) details.set(key, new Set());
     if (o.detail) details.get(key)!.add(o.detail);
     const all = [...details.get(key)!];
-    problems.set(key, { ...o, detail: all.length > 1 ? all.sort().join("\n\n").slice(0, 3 * DETAIL_MAX) : all[0] ?? "" });
+    problems.set(key, { ...o, detail: all.length > 1 ? cut(o, all.sort().join("\n\n"), 3 * DETAIL_MAX) : all[0] ?? "" });
   }
 
   for (const [key, o] of problems) {
     // A downgrade tracks the version upstream pulled, and its last move.
     const down = o.kind === "downgrade";
+    const review = o.kind === "guard-review";
+    const pkg = o.package ?? "-";
     const to = o.to ?? o.version ?? undefined;
     const fresh: Meta = down
       ? { key, version: o.from ?? o.version, detail: o.detail, clean: 0, reminded: stamp, seen, ...(o.from ? { from: o.from } : {}), ...(to ? { to } : {}) }
@@ -364,7 +369,7 @@ export async function apply(observations: Observation[], gh: Client, now: Date, 
       fresh.since = found?.issue.state === "open" && found.meta.since && found.meta.version === o.version ? found.meta.since : (seen ?? stamp);
     }
     if (!found) {
-      const body = render(o, fresh) + (runUrl ? `\n\nFirst seen in ${runUrl}` : "");
+      const body = review ? render(o, fresh, runUrl) : render(o, fresh) + (runUrl ? `\n\nFirst seen in ${runUrl}` : "");
       const created = await gh.createIssue(title(o, fresh), body);
       byKey.set(key, { issue: { ...created, state: "open", body }, meta: fresh });
       continue;
@@ -378,7 +383,13 @@ export async function apply(observations: Observation[], gh: Client, now: Date, 
     if (!(RUN_SCOPED.has(o.kind) && o.channel === null) && !counts(old)) continue;
     // A downgrade changes only with a different move (its detail follows
     // the move); then it keeps the higher pulled version.
-    const changed = down ? old.from !== fresh.from || old.to !== fresh.to : old.version !== o.version || old.detail !== o.detail;
+    // A guard-review changes with its items, however its lines group them.
+    const sameItems = (a: string, b: string) => {
+      const [x, y] = [guard.items(a), guard.items(b)];
+      return x.size === y.size && [...x].every((i) => y.has(i)) && guard.cutShort(a) === guard.cutShort(b);
+    };
+    const changed = down ? old.from !== fresh.from || old.to !== fresh.to
+      : old.version !== o.version || (review ? !sameItems(old.detail ?? "", o.detail) : old.detail !== o.detail);
     let meta: Meta | null = null;
     let state: "open" | undefined;
     let note: string | null = null;
@@ -389,18 +400,25 @@ export async function apply(observations: Observation[], gh: Client, now: Date, 
       // the one it closed with (part of a joined detail, or none). The detail
       // alone can't say it's the same problem (a fixed text at a new
       // version), so a new version is named.
-      const before = new Set((old.detail ?? "").split("\n"));
+      // A guard-review's items, each on its own (one line can list several).
+      const before = review ? guard.items(old.detail ?? "") : new Set((old.detail ?? "").split("\n"));
       const same = down
         ? old.from === fresh.from && old.to === fresh.to
+        // Nothing to compare (a cut-only detail) is never the same.
+        // Items hidden by a cut the old detail didn't have may be new.
+        : review ? guard.items(o.detail).size > 0 && [...guard.items(o.detail)].every((i) => before.has(i))
+          && (!guard.cutShort(o.detail) || guard.cutShort(old.detail ?? ""))
         : o.detail.split("\n").every((line) => !line.trim() || before.has(line));
       const at = !down && o.version && o.version !== old.version ? ` at ${inline(o.version)}` : "";
       const lead = same ? `It's back${at}` : `Reopened${at}, with a different detail than it closed with`;
-      const text = o.detail ? `${lead}${same ? "." : ":"}\n\n${shown(o.detail)}` : `${lead}.`;
+      const text = review ? (same ? guard.reopenedSame : guard.reopened)(pkg, o.version, o.detail)
+        : o.detail ? `${lead}${same ? "." : ":"}\n\n${shown(o.detail)}` : `${lead}.`;
       [meta, state, note] = [fresh, "open", text];
     } else if (changed) {
-      [meta, note] = [down ? { ...fresh, version: tracked(old.version, fresh.version!) } : fresh, `Changed:\n\n${shown(o.detail || o.version || "")}`];
+      [meta, note] = [down ? { ...fresh, version: tracked(old.version, fresh.version!) } : fresh,
+        review ? guard.changed(pkg, o.version, o.detail) : `Changed:\n\n${shown(o.detail || o.version || "")}`];
     } else if (now.getTime() - Date.parse(old.reminded ?? stamp) >= REMIND_AFTER_MS) {
-      [meta, note] = [{ ...old, clean: 0, reminded: stamp }, "Still happening."];
+      [meta, note] = [{ ...old, clean: 0, reminded: stamp }, review ? guard.reminder(pkg, old.version, old.detail) : "Still happening."];
     } else if (old.clean) {
       meta = { ...old, clean: 0 };
     }
@@ -410,12 +428,14 @@ export async function apply(observations: Observation[], gh: Client, now: Date, 
     if (meta) {
       // Re-rendered when what it's about changed; otherwise only its hidden
       // metadata moves.
-      const body = state || changed ? render(o, meta) : withMeta(issue.body, meta);
-      // A downgrade's title names the version it tracks.
-      const retitle = down && meta.version !== old.version ? { title: title(o, meta) } : {};
+      const body = state || changed ? render(o, meta, runUrl) : withMeta(issue.body, meta);
+      // A downgrade's title names the version it tracks; a guard-review's,
+      // what it lists.
+      const retitle = (down && meta.version !== old.version) || (review && (state || changed) && title(o, meta) !== issue.title)
+        ? { title: title(o, meta) } : {};
       await gh.editIssue(issue.number, { ...retitle, body, ...(state ? { state } : {}) });
       if (note) await gh.comment(issue.number, say(note));
-      byKey.set(key, { issue: { ...issue, body, state: state ?? issue.state }, meta });
+      byKey.set(key, { issue: { ...issue, ...retitle, body, state: state ?? issue.state }, meta });
     }
   }
   const seenProblems = new Set(problems.keys());
@@ -474,7 +494,8 @@ export async function apply(observations: Observation[], gh: Client, now: Date, 
         }
       }
       const superseded = (o.kind === "pass" || o.kind === "test-passed") && meta.version && o.version && meta.version !== o.version;
-      await close(key, rule.caughtUp ? `back at ${o.version}` : superseded ? `superseded by ${o.version}` : rule.otherVersion ? `${pkg} moved on to ${o.version}` : "fixed");
+      const reason = rule.caughtUp ? `back at ${o.version}` : superseded ? `superseded by ${o.version}` : rule.otherVersion ? `${pkg} moved on to ${o.version}` : "fixed";
+      await close(key, reason, ...(kind === "guard-review" ? [guard.closed(pkg, o.version)] : []));
     }
   }
 }

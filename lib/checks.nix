@@ -4804,37 +4804,37 @@ let
   # becomes a note, which the update run turns into a guard-review issue for
   # that package (scripts/ci/narrow.ts), while the release ships. Each such
   # check's output is a directory: `checked` lists the packages it compared
-  # (one with no note closes its issue), `notes` holds `PACKAGE<TAB>text`
+  # (one with no note closes its issue), `notes` holds `PACKAGE<TAB>item`
   # lines. Only a broken parser (its self-test) fails the check.
+  # An item is `KIND<TAB>CONTEXT<TAB>NAME...`, which scripts/ci/guard-issue.ts
+  # turns into the issue's words: add a kind there before using it here.
   notes = ''
     mkdir -p $out
     : > $out/checked
     : > $out/notes
     notes=$out/notes
-    # note PACKAGE TEXT
-    note() { printf '%s\t%s\n' "$1" "$2" >> "$notes"; }
+    # item PACKAGE KIND CONTEXT < NAMES (one per line; none for a kind
+    # without names). A tab or carriage return in a name becomes a space, so
+    # it stays one name.
+    item() { names=$(tr '\t\r' '  ' | paste -sd '\t'); printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$names" >> "$notes"; }
   '';
-  # Notes `what`, then the names (joined by `shown`, a filter from lines to
-  # one line), then `after`, if ./have lists anything `list` lacks. What only
-  # `list` has (a name one channel or an older release lacks) is just printed.
-  reviewedShown = shown: after: pkg: what: list: ''
+  # Notes a `kind` item with the names ./have lists and `list` lacks. What
+  # only `list` has (a name one channel or an older release lacks) is just
+  # printed.
+  reviewed = pkg: kind: list: ''
     sort -u -o have have
     printf '%s\n' ${lib.escapeShellArgs list} | sort -u > want
-    [ -z "$(comm -13 want have)" ] || note ${lib.escapeShellArg pkg} ${lib.escapeShellArg what}" $(comm -13 want have | ${shown})"${lib.escapeShellArg after}
+    [ -z "$(comm -13 want have)" ] || comm -13 want have | item ${lib.escapeShellArg pkg} ${kind} ""
     comm -23 want have | sed 's/^/(not listed by this t3: /; s/$/)/'
   '';
-  reviewed = reviewedShown "paste -sd ' '" "";
-  # Command paths as whole commands, so `workflow withdraw` reads as one:
-  # `t3 workflow withdraw`, `t3 feedback`.
-  asT3Commands = "sed 's/.*/`t3 &`/' | paste -sd , | sed 's/,/, /g'";
-  # Notes `what` if an option in `list` (one the guard skips a value after)
-  # takes no value in the help `file` (a boolean, or an optional `=value`):
-  # the guard would skip the subcommand after it. Absent from it is fine
-  # (upstream rejects an unknown option).
-  takesValue = file: pkg: what: list: ''
+  # Notes a `kind` item if an option in `list` (one the guard skips a value
+  # after) takes no value in the help `file` (a boolean, or an optional
+  # `=value`): the guard would skip the subcommand after it. Absent from it
+  # is fine (upstream rejects an unknown option).
+  takesValue = file: pkg: kind: list: ''
     awk -v none=1 -f ${valueOptions} ${file} | sort -u > takes-none
     printf '%s\n' ${lib.escapeShellArgs list} | sort -u > skipped
-    [ -z "$(comm -12 skipped takes-none)" ] || note ${lib.escapeShellArg pkg} ${lib.escapeShellArg what}" $(comm -12 skipped takes-none | paste -sd ' ')"
+    [ -z "$(comm -12 skipped takes-none)" ] || comm -12 skipped takes-none | item ${lib.escapeShellArg pkg} ${kind} ""
   '';
   # Every command a t3 lists, at any depth: `walk T3 REVIEWED` prints their
   # paths (`auth pairing create`). A help that fails fails the walk (its
@@ -4874,29 +4874,20 @@ let
         awk -f ${valueOptions} help.txt > have
         # An empty parse would note nothing: one option t3 has always had.
         grep -qx -- --log-level have || { echo "no --log-level among t3's value options: has the help's layout changed?"; exit 1; }
-        ${reviewed pkg "options that take a value, missing from lib/guard.nix's t3ValueFlags:"
-          guard.t3ValueFlags
-        }
-        ${takesValue "help.txt" pkg
-          "lib/guard.nix's t3ValueFlags has options this t3 lists as taking no value; take them out:"
-          guard.t3ValueFlags
-        }
+        ${reviewed pkg "t3-value-option" guard.t3ValueFlags}
+        ${takesValue "help.txt" pkg "t3-flag-option" guard.t3ValueFlags}
         # The words a boolean option takes as its value (upstream's completion
         # script lists them).
         timeout 30 ${bin} --completions powershell \
           | sed -n "s/^ *\$booleanLiterals = @(\(.*\))\$/\1/p" | tr -d "' " | tr , '\n' > have
         [ -s have ] || { echo "no \$booleanLiterals in t3's completion script"; exit 1; }
-        ${reviewed pkg "boolean words missing from lib/guard.nix's t3BooleanWords:" guard.t3BooleanWords}
+        ${reviewed pkg "t3-boolean-word" guard.t3BooleanWords}
         # Every command, at any depth.
         printf '%s\n' ${lib.escapeShellArgs guard.t3Commands} > reviewed-commands
         ${walk} ${bin} reviewed-commands > have || exit 1
         grep -qx update have || { echo "the command walk found no \`update\`"; exit 1; }
-        ${reviewedShown asT3Commands (
-          ". Read what each does in the bundle; if it installs upstream's own t3 or service, refuse it"
-          + " in refuseT3 (a `connect` one: list it in t3ConnectRefused); then add it to t3Commands,"
-          + " without the `t3`."
-        ) pkg "new t3 commands, not in lib/guard.nix's t3Commands:" guard.t3Commands}
-      ) || note ${pkg} "couldn't read this t3's help (see the t3-guard-flags log), so the guard's lists weren't compared"
+        ${reviewed pkg "t3-command" guard.t3Commands}
+      ) || item ${pkg} unreadable t3-guard-flags < /dev/null
     '';
   t3-guard-flags = runCommand "t3-guard-flags" { } (
     notes
@@ -4920,30 +4911,30 @@ let
         awk -v none=1 -f ${valueOptions} options | sort | tr '\n' ' ' > parsed
         [ "$(cat parsed)" = "--bar --opt -b " ] || { echo "value-options.awk (none): got $(cat parsed)"; exit 1; }
         notes=selftest; : > selftest
-        ${takesValue "options" "x" "" [
+        ${takesValue "options" "x" "k" [
           "--foo"
           "--log-level"
           "--gone"
         ]}
         [ ! -s selftest ] || { echo "takesValue: noted options that take one"; exit 1; }
-        ${takesValue "options" "x" "" [
+        ${takesValue "options" "x" "k" [
           "--foo"
           "--bar"
         ]}
-        grep -qx 'x	 --bar' selftest || { echo "takesValue: missed --bar, a boolean"; exit 1; }
+        grep -qx "$(printf 'x\tk\t\t--bar')" selftest || { echo "takesValue: missed --bar, a boolean"; exit 1; }
         : > selftest
-        ${takesValue "options" "x" "" [ "--opt" ]}
-        grep -qx 'x	 --opt' selftest || { echo "takesValue: missed --opt, an optional value"; exit 1; }
-        printf '%s\n' a c > have
-        ${reviewed "x" "new:" [
-          "a"
-          "b"
-        ]}
-        grep -qx 'x	new: c' selftest || { echo "reviewed: missed c"; exit 1; }
+        ${takesValue "options" "x" "k" [ "--opt" ]}
+        grep -qx "$(printf 'x\tk\t\t--opt')" selftest || { echo "takesValue: missed --opt, an optional value"; exit 1; }
         : > selftest
         printf '%s\n' 'a b' c d > have
-        ${reviewedShown asT3Commands ". Then." "x" "new:" [ "d" ]}
-        grep -qxF 'x	new: `t3 a b`, `t3 c`. Then.' selftest || { echo "reviewedShown: got $(cat selftest)"; exit 1; }
+        ${reviewed "x" "k" [ "d" ]}
+        grep -qxF "$(printf 'x\tk\t\ta b\tc')" selftest || { echo "reviewed: got $(cat selftest)"; exit 1; }
+        : > selftest
+        item x k ctx < /dev/null
+        grep -qxF "$(printf 'x\tk\tctx\t')" selftest || { echo "item: got $(cat selftest)"; exit 1; }
+        : > selftest
+        printf 'a\tb\r\n' | item x k ""
+        grep -qxF "$(printf 'x\tk\t\ta b ')" selftest || { echo "item: split a name: $(cat -A selftest)"; exit 1; }
         notes=$out/notes
         # The walk, on a fake t3: one whose every help repeats the root's ends;
         # one whose `browser --help` fails fails it.
@@ -5021,12 +5012,17 @@ let
       echo codex >> $out/checked
       export HOME=$(mktemp -d)
       codex=${packages.codex}/libexec/codex/bin/codex
-      words() { paste -sd ' '; }
-      differ() { # what, want, have
+      differ() { # kind, want, have: what's added (+name) and removed (-name)
         if ! cmp -s "$2" "$3"; then
-          note codex "$1 $( (comm -13 "$2" "$3" | sed 's/^/+/'; comm -23 "$2" "$3" | sed 's/^/-/') | words)"
+          (comm -13 "$2" "$3" | sed 's/^/+/'; comm -23 "$2" "$3" | sed 's/^/-/') | item codex "$1" ""
         fi
       }
+      # differ's +name and -name are what guard-issue.ts's `changes` reads.
+      printf '%s\n' a b > want; printf '%s\n' b c > have
+      notes=selftest; : > selftest
+      differ k want have
+      grep -qxF "$(printf 'codex\tk\t\t+c\t-a')" selftest || { echo "differ: got $(cat -A selftest)"; exit 1; }
+      notes=$out/notes
       (
         : > options
         for level in "" ${lib.escapeShellArgs guard.codexLevels}; do
@@ -5035,7 +5031,7 @@ let
           awk -f ${clapCommands} help | sort -u > "commands-$level"
           # refuseCodex reads every word below a level as its next command.
           if [ -n "$level" ] && grep -q '^Arguments:' help; then
-            note codex "\`codex $level\` takes arguments; refuseCodex assumes it takes none"
+            item codex codex-level-arguments "$level" < /dev/null
           fi
         done
         grep -q '^value --listen$' options && grep -qx update commands- || { echo "codex's help didn't parse"; exit 1; }
@@ -5055,39 +5051,35 @@ let
         done
         cat options short | sed -n 's/^flag -\([^-]\)$/\1/p' | sort -u > have
         printf '%s\n' h V ${lib.escapeShellArgs guard.codexShortFlags} | sort -u > want
-        [ -z "$(comm -13 want have)" ] \
-          || note codex "short flags missing from lib/guard.nix's codexShortFlags (refuseCodex reads their clusters): $(comm -13 want have | words)"
-        [ -z "$(cat options short | sed -n 's/^\(value\|multi\) -\([^-]\)$/\2/p' | sort -u | comm -12 - want)" ] \
-          || note codex "lib/guard.nix's codexShortFlags has value options: $(cat options short | sed -n 's/^\(value\|multi\) -\([^-]\)$/\2/p' | sort -u | comm -12 - want | words)"
-        [ -z "$(sed -n 's/^other //p' options)" ] \
-          || note codex "options refuseCodex can't skip: $(sed -n 's/^other //p' options | sort -u | words)"
+        [ -z "$(comm -13 want have)" ] || comm -13 want have | item codex codex-short-flag ""
+        cat options short | sed -n 's/^\(value\|multi\) -\([^-]\)$/\2/p' | sort -u | comm -12 - want > short-values
+        [ ! -s short-values ] || item codex codex-short-value "" < short-values
+        [ -z "$(sed -n 's/^other //p' options)" ] || sed -n 's/^other //p' options | sort -u | item codex codex-unskippable ""
         printf '%s\n' ${lib.escapeShellArgs guard.codexValueOptions} | sort -u > want
         sed -n 's/^value //p' options | sort -u > have
-        [ -z "$(comm -13 want have)" ] \
-          || note codex "options that take a value, missing from lib/guard.nix's codexValueOptions: $(comm -13 want have | words)"
+        [ -z "$(comm -13 want have)" ] || comm -13 want have | item codex codex-value-option ""
         sed -n 's/^flag //p' options | sort -u > flags
-        [ -z "$(comm -12 want flags)" ] \
-          || note codex "lib/guard.nix's codexValueOptions has options codex lists as taking no value: $(comm -12 want flags | words)"
+        [ -z "$(comm -12 want flags)" ] || comm -12 want flags | item codex codex-flag-option ""
         comm -23 want have | sed 's/^/(not listed by this codex: /; s/$/)/'
         printf '%s\n' ${lib.escapeShellArgs guard.codexMultiOptions} | sort -u > want
         sed -n 's/^multi //p' options | sort -u > have
-        differ "several-value options differ from lib/guard.nix's codexMultiOptions:" want have
+        differ codex-multi-options want have
         printf '%s\n' ${lib.escapeShellArgs guard.codexCommands} | sort -u > want
-        differ "commands differ from lib/guard.nix's codexCommands (read what a new one does first):" want commands-
+        differ codex-commands want commands-
         printf '%s\n' ${lib.escapeShellArgs guard.codexAppServerCommands} | sort -u > want
-        differ "commands under \`codex app-server\` differ from lib/guard.nix's codexAppServerCommands (a new alias of daemon passes the guard):" want commands-app-server
+        differ codex-app-server want commands-app-server
         ${lib.concatStrings (
           lib.mapAttrsToList (level: allowed: ''
             printf '%s\n' ${lib.escapeShellArgs (allowed ++ guard.codexInstallers.${level})} | sort -u > want
             [ -z "$(comm -13 want ${lib.escapeShellArg "commands-${level}"})" ] \
-              || note codex ${lib.escapeShellArg "commands under `codex ${level}`, refused until lib/guard.nix's codexAllowed or codexInstallers lists them:"}" $(comm -13 want ${lib.escapeShellArg "commands-${level}"} | words)"
+              || comm -13 want ${lib.escapeShellArg "commands-${level}"} | item codex codex-level-new ${lib.escapeShellArg level}
           '') guard.codexAllowed
         )}
         for cmd in ${lib.escapeShellArgs guard.codexHiddenCommands}; do
           timeout 30 $codex "$cmd" --help 2>/dev/null | grep -q "^Usage: codex [a-z]" \
-            || note codex "lib/guard.nix's codexHiddenCommands names \`$cmd\`, which this codex doesn't have"
+            || echo "$cmd" | item codex codex-hidden-gone ""
         done
-      ) || note codex "couldn't read this codex's help (see the codex-guard-flags log), so the guard's lists weren't compared"
+      ) || item codex unreadable codex-guard-flags < /dev/null
     ''
   );
   # The top-level commands a provider's help lists, whatever library drew
@@ -5195,9 +5187,12 @@ let
                 grep -qx -- "$c" have || { echo "\`${bin} --help\` lists no $c: has its layout changed?"; cat help; exit 1; }
               done
               printf '%s\n' ${lib.escapeShellArgs cmds} | sort -u > want
-              [ -z "$(comm -13 want have)" ] || note ${pkg} ${lib.escapeShellArg "commands lib/guard.nix's providerCommands hasn't reviewed (if one installs or updates ${bin}, refuse it in its package):"}" $(comm -13 want have | paste -sd ' ')"
+              # Where its refused commands go (scripts/ci/guard-issue.ts words the fix).
+              [ -z "$(comm -13 want have)" ] || comm -13 want have | item ${pkg} ${
+                if guard.providerRefused ? ${pkg} then "provider-command" else "provider-command-own"
+              } ${bin}
               comm -23 want have | sed 's/^/(not listed by this ${bin}: /; s/$/)/'
-            ) || note ${pkg} ${lib.escapeShellArg "couldn't read ${bin}'s commands (see the provider-commands log), so they weren't compared"}
+            ) || item ${pkg} unreadable provider-commands < /dev/null
           ''
         ) guard.providerCommands
       )

@@ -423,7 +423,7 @@ export async function main(argv: string[]): Promise<void> {
     for (const p of built) if (hashes.has(checks[p].out)) manifest[p] = { path: checks[p].out, narHash: hashes.get(checks[p].out)! };
   }
   const { checked, notes } = notesOf(names.filter((n) => !failed.includes(n)).map((n) => checks[n].out));
-  for (const n of notes) console.log(`note for ${n.package}: ${n.detail}`);
+  for (const n of notes) console.log(`note for ${n.package}: ${n.detail.replaceAll("\t", " | ")}`);
   failed.push(...failedOnNotes(set === "branch" && argv.includes("--strict-guards"), names.filter((n) => !failed.includes(n)), (n) => checks[n].out));
   const electron = electronEvidence(checks, failed, smokes, ROOT, undefined, part === undefined ? undefined : new Set(names));
   // Only where it can matter: a fallback needs the smoke to have run, and

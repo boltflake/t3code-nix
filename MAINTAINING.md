@@ -235,10 +235,10 @@ issue open until they agree.
   (`auth pairing create`), the options that take a value, and the words a
   boolean option takes (a name only one channel lists is fine). For a new
   command, read what it does in the bundle: if it installs upstream's own
-  `t3` or service, refuse it in `refuseT3` (a `connect` one: list it in
-  `t3ConnectRefused`); then add it to `t3Commands`. The issue starts with
-  the new commands, each named whole (`t3 workflow withdraw`);
-  `t3Commands` lists them without the `t3`.
+  `t3` or service, refuse it in `refuseT3`; then add it to `t3Commands`.
+  A `connect` subcommand goes in `t3ConnectSubcommands` if it's safe or
+  `t3ConnectRefused` if it installs, not in `t3Commands` (which lists
+  both).
 - `codex-guard-flags`: codex's top-level commands, its hidden ones, and the
   options that take one value or several, at the top level and under
   `app-server`, `app-server daemon` and `remote-control`, and its short
@@ -253,6 +253,12 @@ issue open until they agree.
   refuse it in its package; otherwise add it.
 
 Commands left out of a help aren't compared; read the bundle for those.
+
+Each issue says in plain words what changed, what could go wrong and how
+to fix it (`scripts/ci/guard-issue.ts`, one text per kind of item the
+checks note), and its title follows what it lists: `<package>: new command
+not checked yet`, say, or `<package>: 3 things to check`. A new kind of
+note needs its text there first.
 
 **codex's daemon records.** The doctor's check for codex's background
 server and update loop follows how codex records them
