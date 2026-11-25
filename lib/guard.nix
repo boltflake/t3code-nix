@@ -200,6 +200,7 @@ let
     "workflow resume"
     "workflow cancel"
     "workflow signal"
+    "workflow withdraw"
     "workflow questions"
     "workflow hooks"
     "workflow store"
