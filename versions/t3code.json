@@ -1,38 +1,38 @@
 {
   "name": "t3code",
-  "version": "0.1.11",
-  "tag": "v0.1.11",
+  "version": "0.1.12",
+  "tag": "v0.1.12",
   "assets": {
     "x86_64-linux": {
-      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.11/T3-Code-0.1.11-amd64.deb",
-      "hash": "sha256-zNQ/Z/lf9Bbd928xqHa4ywymTn33ND3rW1lBk2OE4dA=",
-      "assetId": 770913521,
-      "digest": "sha256:ccd43f67f95ff416ddf76f31a876b8cb0ca64e7df7343deb5b5941936384e1d0"
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.12/T3-Code-0.1.12-amd64.deb",
+      "hash": "sha256-wco+ZW4SuhA3dRPpu+IKURJUDNqWAeIccLhbp8U/Gyk=",
+      "assetId": 790558720,
+      "digest": "sha256:c1ca3e656e12ba10377513e9bbe20a5112540cda9601e21c70b85ba7c53f1b29"
     },
     "aarch64-linux": {
-      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.11/T3-Code-0.1.11-arm64.deb",
-      "hash": "sha256-OwLBMewSLwLmXMkBvrfWROcWChdjsvtKwS8bKW7Rhw8=",
-      "assetId": 770913488,
-      "digest": "sha256:3b02c131ec122f02e65cc901beb7d644e7160a1763b2fb4ac12f1b296ed1870f"
+      "url": "https://github.com/pingdotgg/t3code/releases/download/v0.1.12/T3-Code-0.1.12-arm64.deb",
+      "hash": "sha256-PKGk5Uh5Tjn6EQJ9OfXmo1EBVMSb13F1axdEodWoBOA=",
+      "assetId": 790558728,
+      "digest": "sha256:3ca1a4e548794e39fa11027d39f5e6a3510154c49bd771756b1744a1d5a804e0"
     }
   },
   "licenses": {
     "LICENSE": {
-      "url": "https://raw.githubusercontent.com/pingdotgg/t3code/59651c1761f6c63e9b6056839067066968e6a406/LICENSE",
+      "url": "https://raw.githubusercontent.com/pingdotgg/t3code/ca81b7b97a1c4b91e5ac25768d0f6629f37732fd/LICENSE",
       "hash": "sha256-k12PKvDHA/nDlRfuV8xJMLGdAtUzvpMLY/DoL5NhS0M="
     }
   },
   "browser": {
-    "version": "157.0.8103.78",
-    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/59651c1761f6c63e9b6056839067066968e6a406/apps/server/src/preview/PreviewBrowser.ts",
+    "version": "158.0.8127.88",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/ca81b7b97a1c4b91e5ac25768d0f6629f37732fd/apps/server/src/preview/PreviewBrowser.ts",
     "assets": {
       "x86_64-linux": {
-        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux64/chrome-headless-shell-linux64.zip",
-        "hash": "sha256-+QMpcg+2Hlp22ptrUJtq0SpITJxd8DWUA+k1F3xtFTo="
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.88/linux64/chrome-headless-shell-linux64.zip",
+        "hash": "sha256-Y0ATM8xYdkW/rup/DJCVizJ9JJJR4jlUpH8wESyiPVs="
       },
       "aarch64-linux": {
-        "url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux-arm64/chrome-headless-shell-linux-arm64.zip",
-        "hash": "sha256-kS+/h35T3jTXs8ylEE87lWB9Qb01QSzMbNKlmf8MDb8="
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.88/linux-arm64/chrome-headless-shell-linux-arm64.zip",
+        "hash": "sha256-n4m372V05Lv23dqfF/H6tWJuk9b32FJlMjLQ01VN+XU="
       }
     }
   },
@@ -43,13 +43,13 @@
     "size": 45904544,
     "sha256": "e8c9b73c06344307d8b346e07fbe93dd88d894627854bcff31523f1ce44394fa",
     "url": "https://huggingface.co/handy-computer/whisper-tiny.en-gguf/resolve/becb8bcb804405dc97b380a523d9975888820986/whisper-tiny.en-Q8_0.gguf",
-    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/59651c1761f6c63e9b6056839067066968e6a406/apps/server/src/speech/catalog.json",
-    "checked": "https://raw.githubusercontent.com/pingdotgg/t3code/59651c1761f6c63e9b6056839067066968e6a406/apps/server/src/speech/catalog.json",
+    "source": "https://raw.githubusercontent.com/pingdotgg/t3code/ca81b7b97a1c4b91e5ac25768d0f6629f37732fd/apps/server/src/speech/catalog.json",
+    "checked": "https://raw.githubusercontent.com/pingdotgg/t3code/ca81b7b97a1c4b91e5ac25768d0f6629f37732fd/apps/server/src/speech/catalog.json",
     "fromCatalog": true
   },
   "electron": "44.10.1",
   "released": {
-    "at": "2026-11-20T07:38:08.000Z",
+    "at": "2026-11-25T07:36:07.000Z",
     "kind": "published"
   }
 }
