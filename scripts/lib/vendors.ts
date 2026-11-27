@@ -59,6 +59,36 @@ export async function gcsHead(url: string): Promise<{ md5: string | null; lastMo
   return { md5, lastModified };
 }
 
+/** An HTTP date ("Mon, 23 Nov 2026 21:34:39 GMT") as ISO, or null when it
+ * isn't one: it must read back the same, so "31 Feb" isn't 3 March. */
+const httpDate = (s: string | null) => {
+  const d = new Date(s ? Date.parse(s) : NaN);
+  return Number.isFinite(d.getTime()) && d.toUTCString() === s ? d.toISOString() : null;
+};
+
+/** A file's Last-Modified, from a HEAD request (one 20 s deadline for
+ * every attempt and the waits between them), or null. The time is only for
+ * the status page, so a failed request never stops a pin: it counts as no
+ * header. */
+async function lastModified(url: string): Promise<string | null> {
+  let at: string | null = null;
+  try {
+    await request(url, { method: "HEAD", timeoutMs: 20_000, onHeaders: (h) => { at = h.get("last-modified"); } });
+  } catch {
+    return null;
+  }
+  return at;
+}
+
+/** A file's Last-Modified as an upload time. No header means "seen"; one
+ * that isn't an HTTP date becomes "unreadable", which settleReleased can't
+ * parse, so the time is unknown (the header itself isn't passed on:
+ * Date.parse would find a date in "2026-11-13" or "31 Feb"). */
+function uploaded(lastModified: string | null): Released | undefined {
+  if (lastModified === null) return undefined;
+  return { at: httpDate(lastModified) ?? "unreadable", kind: "uploaded" };
+}
+
 /** The SRI hash of a download (the same flat SHA-256 `nix store
  * prefetch-file` gives), with request()'s retries. No Nix needed. */
 export async function prefetch(url: string): Promise<string> {
@@ -67,13 +97,6 @@ export async function prefetch(url: string): Promise<string> {
 
 /** Indirection so tests can stand in for the download. */
 export const io = { prefetch };
-
-/** An HTTP date ("Mon, 23 Nov 2026 21:34:39 GMT") as ISO, or null when it
- * isn't one: it must read back the same, so "31 Feb" isn't 3 March. */
-const httpDate = (s: string | null) => {
-  const d = new Date(s ? Date.parse(s) : NaN);
-  return Number.isFinite(d.getTime()) && d.toUTCString() === s ? d.toISOString() : null;
-};
 
 // The release is the moment the `latest` pointer moves to the version (the
 // GitHub release follows within seconds); the files and the manifest's
@@ -130,33 +153,33 @@ const grok: Resolver = async (version, previous, auto) => {
   for (const [i, { system, url }] of files.entries()) {
     assets[system] = { url, hash: hashes[i], md5: md5s[i], checksumSource: "none (downloaded)" };
   }
-  // The first file's upload time (an HTTP date). One that doesn't parse is
-  // passed on as it is, so settleReleased leaves the time unknown; only no
-  // header at all means "seen".
-  const t = lastModified ? Date.parse(lastModified) : NaN;
-  const released: Released | undefined = lastModified
-    ? { at: Number.isFinite(t) ? new Date(t).toISOString() : lastModified, kind: "uploaded" }
-    : undefined;
+  // The first upload time a file gives.
+  const released = uploaded(lastModified);
   return { version: v, assets, ...(released ? { released } : {}) };
 };
 
-const cursor: Resolver = async (version) => {
+const cursor: Resolver = async (version, previous) => {
   if (!version) {
     version = cursorVersion(await getText(VENDOR_URLS.cursorInstall)) ?? fail(`no lab/<version> in ${VENDOR_URLS.cursorInstall}`);
   }
   const v = checkVersion(version);
   const layout = [["x86_64-linux", "linux/x64"], ["aarch64-linux", "linux/arm64"]];
+  const tarball = (plat: string) => `https://downloads.cursor.com/lab/${v}/${plat}/agent-cli-package.tar.gz`;
+  // The x86_64 file's upload time (no release time is published), read
+  // alongside the sidecars; a version already pinned keeps its time.
+  const head = previous?.version === v ? Promise.resolve(null) : lastModified(tarball(layout[0][1]));
   const found = await allInOrder(layout.map(async ([, plat]) => {
-    const url = `https://downloads.cursor.com/lab/${v}/${plat}/agent-cli-package.tar.gz`;
+    const url = tarball(plat);
     const hex = checksumFromFile(await getText(`${url}.sha256`), "agent-cli-package.tar.gz");
     return { url, hash: sri("sha256", hex), checksumSource: `${url}.sha256` };
   }));
   const assets: Record<string, Asset> = {};
   for (const [i, [system]] of layout.entries()) assets[system] = found[i];
-  return { version: v, assets };
+  const released = uploaded(await head);
+  return { version: v, assets, ...(released ? { released } : {}) };
 };
 
-const antigravity: Resolver = async (version) => {
+const antigravity: Resolver = async (version, previous) => {
   if (version) fail("antigravity only publishes its current version; pin without VERSION");
   const layout: [string, string, string, string][] = [
     ["x86_64-linux", "linux_amd64", "linux-x64", "cli_linux_x64.tar.gz"],
@@ -178,12 +201,19 @@ const antigravity: Resolver = async (version) => {
     assets[system] = found[i].asset;
   }
   if (versions.size !== 1) fail(`antigravity manifests disagree on the version: ${[...versions].sort().join(", ")}`);
-  return { version: [...versions][0], assets };
+  // The manifests give no release time: the x86_64 file's upload time (a
+  // version already pinned keeps its time).
+  const v = [...versions][0];
+  const released = previous?.version === v ? undefined : uploaded(await lastModified(assets["x86_64-linux"].url));
+  return { version: v, assets, ...(released ? { released } : {}) };
 };
 
 const kiro: Resolver = async (version) => {
   if (version) checkVersion(version);
-  const m = await getJson(`${KIRO}/${version ?? "latest"}/manifest.json`);
+  // The release is when the `latest` manifest was written (its
+  // Last-Modified), as with claude's `latest`.
+  const res = await getResponse(`${KIRO}/${version ?? "latest"}/manifest.json`);
+  const m = JSON.parse(res.body.toString("utf8"));
   const v = checkVersion(m?.version);
   if (version && v !== version) fail(`kiro manifest for ${version} names version ${v}`);
   const assets: Record<string, Asset> = {};
@@ -193,7 +223,8 @@ const kiro: Resolver = async (version) => {
     if (pkg.length !== 1) fail(`kiro manifest has ${pkg.length} entries for ${name}`);
     assets[system] = { url: `${KIRO}/${name}`, hash: sri("sha256", pkg[0].sha256), checksumSource: `${KIRO}/${v}/manifest.json` };
   }
-  return { version: v, assets };
+  const published = version ? null : httpDate(res.headers.get("last-modified"));
+  return { version: v, assets, ...(published ? { released: { at: published, kind: "published" as const } } : {}) };
 };
 
 const muse: Resolver = async (version) => {
