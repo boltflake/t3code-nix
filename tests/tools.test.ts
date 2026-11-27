@@ -111,11 +111,14 @@ function runTest(desktop = false, part?: string, extra: string[] = []): { result
 state=${state}
 case "$1" in
   # The stable part of default-nix-no-flakes (both sides unevaluable: nothing to compare).
-  eval) case " $* " in *" --raw "*) ls "${join(tmp, "out")}"/candidate-${SYS}*.json >/dev/null 2>&1 && touch "$state/raw-after-result"; exit 1 ;; esac
+  eval)
+    # home-manager-lazy's control: an hm-* check, evaluated on the copy, reaches the abort.
+    case " $* " in *" path:"*"#checks.${SYS}.hm-"*) echo "error: home-manager-lazy: Home Manager was evaluated" >&2; exit 1 ;; esac
+    case " $* " in *" --raw "*) ls "${join(tmp, "out")}"/candidate-${SYS}*.json >/dev/null 2>&1 && touch "$state/raw-after-result"; exit 1 ;; esac
     # A part asks for the names first, then only its checks.
     case " $* " in *" builtins.attrNames "*) echo '${JSON.stringify(names)}'; exit 0 ;; esac
     # home-manager-lazy, on a copy of the tree: the list with an hm-* check.
-    case " $* " in *" path:"*"#checks.${SYS} "*) touch "$state/hm-lazy"; echo '{"a":"/nix/store/a.drv","hm-module-eval":null}'; exit 0 ;; esac
+    case " $* " in *" path:"*"#checks.${SYS} "*) touch "$state/hm-lazy"; echo '{"a":{"out":"/nix/store/a","drv":"/nix/store/a.drv","na":false,"electron":null},"hm-module-eval":null}'; exit 0 ;; esac
     echo x >> "$state/evals"
     case " $* " in *"inherit (cs)"*) for a; do last=$a; done
       ${process.execPath} -e 'const want = [...process.argv[1].matchAll(/"([a-z0-9-]+)"/g)].map((m) => m[1]); const all = JSON.parse(process.argv[2]); console.log(JSON.stringify(Object.fromEntries(Object.entries(all).filter(([n]) => want.includes(n)))))' "$last" '${evaled}' ;;

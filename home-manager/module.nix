@@ -30,8 +30,11 @@ let
   # (identity otherwise, and on a Home Manager without it). Not this flake's
   # CLI (providers, no Electron); a package of another kind may be a desktop
   # app, so it is.
+  # Only a package nixGL can wrap (one with overrideAttrs): a store path given
+  # as a string or path, or a bare derivation, is installed as it is.
   isCli = p: p ? passthru.providers && (p.passthru.electron or null) == null;
-  wrapApp = p: if config.lib ? nixGL.wrap && !isCli p then config.lib.nixGL.wrap p else p;
+  wrapApp =
+    p: if config.lib ? nixGL.wrap && p ? overrideAttrs && !isCli p then config.lib.nixGL.wrap p else p;
 
   d = core.derive {
     inherit
