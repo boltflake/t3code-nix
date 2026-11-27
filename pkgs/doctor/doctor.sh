@@ -466,14 +466,98 @@ fi
 # Upstream's own service, and ours.
 # (Trailing slashes off: systemd reports paths with single ones.)
 nosl() { local p=$1; while [ "${p%/}" != "$p" ] && [ "$p" != / ]; do p=${p%/}; done; printf '%s' "$p"; }
-userunits=$(nosl "${XDG_CONFIG_HOME:-$home/.config}")/systemd/user
-dataunits=$(nosl "${XDG_DATA_HOME:-$home/.local/share}")/systemd/user
+# The user manager's unit search path, in its order: systemd builds it to a
+# fixed layout (path-lookup.c), so it names your own folders exactly, as the
+# manager has them (a shell's XDG_* can differ). Its first two entries are
+# your config and runtime folders' .control ones, and your data folder comes
+# right after your runtime folder's generator one (when the list has it, and
+# it's under your home folder). Without it (no user bus), or
+# with an entry systemctl quoted (a space or a shell character in a path,
+# which a plain split would break), this shell's folders stand in.
+# Your home folder, for the patterns below: without its trailing slashes, and
+# never empty (an empty one would make "$uhome"/* match every folder).
+uhome=$(nosl "$home")
+[ -n "$uhome" ] && [ "$uhome" != / ] || uhome=/nonexistent-home
+unitpath=()
+upanswer=$(systemctl --user show -p UnitPath --value 2>/dev/null || true)
+case $upanswer in *[\"\'\\]*) upanswer='' ;; esac
+read -r -a unitpath <<< "$upanswer"
+shellunits=$(nosl "${XDG_CONFIG_HOME:-$uhome/.config}")/systemd/user
+userunits=$shellunits
+dataunits=$(nosl "${XDG_DATA_HOME:-$uhome/.local/share}")/systemd/user
 # Your runtime folder.
 rt=$(nosl "${XDG_RUNTIME_DIR:-/run/user/$uid}")
+# (The shape: two .control entries, then the runtime folder's transient one,
+# which systemd always adds for a user manager; a SYSTEMD_UNIT_PATH override
+# doesn't have it.)
+if [ "${#unitpath[@]}" -ge 3 ] && [ "${unitpath[0]%/systemd/user.control}" != "${unitpath[0]}" ] \
+  && [ "${unitpath[1]%/systemd/user.control}" != "${unitpath[1]}" ] \
+  && [ "${unitpath[2]}" = "${unitpath[1]%/user.control}/transient" ]; then
+  userunits=${unitpath[0]%.control}
+  rt=${unitpath[1]%/systemd/user.control}
+  # Your data folder only from the list (this shell's may differ, and name
+  # a shared one): none when the list has none under your home folder.
+  dataunits=/nonexistent-data-home
+  next=''
+  for x in "${unitpath[@]}"; do
+    if [ -n "$next" ]; then
+      # Only under your home folder: when the data home is left out (a
+      # duplicate, an older systemd), the next entry is an XDG_DATA_DIRS one,
+      # perhaps shared.
+      case $x in
+        */flatpak/* | "$uhome"/.nix-profile/* | "$uhome"/.local/state/nix/profile/*) ;;
+        "$uhome"/*) dataunits=$x ;;
+      esac
+      break
+    fi
+    [ "$x" != "$rt/systemd/generator" ] || next=1
+  done
+fi
 # The folder Home Manager writes units to (USER_UNITS, its xdg.configHome;
-# `~/` is the home folder), which can differ from this shell's.
+# `~/` is the home folder), which can differ from systemd's config folder.
 ownunits=${USER_UNITS:-$userunits}
-case $ownunits in \~/*) ownunits=$home/${ownunits:2} ;; esac
+case $ownunits in \~/*) ownunits=$uhome/${ownunits:2} ;; esac
+ownunits=$(nosl "$ownunits")
+# The kind of folder a unit file is in, by its folder exactly (REPLY):
+# systemd's folders for every user first (an XDG folder can be one of them),
+# then yours as systemd has them, then by what the folder is (a profile's,
+# the system's, under your home folder), whatever XDG list holds it: a
+# folder's place in a search list doesn't say who put a unit there. A system
+# folder may sit under the tests' root.
+unitkind() {
+  local d sys
+  d=$(nosl "${1%/*}")
+  sys=${d#"$root"}
+  case $sys in
+    /etc/systemd/user) REPLY=global-config; return ;;
+    /run/systemd/user) REPLY=global-runtime; return ;;
+    /usr/lib/systemd/user | /usr/local/lib/systemd/user | /usr/share/systemd/user | /usr/local/share/systemd/user | /etc/xdg/systemd/user)
+      REPLY=global-vendor; return ;;
+  esac
+  case $d in
+    "$userunits") REPLY=own-config; return ;;
+    "$userunits".control | "$rt"/systemd/user.control) REPLY=own-control; return ;;
+    "$userunits".attached) REPLY=own-attached; return ;;
+    "$rt"/systemd/user.attached) REPLY=own-attached-runtime; return ;;
+    "$rt"/systemd/user) REPLY=own-runtime; return ;;
+    "$rt"/systemd/transient) REPLY=own-transient; return ;;
+    "$rt"/systemd/generator | "$rt"/systemd/generator.early | "$rt"/systemd/generator.late) REPLY=own-generator; return ;;
+    "$dataunits") REPLY=own-data; return ;;
+    # Home Manager's unit folder, and this shell's config folder (where
+    # upstream's installer may write, if the manager's differs).
+    "$ownunits") REPLY=own-hm; return ;;
+    "$shellunits") REPLY=own-shell; return ;;
+  esac
+  case $sys in
+    /etc/profiles/per-user/"$me"/*) REPLY=profile; return ;;
+    /run/current-system/* | /nix/var/nix/profiles/default/* | /nix/store/*) REPLY=global-vendor; return ;;
+  esac
+  case $d in
+    "$uhome"/.nix-profile/* | "$uhome"/.local/state/nix/profile/* | /nix/var/nix/profiles/per-user/"$me"/*) REPLY=own-profile ;;
+    "$uhome"/*) REPLY=own-home ;;
+    *) REPLY=unknown ;;
+  esac
+}
 # One value a line, in systemd's order (LoadState, ActiveState, FragmentPath,
 # whatever order they're asked in).
 mapfile -t unitstate < <(systemctl --user show t3code-server.service -p LoadState -p ActiveState -p FragmentPath --value 2>/dev/null || true)
@@ -503,7 +587,11 @@ elif [ -n "$upfragment" ]; then
   units=("$upfragment")
 else
   units=("$userunits/t3code.service")
-  [ "$userunits/t3code.service" -ef "$ownunits/t3code.service" ] || units+=("$ownunits/t3code.service")
+  for x in "$ownunits" "$shellunits"; do
+    seen=''
+    for u in "${units[@]}"; do [ ! "$u" -ef "$x/t3code.service" ] && [ "$u" != "$x/t3code.service" ] || seen=1; done
+    [ -n "$seen" ] || units+=("$x/t3code.service")
+  done
   # systemd answered and has none: a file there isn't loaded.
   [ "$upload" != not-found ] || upnotloaded=1
 fi
@@ -537,34 +625,32 @@ for unit in "${units[@]}"; do
   fi
   found=1
   remove="\`t3 service uninstall\`, or \`systemctl --user disable --now t3code.service\` and delete $unit; $ns.server is the Nix-managed one"
-  # One in systemd's folders for every user (/etc, /usr/lib, /run/systemd/user,
-  # the system's profile) isn't yours to delete. Your own profile's (NixOS's
-  # per-user one) is a package in your NixOS or Home Manager config, whoever
-  # put it there; one in your runtime folder (systemd-run --user, edit
-  # --runtime) is yours, gone at logout, or once disabled and deleted; a
-  # generator's there comes back from it; your config and data folders' are
-  # yours wherever they are.
+  # By its folder's kind (unitkind): one in systemd's folders for every user
+  # isn't yours to delete; a profile's is a package in a config, whoever put
+  # it there; one in your runtime folder (systemd-run --user, edit --runtime)
+  # is yours, gone at logout, or once disabled and deleted; a generator's
+  # there comes back from it; your config and data folders' are yours.
   everyone="it's installed for every user ($unit): have it removed from the system's configuration; $ns.server is the Nix-managed one"
-  case $unit in
-    "$home"/*) ;;
-    # systemd's own folders for every user's units, exactly (even as an
-    # XDG_CONFIG_HOME or XDG_DATA_HOME).
-    /etc/systemd/user/* | /run/systemd/user/* | /usr/lib/systemd/user/* | /usr/share/systemd/user/* | /usr/local/lib/systemd/user/* | /usr/local/share/systemd/user/* \
-      | "$root"/etc/systemd/user/* | "$root"/run/systemd/user/* | "$root"/usr/*/systemd/user/* | "$root"/usr/local/*/systemd/user/*)
-      remove=$everyone ;;
-    "$rt"/systemd/generator*/*)
+  unitkind "$unit"
+  case $REPLY in
+    # Where upstream's installer writes it.
+    own-config) ;;
+    own-control | own-data | own-hm | own-shell | own-home)
+      remove="\`systemctl --user disable --now t3code.service\` and delete $unit; $ns.server is the Nix-managed one" ;;
+    own-attached)
+      remove="it's attached as a portable service of yours ($unit): \`portablectl --user detach --now\` its image (stopping it first); $ns.server is the Nix-managed one" ;;
+    own-attached-runtime)
+      remove="it's attached as a portable service of yours, until logout ($unit): \`portablectl --user detach --runtime --now\` its image (stopping it first); $ns.server is the Nix-managed one" ;;
+    global-*) remove=$everyone ;;
+    own-generator)
       remove="a generator writes it into your runtime folder ($unit), so it comes back at each daemon-reload: find the generator that writes it; $ns.server is the Nix-managed one" ;;
-    "$rt"/systemd/user/* | "$rt"/systemd/transient/*)
+    own-runtime | own-transient)
       remove="it's a runtime unit of yours ($unit): \`systemctl --user disable --runtime --now t3code.service\`, delete it if it's still there, then \`systemctl --user daemon-reload\`; $ns.server is the Nix-managed one" ;;
-    /etc/profiles/per-user/"$me"/* | "$root"/etc/profiles/per-user/"$me"/*)
+    profile)
       remove="it comes from a package in your NixOS per-user profile ($unit): remove that package (users.users.<you>.packages in the NixOS config, or Home Manager's home.packages with useUserPackages; then rebuild); $ns.server is the Nix-managed one" ;;
-    # Your config and data folders' units, wherever XDG_CONFIG_HOME and
-    # XDG_DATA_HOME put them (/run/media/…, under your runtime folder): yours.
-    "$userunits"/* | "$ownunits"/* | "$dataunits"/*) ;;
-    # Elsewhere in the system's folders.
-    /etc/* | /usr/* | /run/* | "$root"/etc/* | "$root"/usr/* | "$root"/run/*) remove=$everyone ;;
-    # Anywhere else: whose it is isn't known here.
-    *) remove="it's outside your folders and the system's ($unit), so whose it is isn't known here: remove it wherever it was installed from; $ns.server is the Nix-managed one" ;;
+    own-profile)
+      remove="it comes from a package in your own Nix profile ($unit): remove that package (Home Manager's home.packages, or \`nix profile remove\`); $ns.server is the Nix-managed one" ;;
+    *) remove="it's not in one of your folders or systemd's own for every user ($unit), so whose it is isn't known here: remove it wherever it was installed from; $ns.server is the Nix-managed one" ;;
   esac
   if [ -n "$upnotloaded" ]; then
     # Of either kind: systemd has no t3code.service, so this one doesn't run.
@@ -625,14 +711,14 @@ fi
 # there), "foreign" (someone else's anywhere else), or empty (no user bus,
 # or this flake's somewhere else).
 loadedby=''
-case $fragment in
-  '') ;;
-  /etc/systemd/user/*)
-    if ours "$root$fragment"; then loadedby=nixos; else loadedby=system; fi ;;
-  "$ownunits"/* | "$userunits"/*)
-    if ours "$fragment"; then loadedby="home-manager"; else loadedby=user; fi ;;
-  *) ours "$fragment" || loadedby=foreign ;;
-esac
+if [ -n "$fragment" ]; then
+  unitkind "$fragment"
+  case $REPLY in
+    global-config) if ours "$root$fragment"; then loadedby=nixos; else loadedby=system; fi ;;
+    own-config | own-hm) if ours "$fragment"; then loadedby="home-manager"; else loadedby=user; fi ;;
+    *) ours "$fragment" || ours "$root$fragment" || loadedby=foreign ;;
+  esac
+fi
 # A unit whose file is gone (removed while it ran, with no switch to stop
 # it) can't be read: whose it was is unknown, so the usual checks apply
 # (it's still running from before).
@@ -728,31 +814,31 @@ elif [ "$SERVER" = on ] && [ -n "$notyours" ] && [ -n "$running" ]; then
   warn "server: t3code-server is still running for you ($me), from before; it runs for $forwhom now, and holds its port" \
     "stop it with \`systemctl --user stop t3code-server\`"
 # (A mask elsewhere is reported below either way: it stops the server for
-# everyone. One in your own folder only stops yours, which doesn't run for you
-# anyway. The folders for every user are ruled out first: an XDG folder can
+# everyone. One in your own folders or your per-user profile only stops
+# yours, which doesn't run for you anyway. The folders for every user are ruled out first: an XDG folder can
 # be one of them.)
 elif [ "$SERVER" = on ] && [ -n "$notyours" ] && [ "$state" != "loaded failed" ] \
-  && { [ "${unitstate[0]-}" != masked ] || case $fragment in /etc/systemd/user/* | /run/systemd/user/*) false ;; "$userunits"/* | "$ownunits"/* | "$dataunits"/* | "$rt"/*) true ;; *) false ;; esac; }; then
+  && { [ "${unitstate[0]-}" != masked ] || { unitkind "$fragment"; case $REPLY in own-* | profile) true ;; *) false ;; esac; }; }; then
   ok "server: t3code-server runs for $forwhom, not for you ($me); name yourself in programs.t3code.server.users to run it too"
 else
-  # Where the mask is, as systemd reports it: each unmask removes a mask
-  # from one folder only.
-  case $fragment in
-    "$rt"/systemd/user/*)
+  # Where the mask is, as systemd reports it (unitkind): each unmask removes
+  # a mask from one folder only.
+  if [ -z "$fragment" ]; then REPLY=own-config; else unitkind "$fragment"; fi
+  case $REPLY in
+    own-config)
+      unmaskfix="unmask it with \`systemctl --user unmask t3code-server\`" ;;
+    own-runtime)
       unmaskfix="it's a runtime mask ($fragment): unmask it with \`systemctl --user unmask --runtime t3code-server\`" ;;
-    /run/systemd/user/*)
+    global-runtime)
       unmaskfix="it's a runtime mask for every user ($fragment): \`sudo systemctl --global unmask --runtime t3code-server\`, then \`systemctl --user daemon-reload\`" ;;
-    /etc/systemd/user/*)
+    global-config)
       if [ -n "$nixos" ]; then
         # /etc/systemd/user is the system config's, read-only: nothing to
         # unmask by hand.
-        unmaskfix="it's masked for every user ($fragment), by the NixOS config (systemd.user.services.t3code-server.enable = false writes that mask): turn it back on there and rebuild, then \`systemctl --user daemon-reload\`"
+        unmaskfix="it's masked for every user ($fragment), from the NixOS config (systemd.user.services.t3code-server.enable = false writes that mask, or an environment.etc entry can): undo it there and rebuild, then \`systemctl --user daemon-reload\`"
       else
         unmaskfix="it's masked for every user ($fragment): \`sudo systemctl --global unmask t3code-server\`, then \`systemctl --user daemon-reload\`"
       fi ;;
-    # After the folders for every user (a Home Manager unit folder may be one).
-    '' | "$userunits"/* | "$ownunits"/*)
-      unmaskfix="unmask it with \`systemctl --user unmask t3code-server\`" ;;
     *) unmaskfix="it's masked by $fragment, a folder none of systemctl's unmask commands works on (a generator's, or elsewhere): find what puts it there" ;;
   esac
   case "$SERVER $state" in

@@ -2611,6 +2611,8 @@ let
             cat $work/scenario/mainpid 2>/dev/null || true
             [ ! -e $work/scenario/mainpid-next ] || mv $work/scenario/mainpid-next $work/scenario/mainpid ;;
           *" t3code.service "*) cat $work/scenario/upstream-unit 2>/dev/null || true ;;
+          # The manager's unit search path, or a failed call (no user bus).
+          *UnitPath*) cat $work/scenario/unitpath 2>/dev/null || exit 1 ;;
           *) cat $work/scenario/unit ;;
         esac
         SH
@@ -3154,7 +3156,7 @@ let
         ln -s /dev/null $work/scenario/root/etc/systemd/user/t3code-server.service
         printf 'masked\ninactive\n/etc/systemd/user/t3code-server.service\n' > $work/scenario/unit
         run ${nixosOn} server-masked-system 0
-        has "it's masked for every user (/etc/systemd/user/t3code-server.service), by the NixOS config (systemd.user.services.t3code-server.enable = false writes that mask): turn it back on there and rebuild, then \`systemctl --user daemon-reload\`"
+        has "it's masked for every user (/etc/systemd/user/t3code-server.service), from the NixOS config (systemd.user.services.t3code-server.enable = false writes that mask, or an environment.etc entry can): undo it there and rebuild, then \`systemctl --user daemon-reload\`"
         hasnt "systemctl --user unmask t3code-server"
         hasnt "sudo systemctl --global unmask"
         # Not on NixOS: one made by hand, a global unmask.
@@ -3545,11 +3547,11 @@ let
         upunit $work/xdgdata/systemd/user/t3code.service
         printf 'loaded\ninactive\n%s\n' $work/xdgdata/systemd/user/t3code.service > $work/scenario/upstream-unit
         XDG_DATA_HOME=$work/xdgdata run ${hmOn} t3code-service-xdg-data 0
-        has "t3 service uninstall"
+        has "systemctl --user disable --now t3code.service\` and delete"
         hasnt "installed for every user"
         # Anywhere else: not claimed as everyone's.
         XDG_DATA_HOME=$work/elsewhere run ${hmOn} t3code-service-unknown-place 0
-        has "it's outside your folders and the system's ($work/xdgdata/systemd/user/t3code.service), so whose it is isn't known here"
+        has "it's not in one of your folders or systemd's own for every user ($work/xdgdata/systemd/user/t3code.service), so whose it is isn't known here"
         hasnt "installed for every user"
         rm -r $work/xdgdata
         # Your data folder under /run (removable media) or your runtime
@@ -3559,18 +3561,18 @@ let
         upunit $work/scenario/root/run/media/alice/data/systemd/user/t3code.service
         printf 'loaded\ninactive\n%s\n' $work/scenario/root/run/media/alice/data/systemd/user/t3code.service > $work/scenario/upstream-unit
         XDG_DATA_HOME=$work/scenario/root/run/media/alice/data run ${hmOn} t3code-service-xdg-data-media 0
-        has "t3 service uninstall"
+        has "systemctl --user disable --now t3code.service\` and delete"
         hasnt "installed for every user"
         scenario
         mkdir -p $work/scenario/rt/data/systemd/user
         upunit $work/scenario/rt/data/systemd/user/t3code.service
         printf 'loaded\ninactive\n%s\n' $work/scenario/rt/data/systemd/user/t3code.service > $work/scenario/upstream-unit
         XDG_RUNTIME_DIR=$work/scenario/rt XDG_DATA_HOME=$work/scenario/rt/data run ${hmOn} t3code-service-xdg-data-runtime 0
-        has "t3 service uninstall"
+        has "systemctl --user disable --now t3code.service\` and delete"
         hasnt "runtime unit of yours"
         # XDG_DATA_HOME with a trailing slash: still yours.
         XDG_RUNTIME_DIR=$work/scenario/rt XDG_DATA_HOME=$work/scenario/rt/data/ run ${hmOn} t3code-service-xdg-data-slash 0
-        has "t3 service uninstall"
+        has "systemctl --user disable --now t3code.service\` and delete"
         # A generator's, in your runtime folder: it comes back from the
         # generator.
         scenario
@@ -3588,13 +3590,216 @@ let
         XDG_DATA_HOME=$work/scenario/root/usr/share run ${hmOn} t3code-service-xdg-data-system 0
         has "it's installed for every user ($work/scenario/root/usr/share/systemd/user/t3code.service)"
         hasnt "t3 service uninstall"
+        # The user manager's unit search path, where it answers: its own
+        # folders (from its .control entries and its layout), not this
+        # shell's. Your config folder elsewhere: yours, upstream's installer's.
+        scenario
+        mkdir -p $work/mcfg/systemd/user
+        upunit $work/mcfg/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/mcfg/systemd/user/t3code.service > $work/scenario/upstream-unit
+        echo "$work/mcfg/systemd/user.control /run/user/1000/systemd/user.control /run/user/1000/systemd/transient /run/user/1000/systemd/generator.early $work/mcfg/systemd/user /etc/xdg/systemd/user /etc/systemd/user /run/user/1000/systemd/user /run/systemd/user /run/user/1000/systemd/generator $work/mdata/systemd/user /usr/share/systemd/user /usr/lib/systemd/user /run/user/1000/systemd/generator.late" > $work/scenario/unitpath
+        run ${hmOn} t3code-service-manager-config 0
+        has "t3 service uninstall"
+        hasnt "whose it is isn't known"
+        # Without that answer, the same folder is of no known kind.
+        rm $work/scenario/unitpath
+        run ${hmOn} t3code-service-manager-config-unasked 0
+        has "whose it is isn't known"
+        # Its data folder (the entry after its runtime generator one): yours,
+        # disable and delete.
+        mkdir -p $work/scenario/home/mdata/systemd/user
+        upunit $work/scenario/home/mdata/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/home/mdata/systemd/user/t3code.service > $work/scenario/upstream-unit
+        echo "$work/mcfg/systemd/user.control /run/user/1000/systemd/user.control /run/user/1000/systemd/transient /run/user/1000/systemd/generator.early $work/mcfg/systemd/user /etc/systemd/user /run/user/1000/systemd/user /run/systemd/user /run/user/1000/systemd/generator $work/home/mdata/systemd/user /usr/lib/systemd/user /run/user/1000/systemd/generator.late" > $work/scenario/unitpath
+        run ${hmOn} t3code-service-manager-data 0
+        has "systemctl --user disable --now t3code.service\` and delete $work/home/mdata/systemd/user/t3code.service"
+        # Attached (a portable service): portablectl detach.
+        mkdir -p $work/mcfg/systemd/user.attached
+        upunit $work/mcfg/systemd/user.attached/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/mcfg/systemd/user.attached/t3code.service > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-attached 0
+        has "it's attached as a portable service of yours ($work/mcfg/systemd/user.attached/t3code.service): \`portablectl --user detach --now\` its image (stopping it first)"
+        # The runtime folder's: until logout, detached with --runtime.
+        mkdir -p $work/mrt/systemd/user.attached
+        upunit $work/mrt/systemd/user.attached/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/mrt/systemd/user.attached/t3code.service > $work/scenario/upstream-unit
+        echo "$work/mcfg/systemd/user.control $work/mrt/systemd/user.control $work/mrt/systemd/transient $work/mcfg/systemd/user $work/mrt/systemd/user $work/mrt/systemd/user.attached $work/mrt/systemd/generator $work/mdata/systemd/user" > $work/scenario/unitpath
+        run ${hmOn} t3code-service-attached-runtime 0
+        has "\`portablectl --user detach --runtime --now\` its image (stopping it first)"
+        # Your config folder's control one (systemctl set-property): yours.
+        mkdir -p $work/mcfg/systemd/user.control
+        upunit $work/mcfg/systemd/user.control/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/mcfg/systemd/user.control/t3code.service > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-control 0
+        has "systemctl --user disable --now t3code.service\` and delete $work/mcfg/systemd/user.control/t3code.service"
+        # An answer of another shape (SYSTEMD_UNIT_PATH, or a quoted entry):
+        # this shell's folders stand in, so the manager's config folder is of
+        # no known kind again.
+        printf 'loaded\ninactive\n%s\n' $work/mcfg/systemd/user/t3code.service > $work/scenario/upstream-unit
+        echo "/srv/units $work/mcfg/systemd/user" > $work/scenario/unitpath
+        run ${hmOn} t3code-service-unitpath-other-shape 0
+        has "whose it is isn't known"
+        echo "$work/mcfg/systemd/user.control /run/user/1000/systemd/user.control /run/user/1000/systemd/transient '/mnt/My Data/systemd/user' $work/mcfg/systemd/user" > $work/scenario/unitpath
+        run ${hmOn} t3code-service-unitpath-quoted 0
+        has "whose it is isn't known"
+        rm -r $work/mcfg $work/mrt
+        # The manager answers, systemd has no t3code.service, and a file sits
+        # in this shell's config folder: still looked at.
+        scenario
+        mkdir -p $work/scenario/home/.config/systemd/user
+        upunit $work/scenario/home/.config/systemd/user/t3code.service
+        printf 'not-found\ninactive\n\n' > $work/scenario/upstream-unit
+        echo "$work/elsewhere/systemd/user.control /run/user/1000/systemd/user.control /run/user/1000/systemd/transient $work/elsewhere/systemd/user /etc/systemd/user /run/user/1000/systemd/generator $work/home/.local/share/systemd/user" > $work/scenario/unitpath
+        run ${hmOn} t3code-service-shell-folder 0
+        has "t3code.service ($work/home/.config/systemd/user/t3code.service) is there, but systemd hasn't loaded it"
+        # The manager's own config folder at /etc: every user's folders first.
+        scenario
+        mkdir -p $work/scenario/root/etc/systemd/user
+        upunit $work/scenario/root/etc/systemd/user/t3code.service
+        printf 'loaded\ninactive\n/etc/systemd/user/t3code.service\n' > $work/scenario/upstream-unit
+        echo "/etc/systemd/user.control /run/user/1000/systemd/user.control /run/user/1000/systemd/transient /etc/systemd/user /run/user/1000/systemd/generator $work/home/.local/share/systemd/user" > $work/scenario/unitpath
+        run ${hmOn} t3code-service-manager-config-etc 0
+        has "it's installed for every user ($work/scenario/root/etc/systemd/user/t3code.service)"
+        # A profile's folder where the data home would be (no data home in
+        # the list): not taken for it.
+        scenario
+        mkdir -p $work/scenario/home/.nix-profile/share/systemd/user
+        upunit $work/scenario/home/.nix-profile/share/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/home/.nix-profile/share/systemd/user/t3code.service > $work/scenario/upstream-unit
+        echo "$work/home/.config/systemd/user.control /run/user/1000/systemd/user.control /run/user/1000/systemd/transient $work/home/.config/systemd/user /run/user/1000/systemd/generator $work/home/.nix-profile/share/systemd/user" > $work/scenario/unitpath
+        run ${hmOn} t3code-service-no-data-home 0
+        has "it comes from a package in your own Nix profile"
+        # A package's, by where it is, whatever XDG list holds it: your own
+        # Nix profile, the system's, your NixOS per-user profile's (etc/xdg).
+        scenario
+        mkdir -p $work/scenario/home/.nix-profile/share/systemd/user
+        upunit $work/scenario/home/.nix-profile/share/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/home/.nix-profile/share/systemd/user/t3code.service > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-own-profile 0
+        has "it comes from a package in your own Nix profile ($work/home/.nix-profile/share/systemd/user/t3code.service)"
+        mkdir -p $work/scenario/root/run/current-system/sw/share/systemd/user
+        upunit $work/scenario/root/run/current-system/sw/share/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/scenario/root/run/current-system/sw/share/systemd/user/t3code.service > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-system-profile 0
+        has "it's installed for every user ($work/scenario/root/run/current-system/sw/share/systemd/user/t3code.service)"
+        mkdir -p $work/scenario/root/etc/profiles/per-user/alice/etc/xdg/systemd/user
+        upunit $work/scenario/root/etc/profiles/per-user/alice/etc/xdg/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/scenario/root/etc/profiles/per-user/alice/etc/xdg/systemd/user/t3code.service > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-per-user-xdg 0
+        has "it comes from a package in your NixOS per-user profile"
+        # Your other profiles, and the system's default profile and store.
+        mkdir -p $work/scenario/home/.local/state/nix/profile/share/systemd/user
+        upunit $work/scenario/home/.local/state/nix/profile/share/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/home/.local/state/nix/profile/share/systemd/user/t3code.service > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-profile-state 0
+        has "it comes from a package in your own Nix profile"
+        for sysprof in nix/var/nix/profiles/default/share/systemd/user nix/store/00000000000000000000000000000000-systemd/example/systemd/user; do
+          mkdir -p $work/scenario/root/$sysprof
+          upunit $work/scenario/root/$sysprof/t3code.service
+          printf 'loaded\ninactive\n%s\n' $work/scenario/root/$sysprof/t3code.service > $work/scenario/upstream-unit
+          run ${hmOn} t3code-service-system-$(echo $sysprof | cut -d/ -f2-4 | tr / -) 0
+          has "it's installed for every user ($work/scenario/root/$sysprof/t3code.service)"
+        done
+        # An XDG_DATA_DIRS entry of no known kind outside your home folder:
+        # not claimed as anyone's.
+        mkdir -p $work/srvshare/systemd/user
+        upunit $work/srvshare/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/srvshare/systemd/user/t3code.service > $work/scenario/upstream-unit
+        run ${hmOn} t3code-service-xdg-dirs-entry 0
+        has "whose it is isn't known"
+        rm -r $work/srvshare
+        # A mask in the manager's runtime folder (its second .control entry),
+        # which this shell's differs from; for a user server.users leaves out,
+        # their own; and one in a search-path folder of no known kind.
+        scenario
+        printf 'masked\ninactive\n/run/user/2000/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        echo "$work/home/.config/systemd/user.control /run/user/2000/systemd/user.control /run/user/2000/systemd/transient $work/home/.config/systemd/user /etc/systemd/user /run/user/2000/systemd/user /run/systemd/user /run/user/2000/systemd/generator $work/home/.local/share/systemd/user /usr/lib/systemd/user /srv/units" > $work/scenario/unitpath
+        run ${nixosOn} server-masked-manager-runtime 0
+        has "it's a runtime mask (/run/user/2000/systemd/user/t3code-server.service): unmask it with \`systemctl --user unmask --runtime t3code-server\`"
+        run ${withServerUsers [ "bob" ]} server-masked-manager-runtime-excluded 0
+        has "runs for bob (programs.t3code.server.users), not for you (alice)"
+        rm $work/scenario/unitpath
+        run ${nixosOn} server-masked-manager-runtime-unasked 0
+        has "it's masked by /run/user/2000/systemd/user/t3code-server.service, a folder none of systemctl's unmask commands works on"
+        # Someone else's t3code-server in the manager's config folder (from its
+        # search path, not this shell's): your own, not another place's.
+        mkdir -p $work/mcfg2/systemd/user
+        echo 'Description=Something else' > $work/mcfg2/systemd/user/t3code-server.service
+        printf 'loaded\ninactive\n%s\n' $work/mcfg2/systemd/user/t3code-server.service > $work/scenario/unit
+        echo "$work/mcfg2/systemd/user.control /run/user/1000/systemd/user.control /run/user/1000/systemd/transient $work/mcfg2/systemd/user /etc/systemd/user /run/user/1000/systemd/user /run/user/1000/systemd/generator $work/home/.local/share/systemd/user" > $work/scenario/unitpath
+        run ${hmOn} server-other-manager-config 0
+        has "systemd loaded your own (not t3code-nix's) t3code-server unit"
+        rm $work/scenario/unitpath
+        run ${hmOn} server-other-manager-config-unasked 0
+        has "systemd loaded another (not t3code-nix's) t3code-server unit"
+        rm -r $work/mcfg2
+        echo "$work/home/.config/systemd/user.control /run/user/2000/systemd/user.control /run/user/2000/systemd/transient /srv/units" > $work/scenario/unitpath
+        # A mask in Home Manager's unit folder, when it isn't systemd's config
+        # folder: not a plain unmask target.
+        mkdir -p $work/scenario/home/hm-config/systemd/user
+        printf 'masked\ninactive\n%s\n' $work/home/hm-config/systemd/user/t3code-server.service > $work/scenario/unit
+        run ${hmUnitsAt "hm-config"} server-masked-hm-folder 0
+        has "a folder none of systemctl's unmask commands works on"
+        echo "$work/home/.config/systemd/user.control /run/user/2000/systemd/user.control /run/user/2000/systemd/transient /srv/units" > $work/scenario/unitpath
+        printf 'masked\ninactive\n/srv/units/t3code-server.service\n' > $work/scenario/unit
+        run ${nixosOn} server-masked-in-path 0
+        has "it's masked by /srv/units/t3code-server.service, a folder none of systemctl's unmask commands works on"
+        # A shared folder right after the runtime generator one (the data home
+        # left out of the list): not taken for yours, so for a user
+        # server.users leaves out, a mask there is still reported.
+        printf 'masked\ninactive\n/srv/team/share/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        echo "$work/home/.config/systemd/user.control /run/user/1000/systemd/user.control /run/user/1000/systemd/transient $work/home/.config/systemd/user /etc/systemd/user /run/user/1000/systemd/user /run/user/1000/systemd/generator /srv/team/share/systemd/user" > $work/scenario/unitpath
+        run ${withServerUsers [ "bob" ]} server-masked-shared-data 0
+        has "t3code-server is masked, so it can't start"
+        hasnt "runs for bob"
+        # Nor when this shell's XDG_DATA_HOME names that shared folder: with
+        # the manager answering, your data folder comes from its list only.
+        XDG_DATA_HOME=/srv/team/share run ${withServerUsers [ "bob" ]} server-masked-shared-data-shell 0
+        has "t3code-server is masked, so it can't start"
+        hasnt "runs for bob"
+        # A SYSTEMD_UNIT_PATH that imitates the layout but lacks the runtime
+        # transient entry: not taken for systemd's own.
+        printf 'masked\ninactive\n/srv/one/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        echo "/srv/one/systemd/user.control /srv/two/systemd/user.control /srv/one/systemd/user" > $work/scenario/unitpath
+        run ${nixosOn} server-masked-unit-path-override 0
+        has "a folder none of systemctl's unmask commands works on"
+        hasnt "unmask it with \`systemctl --user unmask t3code-server\`"
+        # HOME with a trailing slash, or empty: your folders still found, and
+        # no folder taken for yours by an empty one.
+        printf 'masked\ninactive\n/srv/team/share/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        echo "$work/home/.config/systemd/user.control /run/user/1000/systemd/user.control /run/user/1000/systemd/transient $work/home/.config/systemd/user /run/user/1000/systemd/generator $work/home/.local/share/systemd/user" > $work/scenario/unitpath
+        for h in "$work/home/" ""; do
+          T3CODE_DOCTOR_USER=alice T3CODE_DOCTOR_UID=1000 HOME="$h" T3CODE_DOCTOR_ROOT=$work/scenario/root \
+            PATH="$work/scenario/path:$work/bin:$PATH" ${withServerUsers [ "bob" ]}/bin/t3code-nix doctor > $work/out 2>&1 && got=0 || got=$?
+          grep -q "t3code-server is masked, so it can't start" $work/out \
+            || { echo "HOME='$h': a shared folder's mask for a left-out user wasn't reported"; cat $work/out; exit 1; }
+          [ "$got" = 0 ] || { echo "HOME='$h': exit $got, expected 0"; cat $work/out; exit 1; }
+        done
+        printf 'masked\ninactive\n%s\n' $work/home/.local/share/systemd/user/t3code-server.service > $work/scenario/unit
+        T3CODE_DOCTOR_USER=alice T3CODE_DOCTOR_UID=1000 HOME="$work/home/" T3CODE_DOCTOR_ROOT=$work/scenario/root \
+          PATH="$work/scenario/path:$work/bin:$PATH" ${withServerUsers [ "bob" ]}/bin/t3code-nix doctor > $work/out 2>&1 && got=0 || got=$?
+        grep -q "runs for bob (programs.t3code.server.users), not for you (alice)" $work/out \
+          || { echo "HOME with a trailing slash: your data folder's mask wasn't your own"; cat $work/out; exit 1; }
+        [ "$got" = 0 ] || { echo "HOME with a trailing slash (data folder): exit $got, expected 0"; cat $work/out; exit 1; }
+        # And Home Manager's unit folder given as ~/ (USER_UNITS): someone
+        # else's t3code-server there is still in your own folder.
+        mkdir -p $work/scenario/home/hm-config/systemd/user
+        echo 'Description=Something else' > $work/scenario/home/hm-config/systemd/user/t3code-server.service
+        printf 'loaded\ninactive\n%s\n' $work/home/hm-config/systemd/user/t3code-server.service > $work/scenario/unit
+        chmod -R u+w $work/home; rm -rf "''${work:?}"/home && mkdir -p $work/home && cp -r $work/scenario/home/. $work/home/
+        T3CODE_DOCTOR_USER=alice T3CODE_DOCTOR_UID=1000 HOME="$work/home/" T3CODE_DOCTOR_ROOT=$work/scenario/root \
+          PATH="$work/scenario/path:$work/bin:$PATH" ${hmUnitsAt "hm-config"}/bin/t3code-nix doctor > $work/out 2>&1 && got=0 || got=$?
+        grep -q "systemd loaded your own (not t3code-nix's) t3code-server unit" $work/out \
+          || { echo "HOME with a trailing slash: Home Manager's ~/ unit folder wasn't yours"; cat $work/out; exit 1; }
+        [ "$got" = 0 ] || { echo "HOME with a trailing slash (Home Manager's folder): exit $got, expected 0"; cat $work/out; exit 1; }
+        rm -r $work/scenario/home/hm-config
 
         # From your own NixOS per-user profile: a package in your configs.
         scenario
         mkdir -p $work/scenario/root/etc/profiles/per-user/alice/share/systemd/user
         upunit $work/scenario/root/etc/profiles/per-user/alice/share/systemd/user/t3code.service
         printf 'loaded\ninactive\n/etc/profiles/per-user/alice/share/systemd/user/t3code.service\n' > $work/scenario/upstream-unit
-        run ${hmOn} t3code-service-own-profile 0
+        run ${hmOn} t3code-service-own-profile-xdg 0
         has "it comes from a package in your NixOS per-user profile ($work/scenario/root/etc/profiles/per-user/alice/share/systemd/user/t3code.service): remove that package"
         has "users.users.<you>.packages in the NixOS config, or Home Manager's home.packages with useUserPackages; then rebuild"
 
@@ -3857,7 +4062,7 @@ let
         printf 'A=1\0' > $work/scenario/root/proc/4242/environ
         run ${doctor} calls 0
         has "server: started with T3CODE_TELEMETRY_ENABLED absent"
-        if grep -v "^nix --extra-experimental-features nix-command config show \|^nix --extra-experimental-features nix-command store info --json$\|^systemctl --user show t3code-server.service \|^systemctl --user show -p MainPID --value t3code-server.service$\|^systemctl --user show t3code.service " $work/calls; then
+        if grep -v "^nix --extra-experimental-features nix-command config show \|^nix --extra-experimental-features nix-command store info --json$\|^systemctl --user show t3code-server.service \|^systemctl --user show -p MainPID --value t3code-server.service$\|^systemctl --user show t3code.service \|^systemctl --user show -p UnitPath --value$" $work/calls; then
           echo "a call that isn't a read"; exit 1
         fi
         touch $out
