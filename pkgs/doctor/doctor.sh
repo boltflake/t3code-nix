@@ -576,7 +576,7 @@ done
 
 case $loader in
   nix-ld) ok "runtimeCompat (nix-ld): on" ;;
-  none) ok "runtimeCompat (nix-ld): off (needed only when another machine's T3 Code connects here over SSH)" ;;
+  none) ok "runtimeCompat (nix-ld): off (needed only for upstream's own service, or when another machine's T3 Code connects here over SSH and finds no t3 of its own version here)" ;;
   *) ok "runtimeCompat: not needed (not NixOS: this system's own loader runs T3 Code's downloads)" ;;
 esac
 

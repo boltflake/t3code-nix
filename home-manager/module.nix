@@ -71,6 +71,14 @@ let
     runtimeCompat = "nix-ld, a system setting";
     "server.users" = "this unit is yours alone";
     "server.openFirewall" = "the system's firewall";
+    openFirewall = "the system's firewall";
+    port = "the desktop app's port, opened in the system's firewall";
+  };
+  # The NixOS module's desktop-app port: it pins the app that module
+  # installs, never this one.
+  appPortOptions = {
+    openFirewall = null;
+    port = null;
   };
   setMachineWide = builtins.filter (
     n: (lib.attrByPath (lib.splitString "." n) { } options.programs.t3code-nix).isDefined or false
@@ -123,6 +131,8 @@ in
     binaryCache = nixosOnly machineWide.binaryCache;
     claudeCodePolicy = nixosOnly machineWide.claudeCodePolicy;
     runtimeCompat = nixosOnly machineWide.runtimeCompat;
+    openFirewall = nixosOnly machineWide.openFirewall;
+    port = nixosOnly machineWide.port;
 
     # What this user needs from the machine, for this flake's NixOS module
     # with Home Manager as a NixOS module (nixos/module.nix reads it). Two
@@ -160,7 +170,11 @@ in
         d.assertions
         ++ map (n: {
           assertion = false;
-          message = "${ns}.${n} is a NixOS option (${machineWide.${n}}), which Home Manager can't set: on NixOS, set programs.t3code.${n} in this flake's NixOS module; elsewhere see the README, \"What Home Manager can't do\".";
+          message =
+            if appPortOptions ? ${n} then
+              "${ns}.${n} is a NixOS option (${machineWide.${n}}), for the app the NixOS module installs, so it can't pin this one: open the app's port in your system's firewall, and pin the app to it with ${ns}.package = ….t3code.override { port = …; }; see the README, \"What Home Manager can't do\"."
+            else
+              "${ns}.${n} is a NixOS option (${machineWide.${n}}), which Home Manager can't set: on NixOS, set programs.t3code.${n} in this flake's NixOS module; elsewhere see the README, \"What Home Manager can't do\".";
         }) setMachineWide;
       inherit (d) warnings;
     }

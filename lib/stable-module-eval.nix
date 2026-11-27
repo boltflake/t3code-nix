@@ -100,6 +100,12 @@ let
     cli.enable = true;
     telemetry.enable = false;
   };
+  firewall = eval {
+    enable = true;
+    nixpkgs = "stable";
+    cli.enable = true;
+    openFirewall = true;
+  };
   withNightly = eval {
     enable = true;
     nixpkgs = "stable";
@@ -121,6 +127,11 @@ let
       drvs (installed telemetryOff "t3code") == [ (set.t3code.override { telemetry = false; }).drvPath ]
       && drvs (installed telemetryOff "t3") == [ (set.t3.override { telemetry = false; }).drvPath ]
       && !failedAssertion telemetryOff;
+    "openFirewall pins the stable set's app and opens its port" =
+      drvs (installed firewall "t3code") == [ (set.t3code.override { port = 3773; }).drvPath ]
+      && drvs (installed firewall "t3") == [ set.t3.drvPath ]
+      && firewall.networking.firewall.allowedTCPPorts == [ 3773 ]
+      && !failedAssertion firewall;
     "the server runs the stable set's t3" =
       lib.hasPrefix "${set.t3}/bin/" server.systemd.user.services.t3code-server.serviceConfig.ExecStart;
     "an explicit package wins; the CLI stays stable, with the app's providers" =

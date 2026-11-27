@@ -158,6 +158,32 @@ let
     ];
 
   app = home [ { programs.t3code-nix.enable = true; } ];
+  # The desktop app's port, pinned on the package (the README's recipe).
+  pinned = ours {
+    enable = true;
+    package = packages.t3code.override { port = 3780; };
+    providers = [ "codex" ];
+  };
+  appPortStubs = [
+    (ours {
+      enable = true;
+      openFirewall = true;
+    })
+    (ours {
+      enable = true;
+      port = 3780;
+    })
+  ];
+  pinnedClashGL = withGL {
+    enable = true;
+    package = packages.t3code.override { port = 3773; };
+    server.enable = true;
+  };
+  pinnedClash = ours {
+    enable = true;
+    package = packages.t3code.override { port = 3773; };
+    server.enable = true;
+  };
   appCli = ours {
     enable = true;
     cli.enable = true;
@@ -215,6 +241,8 @@ let
         { runtimeCompat = true; }
         { server.users = [ "alice" ]; }
         { server.openFirewall = true; }
+        { openFirewall = true; }
+        { port = 3780; }
       ];
 
   # With Home Manager's own module.
@@ -473,6 +501,33 @@ in
           h: failsWith h "is a NixOS option" && failsWith h "What Home Manager can't do"
         ) nixosOnly;
         "no machine-wide option set: nothing fails" = noneFailed app && noneFailed serverOnly;
+        "the app's port options say to pin the package instead" = builtins.all (
+          h:
+          failsWith h "pin the app to it with programs.t3code-nix.package = ….t3code.override { port = …; }"
+        ) appPortStubs;
+        "the README's recipe pins the app, with the module's providers, nixGL too" =
+          map (p: p.passthru.port) (installed pinned "t3code") == [ 3780 ]
+          && map (p: map lib.getName p.providers) (installed pinned "t3code") == [ [ "codex" ] ]
+          && noneFailed pinned
+          &&
+            (first (
+              installed (withGL {
+                enable = true;
+                package = packages.t3code.override { port = 3780; };
+              }) "t3code-nix-doctor"
+            )).appInner.passthru.port == 3780;
+        "a pinned app on the server's port fails with its own message" =
+          builtins.all
+            (
+              h:
+              failed h == [
+                "programs.t3code-nix: the desktop app's port and server.port are both 3773, and only one of the app and the server can listen on it; set the package's port to another one."
+              ]
+            )
+            [
+              pinnedClash
+              pinnedClashGL
+            ];
         "the server's unit: keep-old, wanted by default.target, the CLI's t3 serve" =
           let
             u = unitOf serverOnly;

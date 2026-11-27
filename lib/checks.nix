@@ -1512,8 +1512,185 @@ let
               c.programs.t3code.package.name or "this package"
             }; or set T3CODE_TELEMETRY_ENABLED=false in its environment yourself."
         ) c.assertions;
+      # The desktop app's port (openFirewall, port).
+      portOf = c: name: map (p: p.passthru.port) (installed c name);
+      opened = c: c.networking.firewall.allowedTCPPorts;
+      failed =
+        c:
+        map (a: a.message) (
+          builtins.filter (a: !a.assertion && lib.hasPrefix "programs.t3code:" a.message) c.assertions
+        );
+      fwOn = system self.nixosModules.default {
+        enable = true;
+        cli.enable = true;
+        openFirewall = true;
+      };
+      fwPicked = system self.nixosModules.default {
+        enable = true;
+        package = withCliApp;
+        providers = [ "codex" ];
+        electron = "bundled";
+        telemetry.enable = false;
+        openFirewall = true;
+        port = 3780;
+        server.enable = true;
+        server.users = [ "u" ];
+        server.openFirewall = true;
+      };
+      fwClash = system self.nixosModules.default {
+        enable = true;
+        openFirewall = true;
+        server.enable = true;
+      };
+      # The package's own port, with the server on that one.
+      fwPkgClash = system self.nixosModules.default {
+        enable = true;
+        package = packages.t3code.override { port = 3773; };
+        server.enable = true;
+        server.users = [ "u" ];
+      };
+      fwRepinned = system self.nixosModules.default {
+        enable = true;
+        package = packages.t3code.override { port = 3790; };
+        openFirewall = true;
+      };
+      fwPortOnly = system self.nixosModules.default {
+        enable = true;
+        port = 3780;
+      };
+      clashMessage =
+        fix:
+        "programs.t3code: the desktop app's port and server.port are both 3773, and only one of the app and the server can listen on it; set ${fix} to another one.";
+      fwOther = system self.nixosModules.default {
+        enable = true;
+        package = pkgs.hello;
+        openFirewall = true;
+      };
+      fwCli = system self.nixosModules.default {
+        enable = true;
+        package = packages.t3;
+        openFirewall = true;
+      };
+      # A desktop wrapper from before port: everything else, no port.
+      fwOlderPkg = plain // {
+        providers = [ ];
+        passthru.providers = [ ];
+        passthru.acpRuntimes = [ ];
+        passthru.telemetry = true;
+        passthru.electron = "electron";
+        override = args: if args ? port then throw "unexpected argument port" else fwOlderPkg;
+      };
+      fwOlder = system self.nixosModules.default {
+        enable = true;
+        package = fwOlderPkg;
+        openFirewall = true;
+      };
+      portFails =
+        c:
+        failed c == [
+          "programs.t3code: openFirewall needs this flake's desktop app from a t3code-nix that has `port` (t3code, t3code-nightly, t3code-free or an .override of one), not ${c.programs.t3code.package.name}; or open the app's port with networking.firewall.allowedTCPPorts yourself."
+        ];
+      # Whether evaluating it (all of it) fails.
+      throws = x: !(builtins.tryEval (builtins.deepSeq x x)).success;
+      fwPort =
+        port:
+        system self.nixosModules.default {
+          enable = true;
+          openFirewall = true;
+          inherit port;
+        };
+      fwNoApp = system self.nixosModules.default {
+        openFirewall = true;
+        server.enable = true;
+        server.users = [ "u" ];
+      };
     in
     conditions "module-eval" {
+      "openFirewall pins the app's port and opens it; the CLI isn't pinned" =
+        portOf fwOn "t3code" == [ 3773 ]
+        && opened fwOn == [ 3773 ]
+        && portOf fwOn "t3" == [ null ]
+        && !failedAssertion fwOn;
+      "openFirewall keeps the rest of the selection, beside the server's port" =
+        portOf fwPicked "t3code" == [ 3780 ]
+        && providersOf fwPicked "t3code" == [ [ "codex" ] ]
+        && telemetryOf fwPicked "t3code" == [ false ]
+        &&
+          (builtins.head (installed fwPicked "t3code")).drvPath == (withCliApp.override {
+            providers = [ "codex" ];
+            electron = "bundled";
+            telemetry = false;
+            port = 3780;
+          }).drvPath
+        &&
+          lib.sort lib.lessThan (opened fwPicked) == [
+            3773
+            3780
+          ]
+        && (envOf fwPicked).T3CODE_PORT == "3773"
+        && portOf fwPicked "t3" == [ null ]
+        && !failedAssertion fwPicked;
+      "off by default: the app as the package is, and no port opened" =
+        (builtins.head (installed real "t3code")).drvPath == packages.t3code.drvPath
+        && portOf real "t3code" == [ null ]
+        && opened real == [ ];
+      "the app's port on the server's fails with its own message, from openFirewall or the package" =
+        failed fwClash == [ (clashMessage "programs.t3code.port") ]
+        && failed fwPkgClash == [ (clashMessage "the package's port") ];
+      "openFirewall over a package's own pin warns, and port wins" =
+        portOf fwRepinned "t3code" == [ 3773 ]
+        && opened fwRepinned == [ 3773 ]
+        && builtins.elem ''
+          programs.t3code.openFirewall pins the app to programs.t3code.port
+          (3773) and opens that one, in place of the port
+          its package is pinned to (3790);
+          to keep that one, set programs.t3code.port = 3790.'' fwRepinned.warnings
+        && !builtins.any (lib.hasInfix "its package is pinned to") (fwOn.warnings ++ fwPicked.warnings);
+      "port without openFirewall warns and pins nothing; the default doesn't warn" =
+        portOf fwPortOnly "t3code" == [ null ]
+        && opened fwPortOnly == [ ]
+        && builtins.any (lib.hasPrefix "programs.t3code.port applies with programs.t3code.openFirewall only") fwPortOnly.warnings
+        && !builtins.any (lib.hasInfix "programs.t3code.port applies") (real.warnings ++ fwOn.warnings);
+      "openFirewall with a package that can't take a port fails with its own message" = portFails fwOther;
+      "so does the CLI, and a desktop wrapper from before port, rather than an evaluation error" =
+        portFails fwCli
+        && portFails fwOlder
+        && !throws (map (p: p.drvPath) (installed fwCli "t3"))
+        && !throws (map (p: p.outPath) (installed fwOlder "plain"));
+      "port takes 1 to 65535, in the module and the wrapper; the CLI takes none" =
+        portOf (fwPort 1) "t3code" == [ 1 ]
+        && portOf (fwPort 65535) "t3code" == [ 65535 ]
+        && throws (fwPort 0).programs.t3code.port
+        && throws (fwPort 65536).programs.t3code.port
+        && !throws (packages.t3code.override { port = 65535; }).drvPath
+        && throws (packages.t3code.override { port = 0; }).drvPath
+        && throws (packages.t3code.override { port = "3780"; }).drvPath
+        && throws (packages.t3.override { port = 3780; }).drvPath;
+      "openFirewall without the app warns, opens nothing and leaves the server's t3 alone" =
+        opened fwNoApp == [ ]
+        && (envOf fwNoApp).T3CODE_PORT == "3773"
+        && portOf fwNoApp "t3" == [ null ]
+        && builtins.any (lib.hasPrefix "programs.t3code.openFirewall opens the desktop app's port") fwNoApp.warnings
+        && !failedAssertion fwNoApp;
+      "openFirewall and port have the programs.t3code-nix name too" =
+        let
+          c =
+            (import (path + "/nixos/lib/eval-config.nix") {
+              system = null;
+              modules = [
+                self.nixosModules.default
+                {
+                  nixpkgs.pkgs = pkgs;
+                  programs.t3code-nix = {
+                    enable = true;
+                    openFirewall = true;
+                    port = 3790;
+                  };
+                }
+              ];
+            }).config;
+        in
+        portOf c "t3code" == [ 3790 ] && opened c == [ 3790 ];
       "telemetry.enable = false reaches the app and the CLI" =
         telemetryOf telOff "t3code" == [ false ] && telemetryOf telOff "t3" == [ false ];
       "on by default, app and CLI" =
@@ -6386,6 +6563,121 @@ let
       '') offs
       + "touch $out"
     );
+  # The desktop app's pinned port (pkgs/t3code/wrap.nix, `port`; the NixOS
+  # module's openFirewall). The line a pinned app's wrappers run: unset,
+  # empty and blank become the port, anything else stays (tried under
+  # makeWrapper, as t3code-telemetry-wrapper does). Then the wiring: with
+  # the default no wrapper mentions T3CODE_PORT (nothing changes for anyone
+  # who doesn't pin it); pinned, the app's programs (and its t3code-desktop
+  # link) have the line on its own, before their exec, with telemetry off
+  # too, and the CLI inside the app (withCli) never mentions it, since `t3
+  # serve` would take it as its own port. The overlay is the unstable one,
+  # so the stable suites leave it out.
+  t3code-port-wrapper =
+    let
+      apps = present (
+        [
+          packages.t3code
+          (packages.t3code-nightly or null)
+          (packages.t3code-free or null)
+        ]
+        ++ lib.optional (pkgs.path == overlayAllowed.path) overlayAllowed.t3code
+      );
+      clis = present [
+        packages.t3
+        (packages.t3-nightly or null)
+        (packages.t3-free or null)
+      ];
+      pinned = lib.concatMap (p: [
+        (p.override { port = 3780; })
+        (p.override {
+          port = 3780;
+          telemetry = false;
+          withCli = true;
+        })
+      ]) apps;
+      run = (builtins.head pinned).passthru.portRun;
+      appPrograms =
+        p:
+        [ p.meta.mainProgram ]
+        ++ lib.optional (p.passthru.withCli && p.meta.mainProgram == "t3code") "t3code-desktop";
+      cases = [
+        [
+          "unset"
+          "3780"
+        ]
+        [
+          ""
+          "3780"
+        ]
+        [
+          "  "
+          "3780"
+        ]
+        [
+          "\t"
+          "3780"
+        ]
+        [
+          "4000"
+          "4000"
+        ]
+        [
+          "abc"
+          "abc"
+        ]
+      ];
+    in
+    runCommand "t3code-port-wrapper"
+      {
+        nativeBuildInputs = [
+          pkgs.makeWrapper
+          pkgs.asar
+        ];
+      }
+      (
+        ''
+          makeWrapper ${pkgs.writeShellScript "print-port" ''printf '%s\n' "''${T3CODE_PORT-<unset>}"''} w --run ${lib.escapeShellArg run}
+        ''
+        + lib.concatMapStrings (c: ''
+          value=${lib.escapeShellArg (builtins.head c)}
+          if [ "$value" = unset ]; then got=$(env -u T3CODE_PORT ./w); else got=$(T3CODE_PORT="$value" ./w); fi
+          [ "$got" = ${lib.escapeShellArg (lib.last c)} ] || { echo "T3CODE_PORT='$value': got '$got', expected '${lib.last c}'"; exit 1; }
+        '') cases
+        + lib.concatMapStrings (pkg: ''
+          for bin in ${pkg}/bin/*; do
+            rc=0; grep -q T3CODE_PORT "$(readlink -f "$bin")" || rc=$?
+            [ "$rc" = 1 ] || { echo "$bin (no port) mentions T3CODE_PORT, or can't be read"; exit 1; }
+          done
+        '') (apps ++ clis)
+        + lib.concatMapStrings (
+          pkg:
+          lib.concatMapStrings (name: ''
+            f=$(readlink -f ${pkg}/bin/${name})
+            at=$(grep -nxF -- ${lib.escapeShellArg run} "$f" | head -1 | cut -d: -f1 || true)
+            first=$(grep -n '^exec ' "$f" | head -1 | cut -d: -f1 || true)
+            [ -n "$at" ] && [ -n "$first" ] && [ "$at" -lt "$first" ] \
+              || { echo "${pkg.name} bin/${name} (port = 3780): the line isn't before its exec"; exit 1; }
+          '') (appPrograms pkg)
+          + lib.optionalString pkg.passthru.withCli ''
+            rc=0; grep -q T3CODE_PORT "$(readlink -f ${pkg}/bin/t3)" || rc=$?
+            [ "$rc" = 1 ] || { echo "${pkg.name} bin/t3 (withCli, port = 3780) mentions T3CODE_PORT, or can't be read"; exit 1; }
+          ''
+        ) pinned
+        # The app still reads T3CODE_PORT as its port (DesktopConfig's
+        # configuredBackendPort), in each channel's desktop main process: its
+        # own file in app.asar, since the bundled server reads it too.
+        + lib.concatMapStrings (pkg: ''
+          asar=$(find ${pkg.passthru.unwrapped}/libexec -name app.asar | head -1)
+          [ -n "$asar" ] || { echo "${pkg.name}: no app.asar"; exit 1; }
+          rm -rf main && mkdir main
+          (cd main && asar extract-file "$asar" apps/desktop/dist-electron/main.cjs) \
+            || { echo "${pkg.name}: no apps/desktop/dist-electron/main.cjs in app.asar"; exit 1; }
+          grep -qF 'Port("T3CODE_PORT")' main/main.cjs \
+            || { echo "${pkg.name}: the desktop app no longer reads T3CODE_PORT as its port (Port(\"T3CODE_PORT\") in main.cjs); check DesktopConfig.ts"; exit 1; }
+        '') apps
+        + "touch $out"
+      );
   # What leaves the server, analytics only (relay traces need T3 Connect):
   # `t3 serve` with T3 Code's analytics host at a loopback listener. On by
   # default, something is sent (a server.boot.heartbeat batch, today); with
@@ -7750,6 +8042,7 @@ in
     provider-commands
     relay-client
     t3code-telemetry-wrapper
+    t3code-port-wrapper
     t3-telemetry-sends
     t3-nightly-telemetry-sends
     nix-format

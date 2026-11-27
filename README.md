@@ -363,6 +363,8 @@ What each package is built from is in
 | `agentTools.agent-browser.browser` | `null` (the package's own: `"ungoogled-chromium"`) | `"ungoogled-chromium"`, `"chromium"` or `"google-chrome"`: which browser it drives (see [Agent tools](#agent-tools)) |
 | `cli.enable` | `false` | installs the headless `t3` too (`t3-nightly` on the nightly channel), bundling what the app bundles, with its shell completions |
 | `cli.allowUpstreamService` | `false` | lets this flake's `t3` run the commands for [upstream's own service](#upstreams-own-service), which it refuses |
+| `openFirewall` | `false` | for the desktop app's Network access: opens `port` in the firewall and starts the app with `T3CODE_PORT` set to it unless you set that yourself (see [The app's Network access](#the-apps-network-access)) |
+| `port` | `3773` | the desktop app's port, with `openFirewall`; not `server.port` while the server is on |
 | `server.*` | off | a T3 Code server as a systemd user service: see [Running the server](#running-the-server) |
 | `package` | this flake's `t3code` (`t3code-nightly` on the nightly channel) | what to install: `t3code-free`, `t3`, an `.override { … }` of one, or `pkgs.t3code` from the overlay |
 | `binaryCache` | `true` | adds the [binary cache](#binary-cache) and its key to `nix.settings` |
@@ -384,6 +386,55 @@ programs.t3code = {
 - A `package` that has no providers to pick (an `-unwrapped` one, or
   nixpkgs' own `t3code`) can't take them. Setting them then stops the
   rebuild, before anything is built, with a message saying so.
+
+### The app's Network access
+
+The desktop app's **Network access** (Settings → Sharing & access) lets
+devices on your network and tailnet pair with the app's own server. NixOS's
+firewall blocks them until the app's port is open:
+
+```nix
+programs.t3code = {
+  enable = true;
+  openFirewall = true;
+  # port = 3780;   # if 3773 is taken, for example by the server
+};
+```
+
+- **The port.** The app normally takes the first free port from 3773 up,
+  so it could land on one the firewall doesn't open. With `openFirewall`,
+  it's started with `T3CODE_PORT` set to `port` (when the variable is
+  unset, empty or only whitespace), so it listens on that one. A
+  `T3CODE_PORT` you set yourself wins, and the firewall still opens
+  `port`. While something else holds the port, the app's server can't
+  start: the app says so and keeps retrying. Ports below 1024 normally
+  need root, which the app doesn't have.
+- **The package** must be this flake's desktop app (`t3code`,
+  `t3code-nightly`, `t3code-free` or an `.override` of one); another stops
+  the rebuild with a message saying so. A port pinned on the package gives
+  way to `port`, and the rebuild warns when they differ.
+- **With the server** on the same machine, the two need different ports
+  (and [different T3 homes](#one-server-per-t3-home)). The app's port
+  equal to `server.port` stops the rebuild with a message saying so; open
+  the server's with `server.openFirewall`.
+- **Several users on one machine:** the pin is the same for everyone, so
+  while one user's app holds the port, another's can't start its server.
+  Give the others a `T3CODE_PORT` of their own (in their session's
+  environment), which wins, and open those ports too
+  (`networking.firewall.allowedTCPPorts`). A `t3 serve` such a user starts
+  by hand then takes that port as well, unless given `--port`.
+- **Pinning without opening** (a firewall rule of your own, such as one for
+  `tailscale0` only, or no firewall): leave `openFirewall` off and pin the
+  package instead, `package = t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.t3code.override { port = 3780; };`.
+  `port` without `openFirewall` does nothing, and the rebuild warns.
+- **Network access stays the app's setting:** turn it on in the app. With
+  it off, the app listens only on this machine (127.0.0.1), so the open
+  port doesn't reach it; another program listening on that port on a
+  network address is still reachable through it.
+- T3 Connect and Tailscale HTTPS (the app's name for
+  [Tailscale Serve](#running-the-server)) need no open port.
+- The terminals and agents the app starts don't get `T3CODE_PORT`: the app
+  leaves it out of its server's environment.
 
 ### Without the module
 
@@ -492,6 +543,7 @@ switch with a message saying where it lives.
 | `claudeCodePolicy` | write the policy file yourself (below), or let the NixOS module do it |
 | `runtimeCompat` | nix-ld is a system setting: on NixOS, the NixOS module's; elsewhere your system's own loader runs T3 Code's downloads (best effort) |
 | `server.openFirewall` | open the port in your system's firewall |
+| `openFirewall`, `port` | open the app's port in your system's firewall, and pin the app to it with `package = t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.t3code.override { port = 3773; }` |
 | `server.users` | the unit is yours alone |
 
 **With Home Manager as a NixOS module** and this flake's NixOS module
@@ -1443,12 +1495,25 @@ t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.t3code.override { acpRunt
 
 ### T3 Code over SSH: `runtimeCompat`
 
-`runtimeCompat` is for T3 Code servers that still come from T3 Code's own
-download: mainly the one another machine installs here, and upstream's own
-service if you [use it on purpose](#upstreams-own-service). When T3 Code on
-another machine connects to this one over SSH, it installs and runs its own
-server here, which can't start on NixOS otherwise. For a server on this
-machine, use [`server`](#running-the-server) instead.
+When the desktop app on another machine connects to this one over SSH, it
+first looks for `t3` on the `PATH` of a login shell here. If the first `t3`
+there prints the app's own version (`t3 --version`), it runs that one, and
+nothing is downloaded. This flake's `t3` is in the system profile with
+`server.enable`, with `enable` and `cli.enable`, or with an app that has
+its own `t3` (the overlay's `pkgs.t3code`), and in your Home Manager
+profile with the same options under `programs.t3code-nix`; a NixOS login
+shell has both on its `PATH`, unless your shell's own setup changes it or
+puts another `t3` first. So when both machines run the same t3code-nix
+(same channel, same version) and this one has its `t3` in one of those
+ways (`enable` alone doesn't install it), nothing more is needed.
+
+Otherwise (another version, or no `t3` here), it runs T3 Code's own
+server from `~/.t3/runtime`, downloading it the first time for each
+version, and that can't start on NixOS without `runtimeCompat` (or a
+nix-ld setup of your own with its libraries). `runtimeCompat` is for
+those servers from T3 Code's own download: that one, and upstream's own
+service if you [use it on purpose](#upstreams-own-service). For a server
+on this machine, use [`server`](#running-the-server) instead.
 
 ```nix
 programs.t3code.runtimeCompat = true;
