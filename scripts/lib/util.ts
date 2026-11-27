@@ -45,12 +45,13 @@ export interface Pin {
   released?: Released;
 }
 
-/** `published`: a GitHub release's published_at, or when claude's `latest`
- * pointer moved to the version (its Last-Modified); `uploaded`: the file's
- * Last-Modified (grok), often hours before the version is announced (the
- * `stable` pointer moves later); `built`: a manifest's build time, before the
- * release (claude, when the `latest` time isn't known); `seen`: no time from
- * the source, so the update run that wrote the pin. */
+/** `published`: a GitHub release's published_at, or when claude's or kiro's
+ * `latest` pointer moved to the version (its Last-Modified); `uploaded`: the
+ * file's Last-Modified (grok, antigravity, cursor), often hours before the
+ * version is announced (the pointer moves later); `built`: a manifest's
+ * build time, before the release (claude, when the `latest` time isn't
+ * known); `seen`: no time from the source, so the update run that wrote the
+ * pin. */
 export interface Released {
   at: string;
   kind: "published" | "uploaded" | "built" | "seen";
@@ -238,7 +239,7 @@ export function retryAfterMs(value: string | null, now = Date.now()): number | n
 }
 
 /** GET (or POST with a JSON body) and read the whole body; fails on a non-2xx
- * reply. Reads (GET, and POSTs marked `read`, like GraphQL queries) are
+ * reply. Reads (GET, HEAD, and POSTs marked `read`, like GraphQL queries) are
  * retried on network errors (including a connection dropped while the body
  * arrives), 429 and 5xx, with back-off and honouring Retry-After; any other
  * error fails at once. */

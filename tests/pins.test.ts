@@ -17,6 +17,7 @@ const realPrefetch = io.prefetch;
 const realSleep = timing.sleep;
 let routes: Record<string, string | object | [number, string, Record<string, string>?]> = {};
 let fetched: string[] = [];
+let heads: string[] = [];
 let prefetched: string[] = [];
 // Requests that must run together: each waits for the rest of its group. One
 // that waits in vain (they were made one after another) is noted in `alone`
@@ -41,13 +42,15 @@ async function arrive(url: string) {
 beforeEach(() => {
   routes = {};
   fetched = [];
+  heads = [];
   prefetched = [];
   groups = [];
   alone = [];
   clearFetched();
   timing.sleep = async () => {};
-  globalThis.fetch = (async (url: string) => {
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
     fetched.push(String(url));
+    if (init?.method === "HEAD") heads.push(String(url));
     await arrive(String(url));
     const r = routes[String(url)];
     if (r === undefined) return new Response("not found", { status: 404 });
@@ -227,20 +230,71 @@ test("gcsHead: HEAD is retried like any read", async () => {
   assert.equal(n, 2);
 });
 
+const CURSOR_LAB = "https://downloads.cursor.com/lab";
+/** cursor's x86_64 file, which the resolver HEADs for its upload time. */
+const cursorFile = (v: string, headers: Record<string, string> = { "last-modified": "Fri, 13 Nov 2026 08:00:00 GMT" }) => {
+  routes[`${CURSOR_LAB}/${v}/linux/x64/agent-cli-package.tar.gz`] = [200, "", headers];
+};
+
 test("cursor: version from the install script, hash from each sidecar", async () => {
   routes["https://cursor.com/install"] = 'curl -fsSL "https://downloads.cursor.com/lab/2026.11.01-abc/linux/x64/agent-cli-package.tar.gz"';
   for (const [arch, c] of [["x64", "c"], ["arm64", "d"]]) {
     routes[`https://downloads.cursor.com/lab/2026.11.01-abc/linux/${arch}/agent-cli-package.tar.gz.sha256`] = `${hex(c)}  agent-cli-package.tar.gz\n`;
   }
+  cursorFile("2026.11.01-abc");
   const pin = await buildVendorPin("cursor-agent", null, null);
   assert.equal(pin.version, "2026.11.01-abc");
   assert.equal(pin.assets["aarch64-linux"].hash, sri("sha256", hex("d")));
+});
+
+test("cursor: the release time is the x86_64 file's upload time, read with the sidecars", async () => {
+  const side = (arch: string) => `${CURSOR_LAB}/1/linux/${arch}/agent-cli-package.tar.gz.sha256`;
+  routes[side("x64")] = `${hex("c")}  agent-cli-package.tar.gz\n`;
+  routes[side("arm64")] = `${hex("d")}  agent-cli-package.tar.gz\n`;
+  cursorFile("1");
+  together(side("x64"), side("arm64"), `${CURSOR_LAB}/1/linux/x64/agent-cli-package.tar.gz`);
+  const pin = await buildVendorPin("cursor-agent", "1", null);
+  assert.deepEqual(alone, []);
+  assert.deepEqual(pin.released, { at: "2026-11-13T08:00:00.000Z", kind: "uploaded" });
+  assert.deepEqual(heads, [`${CURSOR_LAB}/1/linux/x64/agent-cli-package.tar.gz`]);
+  // No Last-Modified, or one that isn't an HTTP date: "seen", or unknown.
+  const settle = (p: Pin) => settleReleased(p, null, new Date("2026-11-13T12:00:00Z"), false).released;
+  for (const [headers, want] of [[{}, { at: "2026-11-13T12:00:00.000Z", kind: "seen" }], [{ "last-modified": "2026-11-13" }, undefined],
+    [{ "last-modified": "Fri, 31 Feb 2026 12:30:00 GMT" }, undefined], [{ "last-modified": "" }, undefined]] as const) {
+    clearFetched();
+    cursorFile("1", headers);
+    assert.deepEqual(settle(await buildVendorPin("cursor-agent", "1", null)), want, JSON.stringify(headers));
+  }
+  // The HEAD fails (the file is missing, or the server keeps failing): the
+  // pin still resolves, with no time.
+  for (const r of [[404, "gone"], [503, "down"]] as const) {
+    clearFetched();
+    routes[`${CURSOR_LAB}/1/linux/x64/agent-cli-package.tar.gz`] = [...r];
+    const p = await buildVendorPin("cursor-agent", "1", null);
+    assert.equal(p.version, "1");
+    assert.equal(p.released, undefined);
+  }
+  // One 20 s deadline shared by every attempt and the waits between them:
+  // a Retry-After past it ends the HEAD at once, rather than waiting and
+  // asking again.
+  clearFetched();
+  heads = [];
+  routes[`${CURSOR_LAB}/1/linux/x64/agent-cli-package.tar.gz`] = [429, "", { "retry-after": "25" }];
+  assert.equal((await buildVendorPin("cursor-agent", "1", null)).released, undefined);
+  assert.equal(heads.length, 1);
+  // A version already pinned keeps its time: no HEAD.
+  clearFetched();
+  heads = [];
+  cursorFile("1");
+  assert.equal((await buildVendorPin("cursor-agent", "1", { name: "cursor-agent", version: "1", assets: {} })).released, undefined);
+  assert.deepEqual(heads, []);
 });
 
 test("cursor: both sidecars are fetched together; a problem with x86_64's is the one reported", async () => {
   const side = (arch: string) => `https://downloads.cursor.com/lab/1/linux/${arch}/agent-cli-package.tar.gz.sha256`;
   routes[side("x64")] = `${hex("c")}  agent-cli-package.tar.gz\n`;
   routes[side("arm64")] = `${hex("d")}  agent-cli-package.tar.gz\n`;
+  cursorFile("1");
   together(side("x64"), side("arm64"));
   const pin = await buildVendorPin("cursor-agent", "1", null);
   assert.deepEqual(alone, []);
@@ -261,10 +315,15 @@ test("cursor: a sidecar for another file is refused", async () => {
 
 const AG = "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests";
 const agUrl = (v: string, folder: string, file: string) => `https://storage.googleapis.com/antigravity-public/antigravity-cli/${v}-123/${folder}/${file}`;
+/** antigravity's x86_64 file, which the resolver HEADs for its upload time. */
+const agFile = (v: string, headers: Record<string, string> = { "last-modified": "Thu, 26 Nov 2026 00:59:39 GMT" }) => {
+  routes[agUrl(v, "linux-x64", "cli_linux_x64.tar.gz")] = [200, "", headers];
+};
 
 test("antigravity: both manifests must name the same version and a matching URL", async () => {
   routes[`${AG}/linux_amd64.json`] = { version: "1.2.0", url: agUrl("1.2.0", "linux-x64", "cli_linux_x64.tar.gz"), sha512: hex512("e") };
   routes[`${AG}/linux_arm64.json`] = { version: "1.2.0", url: agUrl("1.2.0", "linux-arm", "cli_linux_arm64.tar.gz"), sha512: hex512("f") };
+  agFile("1.2.0");
   const pin = await buildVendorPin("antigravity", null, null);
   assert.equal(pin.assets["aarch64-linux"].hash, sri("sha512", hex512("f")));
 
@@ -281,10 +340,33 @@ test("antigravity: both manifests must name the same version and a matching URL"
 test("antigravity: both manifests are fetched together; the assets keep their order", async () => {
   routes[`${AG}/linux_amd64.json`] = { version: "1.2.0", url: agUrl("1.2.0", "linux-x64", "cli_linux_x64.tar.gz"), sha512: hex512("e") };
   routes[`${AG}/linux_arm64.json`] = { version: "1.2.0", url: agUrl("1.2.0", "linux-arm", "cli_linux_arm64.tar.gz"), sha512: hex512("f") };
+  agFile("1.2.0");
   together(`${AG}/linux_amd64.json`, `${AG}/linux_arm64.json`);
   const pin = await buildVendorPin("antigravity", null, null);
   assert.deepEqual(alone, []);
   assert.deepEqual(Object.keys(pin.assets), ["x86_64-linux", "aarch64-linux"]);
+});
+
+test("antigravity: the release time is the x86_64 file's upload time", async () => {
+  routes[`${AG}/linux_amd64.json`] = { version: "1.2.0", url: agUrl("1.2.0", "linux-x64", "cli_linux_x64.tar.gz"), sha512: hex512("e") };
+  routes[`${AG}/linux_arm64.json`] = { version: "1.2.0", url: agUrl("1.2.0", "linux-arm", "cli_linux_arm64.tar.gz"), sha512: hex512("f") };
+  agFile("1.2.0");
+  assert.deepEqual((await buildVendorPin("antigravity", null, null)).released, { at: "2026-11-26T00:59:39.000Z", kind: "uploaded" });
+  assert.deepEqual(heads, [agUrl("1.2.0", "linux-x64", "cli_linux_x64.tar.gz")], "a HEAD, for the x86_64 file only");
+  // No Last-Modified: no time (the updater says "seen").
+  clearFetched();
+  agFile("1.2.0", {});
+  assert.equal((await buildVendorPin("antigravity", null, null)).released, undefined);
+  // The HEAD fails: the pin still resolves, with no time.
+  clearFetched();
+  routes[agUrl("1.2.0", "linux-x64", "cli_linux_x64.tar.gz")] = [503, "down"];
+  assert.equal((await buildVendorPin("antigravity", null, null)).released, undefined);
+  // A version already pinned keeps its time: no HEAD.
+  clearFetched();
+  heads = [];
+  agFile("1.2.0");
+  assert.equal((await buildVendorPin("antigravity", null, { name: "antigravity", version: "1.2.0", assets: {} })).released, undefined);
+  assert.deepEqual(heads, []);
 });
 
 const KIRO = "https://desktop-release.q.us-east-1.amazonaws.com";
@@ -297,9 +379,28 @@ test("kiro: one manifest entry per architecture", async () => {
   ] };
   const pin = await buildVendorPin("kiro-cli", null, null);
   assert.equal(pin.assets["aarch64-linux"].hash, sri("sha256", hex("2")));
+  assert.equal(pin.released, undefined, "no Last-Modified: no time");
 
   routes[`${KIRO}/1.20.0/manifest.json`] = { version: "1.19.0", packages: [] };
   await assert.rejects(buildVendorPin("kiro-cli", "1.20.0", null), /names version 1.19.0/);
+});
+
+test("kiro: the release time is when `latest` was written, read only for `latest`", async () => {
+  const manifest = { version: "1.20.0", packages: [
+    { os: "linux", download: "1.20.0/kirocli-x86_64-linux.tar.gz", sha256: hex("1") },
+    { os: "linux", download: "1.20.0/kirocli-aarch64-linux.tar.gz", sha256: hex("2") },
+  ] };
+  routes[`${KIRO}/latest/manifest.json`] = [200, JSON.stringify(manifest), { "last-modified": "Thu, 26 Nov 2026 00:11:33 GMT" }];
+  assert.deepEqual((await buildVendorPin("kiro-cli", null, null)).released, { at: "2026-11-26T00:11:33.000Z", kind: "published" });
+  // Pinned by name: the version's own manifest says nothing about the release.
+  routes[`${KIRO}/1.20.0/manifest.json`] = [200, JSON.stringify(manifest), { "last-modified": "Thu, 26 Nov 2026 00:11:33 GMT" }];
+  assert.equal((await buildVendorPin("kiro-cli", "1.20.0", null)).released, undefined);
+  // A Last-Modified that isn't an HTTP date: no time.
+  for (const headers of [{ "last-modified": "yesterday-ish" }, { "last-modified": "Fri, 31 Feb 2026 12:30:00 GMT" }]) {
+    clearFetched();
+    routes[`${KIRO}/latest/manifest.json`] = [200, JSON.stringify(manifest), headers];
+    assert.equal((await buildVendorPin("kiro-cli", null, null)).released, undefined);
+  }
 });
 
 const MUSE = "https://lookaside.facebook.com/lookaside/muse/download/";
@@ -440,7 +541,7 @@ test("released: GitHub pins carry the release's published_at", async () => {
   assert.deepEqual(pin.released, { at: "2026-11-13T10:00:00Z", kind: "published" });
 });
 
-test("released: claude's buildDate (by name), grok's Last-Modified, none for the rest", async () => {
+test("released: claude's buildDate (by name), grok's and cursor's Last-Modified", async () => {
   routes[`${CLAUDE}/2.0/manifest.json`] = { version: "2.0", buildDate: "2026-11-13T09:00:00Z", platforms: { "linux-x64": { checksum: hex("a") }, "linux-arm64": { checksum: hex("b") } } };
   assert.deepEqual((await buildVendorPin("claude-code", "2.0", null)).released, { at: "2026-11-13T09:00:00Z", kind: "built" });
   for (const p of ["linux-x86_64", "linux-aarch64"]) {
@@ -451,7 +552,8 @@ test("released: claude's buildDate (by name), grok's Last-Modified, none for the
   for (const [arch, c] of [["x64", "c"], ["arm64", "d"]]) {
     routes[`https://downloads.cursor.com/lab/2026.11.01-abc/linux/${arch}/agent-cli-package.tar.gz.sha256`] = `${hex(c)}  agent-cli-package.tar.gz\n`;
   }
-  assert.equal((await buildVendorPin("cursor-agent", null, null)).released, undefined);
+  cursorFile("2026.11.01-abc");
+  assert.deepEqual((await buildVendorPin("cursor-agent", null, null)).released, { at: "2026-11-13T08:00:00.000Z", kind: "uploaded" });
 });
 
 test("released: a grok Last-Modified that doesn't parse is unknown, not seen", async () => {
