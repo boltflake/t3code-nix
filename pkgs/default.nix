@@ -61,6 +61,8 @@ let
       channel = "latest";
       electron = "auto";
       inherit electronFallback;
+      # The NixOS-stable set's own snapshot (versions/stable/) has its file.
+      updateFeed = if pinsDir == ../versions then null else "stable/t3code";
     };
     t3code-unwrapped-nightly = callPackage ./t3code/desktop.nix {
       channel = "nightly";

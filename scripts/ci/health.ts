@@ -107,10 +107,12 @@ export function assess(health: any, error: string | null, pins: Record<string, s
   // What explains a lag: an open issue about that package's pin (no
   // channel) and that version, or a resolve failure (it may name no version).
   // Not a guard review: that version ships anyway. Not a downgrade: it
-  // holds nothing, so a pin still on the pulled version lags as usual.
+  // holds nothing, so a pin still on the pulled version lags as usual. Nor
+  // the update notice's: they hold nothing either.
   const explained = (pkg: string, version: string) => open.some((m) => {
     const [kind, p, channel] = m.key.split("/");
     return p === pkg && channel === "-" && kind !== "update-lag" && kind !== "guard-review" && kind !== "downgrade"
+      && kind !== "update-feed" && kind !== "update-notice-off"
       && ((m.version !== null && versionOfTag(m.version) === version) || (kind === "resolve-failed" && m.version === null));
   });
   // Still on its way: a run is going (or waiting just after one that ran

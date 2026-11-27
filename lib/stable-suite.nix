@@ -50,6 +50,7 @@
     "relay-client"
     "t3code-telemetry-wrapper"
     "t3code-port-wrapper"
+    "t3code-update-notice"
     "t3-telemetry-sends"
     "completions"
     "boat-self-update-off"

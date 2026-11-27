@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { badge, browsersOf, build, dataId, decide, digest, rows, type Row, type StableView } from "../scripts/status.ts";
+import { badge, browsersOf, build, dataId, decide, digest, FEED_MAX_BYTES, feedText, PROVIDER_NAMES, providerNamesAt, rows, updateFeeds, type Row, type StableView } from "../scripts/status.ts";
 import { duration, roughly, utc } from "../scripts/status-page.ts";
 import { AGENT_TOOLS, BROWSER_PINS, NIXPKGS_PINS, PROVIDERS, T3, UNFREE } from "../scripts/lib/packages.ts";
 
@@ -291,4 +291,91 @@ test("status: a browser pin's browsers, the default first, with what isn't recor
   assert.deepEqual(b.browsers?.map((x) => x.version), ["157.0.50", "157.0.78", null]);
   const c = got.find((r) => r.name === "codex")!;
   assert.ok(!("browsers" in c) && !("channel" in c));
+});
+
+test("status: the update notice's version files, one per package flavour, with their set's provider pins, in status.json and the digest", () => {
+  mkdirSync(join(tmp, "versions", "stable"));
+  writeFileSync(join(tmp, "versions", "stable", "t3code.json"), JSON.stringify({ name: "t3code", version: "0.1.12", assets: {} }));
+  // The stable snapshot lacks grok: its file leaves it out.
+  writeFileSync(join(tmp, "versions", "stable", "codex.json"), JSON.stringify({ name: "codex", version: "0.170.0", assets: {} }));
+  commit("2026-11-13T12:00:00Z", {
+    t3code: { version: "0.1.13" },
+    "t3code-nightly": { version: "0.1.14-nightly.20261127.5332" },
+    codex: { version: "1.0.0" },
+    grok: { version: "1.0.92" },
+    // Not a bundled provider: not in the files.
+    boat: { version: "1.0.110" },
+  });
+  const out = join(tmp, "out");
+  const one = build(out, "HEAD", "o/r").digest;
+  const read = (f: string) => JSON.parse(readFileSync(join(out, f), "utf8"));
+  const latest = { codex: "1.0.0", grok: "1.0.92" };
+  assert.deepEqual(read("updates/t3code.json"), { version: "0.1.13", providers: latest });
+  assert.deepEqual(read("updates/t3code-nightly.json"), { version: "0.1.14-nightly.20261127.5332", providers: latest });
+  assert.deepEqual(read("updates/stable/t3code.json"), { version: "0.1.12", providers: { codex: "0.170.0" } });
+  // Compact, the provider keys sorted.
+  assert.equal(readFileSync(join(out, "updates/t3code.json"), "utf8"), '{"version":"0.1.13","providers":{"codex":"1.0.0","grok":"1.0.92"}}\n');
+  assert.deepEqual(read("status.json").updates, {
+    "updates/t3code.json": { version: "0.1.13", providers: latest },
+    "updates/t3code-nightly.json": { version: "0.1.14-nightly.20261127.5332", providers: latest },
+    "updates/stable/t3code.json": { version: "0.1.12", providers: { codex: "0.170.0" } },
+  });
+  // A new pin changes the file and the digest.
+  commit("2026-11-13T13:00:00Z", { t3code: { version: "0.1.14" } });
+  const two = build(out, "HEAD", "o/r").digest;
+  assert.notEqual(two, one);
+  assert.deepEqual(read("updates/t3code.json"), { version: "0.1.14", providers: latest });
+  // So does a provider pin alone.
+  commit("2026-11-13T13:30:00Z", { codex: { version: "1.0.1" } });
+  assert.notEqual(build(out, "HEAD", "o/r").digest, two);
+  assert.deepEqual(read("updates/t3code.json").providers, { codex: "1.0.1", grok: "1.0.92" });
+  // A package gone: its file goes too, rebuilt in place.
+  rmSync(join(tmp, "versions", "t3code-nightly.json"));
+  commit("2026-11-13T14:00:00Z", {});
+  build(out, "HEAD", "o/r");
+  assert.deepEqual(readdirSync(join(out, "updates")).sort(), ["stable", "t3code.json"]);
+});
+
+test("status: the provider names come from REF's provider-names.json, or this checkout's before it had one", () => {
+  commit("2026-11-13T12:00:00Z", { codex: { version: "1.0.0" } });
+  assert.deepEqual(providerNamesAt("HEAD"), PROVIDER_NAMES, "no names file at REF");
+  mkdirSync(join(tmp, "pkgs", "t3code"), { recursive: true });
+  writeFileSync(join(tmp, "pkgs", "t3code", "provider-names.json"), JSON.stringify({ codex: "codex", newone: "newone" }));
+  commit("2026-11-13T13:00:00Z", { newone: { version: "2.0.0" } });
+  assert.deepEqual(providerNamesAt("HEAD"), ["codex", "newone"]);
+  mkdirSync(join(tmp, "versions", "stable"), { recursive: true });
+  writeFileSync(join(tmp, "versions", "stable", "t3code.json"), JSON.stringify({ name: "t3code", version: "0.1.12" }));
+  commit("2026-11-13T14:00:00Z", { t3code: { version: "0.1.13" } });
+  const build = updateFeeds("HEAD");
+  assert.deepEqual(build["updates/t3code.json"].providers, { codex: "1.0.0", newone: "2.0.0" });
+});
+
+test("status: the provider names are provider-names.json's, which providers.nix reads", () => {
+  const names = JSON.parse(readFileSync(new URL("../pkgs/t3code/provider-names.json", import.meta.url), "utf8"));
+  assert.deepEqual(PROVIDER_NAMES, Object.values(names).sort());
+  assert.ok(PROVIDER_NAMES.includes("claude-code") && PROVIDER_NAMES.includes("cursor-agent"));
+});
+
+test("status: a version file over the size limit is left out, not the site", () => {
+  const big = { version: "1.0.0", providers: Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`p${i}`, "1.0.0"])) };
+  assert.equal(feedText("updates/t3code.json", big), null);
+  assert.equal(feedText("updates/t3code.json", { version: "1.0.0", providers: {} }), '{"version":"1.0.0","providers":{}}\n');
+  assert.ok(FEED_MAX_BYTES <= 4096 / 2);
+});
+
+test("status: the deploy rule deploys the first site with the version files during an outage", () => {
+  const packages = [{ name: "a" }] as Row[];
+  // The site from before providers were in the files: an older manifest.
+  const older = { "updates/t3code.json": "0.1.13" };
+  const now = { "updates/t3code.json": { version: "0.1.13", providers: { codex: "1.0.0" } } };
+  assert.deepEqual(decide({ digest: "d", packages, updates: now }, { digest: "e", packages, updates: older }, true), { deploy: true, fail: false });
+  // A provider bump alone deploys during an outage too.
+  const bumped = { "updates/t3code.json": { version: "0.1.13", providers: { codex: "1.0.1" } } };
+  assert.deepEqual(decide({ digest: "d", packages, updates: bumped }, { digest: "e", packages, updates: now }, true), { deploy: true, fail: false });
+  const updates = { "updates/t3code.json": { version: "0.1.13", providers: {} } };
+  // The live site from before them: same pins, live reads failed.
+  assert.deepEqual(decide({ digest: "d", packages, updates }, { digest: "e", packages }, true), { deploy: true, fail: false });
+  // Once it has them, an outage keeps it.
+  assert.deepEqual(decide({ digest: "d", packages, updates }, { digest: "e", packages, updates }, true), { deploy: false, fail: true });
+  assert.deepEqual(decide({ digest: "d", packages, updates: { "updates/t3code.json": { version: "0.1.14", providers: {} } } }, { digest: "e", packages, updates }, true), { deploy: true, fail: false });
 });

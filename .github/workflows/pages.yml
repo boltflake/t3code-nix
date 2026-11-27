@@ -12,7 +12,8 @@
 # building main's checkout; not for update runs health dispatches, as
 # GitHub starts nothing from GITHUB_TOKEN's events other than dispatches).
 # Reconcile re-enables it after GitHub's 60-day disable. It deploys only
-# when the built site's digest differs from the live one, and only on main
+# when the built site's digest differs from the live one (or, by hand, with
+# the `force` input: for a live site that lost a file), and only on main
 # once the repository variable PAGES is `true` (set at go-live, with Pages
 # set to "GitHub Actions"). A dry run builds the checked-out revision's
 # script on main's data, without the live view, and uploads the site as an
@@ -34,6 +35,10 @@ on:
     inputs:
       dry_run:
         description: Build only; upload the site as an artifact
+        type: boolean
+        default: false
+      force:
+        description: Deploy even when the site looks unchanged (a file gone from the live site)
         type: boolean
         default: false
   # zizmor: ignore[dangerous-triggers] GitHub runs main's own copy of this
@@ -109,6 +114,7 @@ jobs:
       - id: build
         env:
           ENABLED: ${{ vars.PAGES == 'true' && github.ref == 'refs/heads/main' && !inputs.dry_run }}
+          FORCE: ${{ inputs.force == true }}
           WANT_LIVE: ${{ steps.health.conclusion == 'success' }}
           READS: ${{ needs.live.outputs.reads }}
         run: |
@@ -129,6 +135,9 @@ jobs:
           echo "built $(jq -r '.digest' <<< "$result"), live view: $live $(jq -r '.error // ""' <<< "$result")" >> "$GITHUB_STEP_SUMMARY"
           deploy=false
           if [ "$ENABLED" = true ] && [ "$(jq -r '.deploy' <<< "$result")" = true ]; then deploy=true; fi
+          # By hand, for a live site that lost a file its status.json still
+          # lists: a failed live read still fails the run, below.
+          if [ "$ENABLED" = true ] && [ "$FORCE" = true ]; then deploy=true; fi
           echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
           if [ "$ENABLED" = true ] && [ "$(jq -r '.fail' <<< "$result")" = true ]; then
             echo "::error::the live reads failed and nothing else changed; the live site stays as it is"

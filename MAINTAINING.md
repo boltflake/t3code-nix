@@ -98,17 +98,56 @@ land it like any change.
 **`guard-review`.** See [A new command or option in a
 provider](#a-new-command-or-option-in-a-provider) below.
 
-**A T3 Code release fails to build in `asar-replace`.** The desktop app's
+**A T3 Code release fails to build in `asar-patch`.** The desktop app's
 build swaps upstream's reason for its updates being off ("Automatic updates
 are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.") for ours, in
-`app.asar`. When upstream rewords that sentence, or moves or wraps it (in a
-translation call, say), the build fails with `asar-replace: … expected the
-text exactly once` (or `no apps/desktop/dist-electron/main.cjs in the
-archive`, when that file is gone). Find the new sentence in upstream's
-`apps/desktop/src/updates/DesktopUpdates.ts` and put it, with the bundle
-file it ends up in, in `pkgs/t3code/desktop.nix`. If it is no longer a
-plain returned string, change `scripts/asar-replace.ts` to match, or drop
+`app.asar` (`scripts/asar-patch.ts`). When upstream rewords that sentence,
+or moves or wraps it (in a translation call, say), the build fails with
+`asar-patch: … expected the text exactly once` (or `… main.cjs isn't a
+file packed in the archive`, when that file is gone). Find the new
+sentence in upstream's `apps/desktop/src/updates/DesktopUpdates.ts` and put
+it in `pkgs/t3code/desktop.nix`. If it is no longer a plain returned
+string, change `swapReason` in `scripts/asar-patch.ts` to match, or drop
 the swap.
+
+**`update-notice-off`.** A published desktop app was built without the
+[update notice](README.md#update-notices): upstream changed code it checks
+or patches, in the web UI or the main process (its build log and the issue
+say which check or edit didn't match, on which system). The release ships
+anyway, as before the notice. Find the code again in that release's
+`app.asar` (`apps/server/dist/client/assets/`: the sidebar's update button,
+`main-*.js`, and `desktopUpdate.logic-*.js`; or `boot.cjs` and `main.cjs`
+for the shim's hooks), adjust the shapes in `patchSidebar`, `patchTooltip`
+or `applyNotice`, and cut a fixture of the new release into
+`tests/fixtures/update-notice/` beside the others. The issue closes when the
+next publish of that package has it (`on`), or by hand once the fix has
+landed (its branch CI's smoke says `on`).
+
+**`update-feed`.** One of the notice's version files on the site
+(`updates/*.json`, written by `scripts/status.ts`: T3 Code's version and
+the set's bundled-provider pins) is missing, redirects, isn't the file the
+app expects, or has an entry other than `main`'s (T3 Code's version, a
+provider missing or different, or one whose pin or name left `main`)
+once that change has been on `main` for over two hours (for a provider
+still bundled, from the later of its pin's version change and its name's
+addition; for one gone, from its pin's deletion or its name's removal);
+or `main` pins a provider version the app can't compare
+(`scripts/ci/feeds.ts`, in the hourly health run; the issue lists every
+wrong entry). The provider names are `pkgs/t3code/provider-names.json`'s.
+Rebuild the pages
+(`pages.yml`; with `force` when the run says the site is unchanged but the
+file is gone from it); if they deploy and the file is still wrong, check
+`UPDATE_FEEDS` in `scripts/status.ts` against `pkgs/t3code/desktop.nix`'s
+`updateUrl`. A custom domain for the Pages site makes every `github.io` URL
+redirect: then the apps' URL has to move with it. Right after a change that
+adds a version file lands, run `pages.yml` by hand, so the hourly health run
+doesn't find it missing. A forced run that a newer pages run replaced while
+it waited (it shows as cancelled) didn't deploy: start it again. For a
+provider version the app can't compare, rebuilding doesn't help: fix the
+pin (`versions/<name>.json`) if its version is wrong, or, for a real new
+version format, teach `parseLoose` in `pkgs/t3code/update-notice.cjs` (and
+`compareVersions` in `scripts/update.ts`, which the tests keep in step) to
+read it.
 
 **`watcher-auth`.** Make a new GitHub token the same way as the first one.
 Then, in `watcher/` with `CLOUDFLARE_ACCOUNT_ID` set, run

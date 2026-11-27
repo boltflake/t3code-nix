@@ -652,8 +652,9 @@ jobs:
             echo "published=$(jq -r '[.observations[] | select(.kind == "published") | .version][0] // ""' "$out")"
             echo "published-tree=$(jq -r '.trees.published // ""' "$out")"
           } >> "$GITHUB_OUTPUT"
-      # The guard checks' notes (guard-review issues) only for what reached
-      # main: a run that published (a dry run: that would have).
+      # The guard checks' notes (guard-review issues), and whether the
+      # desktop apps have the update notice (update-notice-off), only for
+      # what reached main: a run that published (a dry run: that would have).
       - name: Guard notes, once published
         if: steps.publish.outcome == 'success' && (steps.publish.outputs.published != '' || inputs.dry_run)
         run: |

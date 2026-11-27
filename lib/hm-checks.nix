@@ -220,6 +220,10 @@ let
     telemetry.enable = false;
   };
   telemetryOf = h: name: map (p: p.passthru.telemetry or null) (installed h name);
+  updateCheckOff = ours {
+    enable = true;
+    updateCheck.enable = false;
+  };
   toolsAlone = ours {
     agentTools.boat.enable = true;
     agentTools.agent-browser.enable = true;
@@ -664,6 +668,16 @@ in
             ]
           && noneFailed telemetryOff
           && noneFailed telemetryServer;
+        "updateCheck.enable = false reaches the app, nixGL too" =
+          map (p: p.passthru.updateCheck or null) (installed updateCheckOff "t3code") == [ false ]
+          && noneFailed updateCheckOff
+          &&
+            (first (
+              installed (withGL {
+                enable = true;
+                updateCheck.enable = false;
+              }) "t3code-nix-doctor"
+            )).appInner.passthru.updateCheck == false;
         "with nixGL the doctor gets the app's usage data setting from before nixGL wraps it" =
           let
             gl = withGL {

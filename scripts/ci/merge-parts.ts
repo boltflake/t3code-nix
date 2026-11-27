@@ -97,6 +97,7 @@ export function merge(dir: string, log = console.error): string[] {
     writeJson(join(dir, `${set}-${system}.json`), {
       set, system, passed: rs.every((r) => r.passed === true) && failed.length === 0, failed,
       checked: uniq(rs.flatMap((r) => r.checked ?? [])), notes: rs.flatMap((r) => r.notes ?? []),
+      updateNotice: Object.assign({}, ...rs.map((r) => (r.updateNotice && typeof r.updateNotice === "object" ? r.updateNotice : {}))),
       electron: mergeElectron(rs.map((r) => r.electron)), nixCalls: rs.flatMap((r) => r.nixCalls ?? []),
     });
     written.push(`${set}-${system}.json`);
