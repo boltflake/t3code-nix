@@ -1,0 +1,12 @@
+{
+  "antigravity": "antigravity",
+  "claudeAgent": "claude-code",
+  "codex": "codex",
+  "cursor": "cursor-agent",
+  "fx": "fx",
+  "grok": "grok",
+  "kiro": "kiro-cli",
+  "muse": "muse",
+  "opencode": "opencode",
+  "pi": "pi"
+}

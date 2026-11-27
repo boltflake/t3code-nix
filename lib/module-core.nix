@@ -163,6 +163,26 @@ in
         '';
       };
 
+      updateCheck.enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        example = false;
+        description = ''
+          Whether the desktop app checks t3code-nix for a newer T3 Code and
+          newer versions of the providers it bundles: then its sidebar's update
+          icon shows, and clicking it lists them and says how to get them
+          (update t3code-nix and rebuild your system). It fetches one small
+          file from t3code-nix's site (boltflake.github.io) at start and every
+          4 hours, with no ID or version sent. `false` starts the app with
+          `T3CODE_NIX_UPDATE_URL` and `T3CODE_NIX_PROVIDERS` set blank, over
+          any value it inherits: no check, and the icon only for updates
+          upstream offers itself (a self-updating server, a provider installed
+          outside Nix). Desktop
+          app only; the CLI and the server don't check. Applies as an
+          override of `package`. See the README, "Update notices".
+        '';
+      };
+
       agentTools.boat.enable = lib.mkEnableOption ''
         boat, boat.dev's sandbox CLI, an agent tool: a command-line tool the
         agents use themselves. Works without `enable`; it's never part of T3
@@ -432,6 +452,7 @@ in
         // lib.optionalAttrs (cfg.acpRuntimes != null) { inherit (cfg) acpRuntimes; }
         // lib.optionalAttrs (cfg.electron != null) { inherit (cfg) electron; }
         // lib.optionalAttrs (!cfg.telemetry.enable) { telemetry = false; }
+        // lib.optionalAttrs (!cfg.updateCheck.enable) { updateCheck = false; }
         // lib.optionalAttrs (appPort != null) { port = appPort; };
       canSelect = p: p ? override && p ? passthru.providers;
       # acpRuntimes needs a wrapper that has it (a t3code-nix from before it
@@ -444,6 +465,9 @@ in
       canTelemetry = p: canSelect p && p ? passthru.telemetry;
       # port needs this flake's desktop app from a t3code-nix that has it.
       canPort = p: canElectron p && p ? passthru.port;
+      # updateCheck too, and a desktop app with the update notice.
+      canUpdateCheck =
+        p: canElectron p && p ? passthru.updateCheck && (p.passthru.updateUrl or null) != null;
 
       srv = cfg.server;
       # systemd expands `%` specifiers in Environment=: a value meant as it is
@@ -474,6 +498,7 @@ in
               ++ lib.optional (!canElectron cfg.package) "electron"
               ++ lib.optional (!canTelemetry cfg.package) "telemetry"
               ++ lib.optional (!canPort cfg.package) "port"
+              ++ lib.optional (!canUpdateCheck cfg.package) "updateCheck"
             )
           )
         else
@@ -579,6 +604,7 @@ in
             removeAttrs selection [
               "telemetry"
               "port"
+              "updateCheck"
             ] == { }
             || canSelect cfg.package;
           message = "${ns}: providers, excludeProviders and acpRuntimes need a package from this flake with providers (t3code, t3code-nightly, t3code-free, t3 …), not ${
@@ -603,6 +629,12 @@ in
           message = "${ns}: telemetry.enable = false needs a package from a t3code-nix that has it (t3code, t3code-nightly, t3code-free, t3 … or an .override of one), not ${
             cfg.package.name or "this package"
           }; or set T3CODE_TELEMETRY_ENABLED=false in its environment yourself.";
+        }
+        {
+          assertion = cfg.updateCheck.enable || !cfg.enable || canUpdateCheck cfg.package;
+          message = "${ns}: updateCheck.enable = false needs this flake's desktop app from a t3code-nix that has it (t3code, t3code-nightly, t3code-free … or an .override of one), not ${
+            cfg.package.name or "this package"
+          }.";
         }
       ];
       serverAssertions = [

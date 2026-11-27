@@ -9,6 +9,14 @@
 //     portal file chooser here, that is GTK's own dialog, which aborts the
 //     app when GTK's GSettings schemas can't be found (the app's own
 //     desktopBridge.pickFolder, called over the remote debugging port)
+//   - its update notice (pkgs/t3code/update-notice.cjs), as its build's
+//     share/t3code-nix/<bin>/update-notice says: `on`, it checks a local version
+//     file at once with only its own User-Agent, says nothing for an older
+//     version, tells the window about a newer version of one of the
+//     providers the build bundles (its providers.json), then about a newer
+//     T3 Code too, and shows its dialog on a check; `off`, it fetches
+//     nothing. Upstream's updater never runs (no t3code-updater folder, no
+//     .updaterId)
 // Then report what it wrote to the home folder (the t3code:// handler,
 // the ~/.t3/bin/t3 command, any ~/.local/bin/t3 link), so a run shows
 // what the app sets up in a user's home.
@@ -26,6 +34,8 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { basename, join, relative } from "node:path";
 import { exitText, freePort, killChildNamespaces, ownPidNamespace, procStat, readRegular, removeTree, sleep, sleepSync, stopGroup, within } from "./lib/proc.ts";
 
@@ -112,8 +122,9 @@ const sessionBus = (home: string) => `<busconfig>
 /** Starts the app headless, in a process group and PID namespace of its
  * own, its output in <home>/startup.log, and waits until it exits, can't
  * start, or RUN_MS. */
-export async function launch(exe: string, home: string, port: number, cwd: string): Promise<App> {
+export async function launch(exe: string, home: string, port: number, cwd: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<App> {
   const env: NodeJS.ProcessEnv = {
+    ...extraEnv,
     PATH: process.env.PATH ?? "",
     HOME: home,
     TMPDIR: home,
@@ -179,15 +190,18 @@ export function startupProblem(app: App, log: string): { why: string; showLog: b
   return null;
 }
 
-function walk(dir: string, skip: Set<string>, out: string[] = []): string[] {
+/** The files under `dir` (with `dirs`, the folders too). */
+function walk(dir: string, skip: Set<string>, out: string[] = [], dirs = false): string[] {
   let entries;
   // A folder the app left that can't be read is skipped: the report must not crash.
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
   for (const entry of entries) {
     const path = join(dir, entry.name);
     if (skip.has(path)) continue;
-    if (entry.isDirectory()) walk(path, skip, out);
-    else out.push(path);
+    if (entry.isDirectory()) {
+      if (dirs) out.push(path);
+      walk(path, skip, out, dirs);
+    } else out.push(path);
   }
   return out;
 }
@@ -296,7 +310,7 @@ export async function folderDialog(port: number, env: NodeJS.ProcessEnv, alive: 
       let reply: any;
       try { reply = JSON.parse(String(e.data)); } catch { return; }
       const settle = replies.get(reply?.id);
-      if (settle) (replies.delete(reply.id), settle(reply));
+      if (typeof settle === "function") (replies.delete(reply.id), settle(reply));
     });
     let next = 0;
     // The reply, or null: no reply within `ms`, or the socket closed.
@@ -333,6 +347,182 @@ export async function folderDialog(port: number, env: NodeJS.ProcessEnv, alive: 
   }
 }
 
+/** A local version file for the update notice: what it answers, and the
+ * requests it got (their headers). */
+export interface Feed { url: string; version: string; providers: Record<string, string>; requests: Record<string, string | string[] | undefined>[]; close: () => Promise<void> }
+export async function feedServer(version: string, providers: Record<string, string> = {}): Promise<Feed> {
+  const feed = { version, providers, requests: [] as Feed["requests"] } as Feed;
+  const server = createServer((req, res) => {
+    feed.requests.push(req.headers);
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ version: feed.version, providers: feed.providers }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  feed.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/updates/t3code.json`;
+  feed.close = () => new Promise((resolve) => server.close(() => resolve()));
+  return feed;
+}
+
+/** The build's update notice line (share/t3code-nix/<bin>/update-notice),
+ * or `off: none` for a package without one. */
+export function noticeLine(pkg: string, bin: string): string {
+  const file = join(pkg, "share", "t3code-nix", bin, "update-notice");
+  return existsSync(file) ? readFileSync(file, "utf8").split("\n")[0] : "off: none";
+}
+
+/** The providers the build bundles for the notice (its providers.json:
+ * package name -> version), or none. */
+export function bundledList(pkg: string, bin: string): Record<string, string> {
+  const file = join(pkg, "share", "t3code-nix", bin, "providers.json");
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+}
+
+/** The package's version, from its store path's name (`t3code-0.1.13`,
+ * `t3code-nightly-0.1.14-nightly.20261128.5372`), or null. */
+export function versionOf(pkg: string): string | null {
+  const m = /-(\d[^-]*(?:-[^-]+)*)$/.exec(basename(pkg).replace(/^[a-z0-9]{32}-/, ""));
+  return m ? m[1] : null;
+}
+
+/** A provider version one step on: its last number up by one (any suffix kept). */
+export function bumped(version: string): string {
+  return version.replace(/^(v?(?:\d+\.)*)(\d+)/, (_, head: string, last: string) => `${head}${Number(last) + 1}`);
+}
+
+/** Upstream's updater's traces in the home: its cache and its ID. */
+export const updaterTraces = (files: string[]) => files.filter((p) => /\/t3code-updater(\/|$)|\/\.updaterId$/.test(p));
+
+/** The update notice's checks on the running app (see the top): problems. */
+export async function noticeChecks(port: number, env: NodeJS.ProcessEnv, alive: () => boolean, feed: Feed, line: string, listed: Record<string, string> = {}, pkg = "", polls = 15): Promise<string[]> {
+  const page = await pageOf(port);
+  if (typeof page === "string") return [page];
+  const { evaluate, close } = page;
+  const value = async (expression: string, ms = 10_000) => (await evaluate(expression, ms, true))?.result?.result?.value;
+  const state = () => value("window.desktopBridge.getUpdateState().then((s) => JSON.stringify({ nixManaged: s?.nixManaged ?? null, nixUpdate: s?.nixUpdate ?? null }))");
+  try {
+    if (!line.startsWith("on")) {
+      // Built without it (a release it doesn't fit, which still ships):
+      // nothing fetched; and upstream's state as it is, where its bridge
+      // still has that call (that release may have changed it too).
+      if (feed.requests.length) return [`the build says ${JSON.stringify(line)}, yet the app fetched the version file`];
+      // The call gone is fine; a page that doesn't answer isn't.
+      const bridged = await value("typeof window.desktopBridge?.getUpdateState");
+      if (bridged !== "function" && bridged !== "undefined") return [`the page didn't answer over the remote debugging port (${String(bridged)})`];
+      const got = bridged === "function" ? await state() : JSON.stringify({ nixManaged: null, nixUpdate: null });
+      if (got !== JSON.stringify({ nixManaged: null, nixUpdate: null })) return [`the build says ${JSON.stringify(line)}, yet the update state has ${got}`];
+      console.log(`desktop: no update notice (${line}), and nothing fetched`);
+      return [];
+    }
+    // The first, untimed check (a second after start here) found an older version.
+    if (!feed.requests.length) return ["the update notice never fetched its version file"];
+    const headers = feed.requests[0];
+    if (headers["user-agent"] !== "t3code-nix update check") return [`the version file was fetched with User-Agent ${JSON.stringify(headers["user-agent"])}`];
+    if (headers.cookie !== undefined || headers.authorization !== undefined) return ["the version file was fetched with a cookie or credentials"];
+    const before = await state();
+    if (before !== JSON.stringify({ nixManaged: true, nixUpdate: null })) return [`with an older version in the file, the update state has ${before}`];
+    // Waits for the state after a check to show `wanted` (its JSON), and
+    // says what it was instead.
+    const settled = async (wanted: (got: any) => boolean, what: string) => {
+      let after = "";
+      for (let i = 0; i < polls && alive(); i++) {
+        after = await state();
+        if (wanted(JSON.parse(after).nixUpdate)) return null;
+        await sleep(1000);
+      }
+      return `with ${what} in the file, the update state has ${after}`;
+    };
+    // One bundled provider one step ahead, T3 Code the app's own version: a
+    // check (no dialog yet, there was no notice), then a provider notice.
+    const [name] = Object.keys(listed).sort();
+    let providers = 0;
+    if (name) {
+      const own = versionOf(pkg);
+      if (!own) return [`couldn't tell the app's version from ${pkg}`];
+      feed.version = own;
+      feed.providers = { ...listed, [name]: bumped(listed[name]) };
+      providers = 1;
+      await value("window.desktopBridge.checkForUpdate().then((r) => r.checked)");
+      const why = await settled(
+        (n) =>
+          n?.version === null &&
+          n.providers?.length === 1 &&
+          n.providers[0].name === name &&
+          n.providers[0].version === feed.providers[name] &&
+          n.providers[0].installed === listed[name] &&
+          n.summary === "1 provider update is now available. Update t3code-nix and rebuild your system to install the update.",
+        `a newer ${name}`,
+      );
+      if (why) return [why];
+    }
+    // A newer T3 Code too.
+    feed.version = "999.0.0";
+    await value("window.desktopBridge.checkForUpdate().then((r) => r.checked)");
+    const sentence = providers
+      ? "T3 Code 999.0.0 and 1 provider update are now available. Update t3code-nix and rebuild your system to install the updates."
+      : "T3 Code 999.0.0 is now available. Update t3code-nix and rebuild your system to install the update.";
+    const why = await settled((n) => n?.version === "999.0.0" && n.providers?.length === providers && n.summary === sentence, "a newer version");
+    if (why) return [why];
+    // Now a check shows the dialog (or one is open already, from the
+    // provider notice's check: one at a time).
+    void evaluate("window.desktopBridge.checkForUpdate()", 10_000, true);
+    const run = (args: string[]) => spawnSync("xdotool", args, { env, encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL" }).stdout?.trim() ?? "";
+    let dialog = "";
+    for (let i = 0; i < polls && !dialog && alive(); i++) {
+      await sleep(1000);
+      dialog = run(["search", "--onlyvisible", "--name", "^Update available$"]).split("\n")[0];
+    }
+    if (!alive()) return ["the app died showing the update notice"];
+    if (!dialog) return ["the update notice's dialog never showed"];
+    run(["windowfocus", "--sync", dialog]);
+    run(["key", "Return"]);
+    console.log(`desktop: update notice: fetched with its own User-Agent, older version quiet, ${name ? `a newer ${name}, then ` : ""}a newer T3 Code in the state and its dialog shown`);
+    return [];
+  } finally {
+    close();
+  }
+}
+
+/** The app's page over the remote debugging port: an evaluate function, or
+ * why there is none. */
+async function pageOf(port: number): Promise<string | { evaluate: (expression: string, ms: number, awaitPromise?: boolean) => Promise<any>; close: () => void }> {
+  let targets: any[];
+  try {
+    targets = await (await fetch(`http://127.0.0.1:${port}/json`, { signal: AbortSignal.timeout(10_000) })).json();
+  } catch (e: any) {
+    return `couldn't list the app's pages on the remote debugging port: ${e?.message ?? e}`;
+  }
+  const page = targets.find((t) => t.type === "page" && typeof t.webSocketDebuggerUrl === "string");
+  if (!page) return "no page to check the update notice from";
+  const ws = new WebSocket(page.webSocketDebuggerUrl);
+  const replies = new Map<number, (reply: any) => void>();
+  const settleAll = () => { for (const settle of replies.values()) settle(null); replies.clear(); };
+  ws.addEventListener("close", settleAll);
+  ws.addEventListener("error", settleAll);
+  const opened = await within(10_000, new Promise<boolean>((resolve) => {
+    ws.addEventListener("open", () => resolve(true), { once: true });
+    ws.addEventListener("error", () => resolve(false), { once: true });
+    ws.addEventListener("close", () => resolve(false), { once: true });
+  }));
+  if (!opened) {
+    ws.close();
+    return "couldn't reach the page over the remote debugging port";
+  }
+  ws.addEventListener("message", (e: any) => {
+    let reply: any;
+    try { reply = JSON.parse(String(e.data)); } catch { return; }
+    const settle = replies.get(reply?.id);
+    if (typeof settle === "function") (replies.delete(reply.id), settle(reply));
+  });
+  let next = 0;
+  const evaluate = (expression: string, ms: number, awaitPromise = false) => {
+    const id = ++next;
+    const reply = new Promise<any>((resolve) => replies.set(id, resolve));
+    if (ws.readyState !== WebSocket.OPEN) settleAll();
+    else ws.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, awaitPromise, returnByValue: true } }));
+    return within(ms, reply).finally(() => replies.delete(id));
+  };
+  return { evaluate, close: () => ws.close() };
+}
+
 /** True if the app passed. Prints what it found either way. */
 export async function desktopSmoke(pkg: string, bin: string): Promise<boolean> {
   const fail = (why: string[], log = "") => {
@@ -352,6 +542,7 @@ export async function desktopSmoke(pkg: string, bin: string): Promise<boolean> {
   // Chromium's DevToolsActivePort file can't be relied on).
   const port = await freePort();
   const home = mkdtempSync(join(tmpdir(), "desktop-smoke-"));
+  let feed: Feed | undefined;
   // Told to stop meanwhile (Ctrl+C, Ctrl+\, SIGTERM, SIGHUP): end the
   // app's namespace, which is detached from this terminal, and its home,
   // then exit.
@@ -380,7 +571,15 @@ export async function desktopSmoke(pkg: string, bin: string): Promise<boolean> {
         return "";
       }
     };
-    const app = await launch(join(pkg, "bin", bin), home, port, launchDir);
+    // The update notice's local version file, older than any release:
+    // given to the app either way (a build without the notice ignores it).
+    const line = noticeLine(pkg, bin);
+    const listed = bundledList(pkg, bin);
+    feed = await feedServer("0.0.1", listed);
+    const app = await launch(join(pkg, "bin", bin), home, port, launchDir, {
+      T3CODE_NIX_UPDATE_URL: feed.url,
+      T3CODE_NIX_UPDATE_FIRST_CHECK_MS: "1000",
+    });
     // The app runs in a PID namespace of its own (launch starts it under
     // unshare): every orphan is handed to its init, which is in the app's
     // tree, so the stop below reaches it, and the kernel ends whatever is
@@ -395,6 +594,7 @@ export async function desktopSmoke(pkg: string, bin: string): Promise<boolean> {
         const found = whileRunning(app.pid, home, wmClass);
         problems = found.problems;
         if (!problems.length && found.env) problems = await folderDialog(port, found.env, app.alive);
+        if (!problems.length && found.env) problems = await noticeChecks(port, found.env, app.alive, feed!, line, listed, pkg);
         if (!app.alive()) problems.push("the app exited during the checks");
       }
     } catch (e: any) {
@@ -428,6 +628,10 @@ export async function desktopSmoke(pkg: string, bin: string): Promise<boolean> {
     if (failures.length) return fail(failures, startup?.showLog || backendCrashed ? text : "");
     console.log("desktop: main window created, still running after 30 s");
     if (problems.length) return fail(problems);
+    // Built without the notice: nothing fetched over the whole run.
+    if (!line.startsWith("on") && feed.requests.length) return fail([`the build says ${JSON.stringify(line)}, yet the app fetched the version file`]);
+    const traces = updaterTraces(walk(home, new Set(), [], true));
+    if (traces.length) return fail([`upstream's updater ran: ${traces.map((p) => `~/${relative(home, p)}`).join(", ")}`]);
 
     // What it wrote to the home, relative to that throwaway home.
     const shown = (p: string) => `~/${relative(home, p)}`;
@@ -452,6 +656,7 @@ export async function desktopSmoke(pkg: string, bin: string): Promise<boolean> {
     return true;
   } finally {
     for (const s of signals) process.off(s, onSignal);
+    await feed?.close();
     rmSync(busSocket(home), { force: true });
     removeTree(home);
   }

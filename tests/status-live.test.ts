@@ -90,7 +90,7 @@ test("live: held, and which issue explains it", () => {
   // An update-lag issue reports a delay, it doesn't explain one; nor does a
   // guard review (that version ships), a downgrade (it holds nothing), or an
   // issue about another version, another pin, or with a channel.
-  for (const i of [issue(1, "update-lag/codex/-", "1.1"), issue(5, "guard-review/codex/-", "1.1"), issue(6, "downgrade/codex/-", "1.1"), issue(2, "test-failed/codex/-", "1.0"), issue(3, "test-failed/grok/-", "1.1"), issue(4, "resolve-failed/codex/npm", null)]) {
+  for (const i of [issue(1, "update-lag/codex/-", "1.1"), issue(5, "guard-review/codex/-", "1.1"), issue(6, "downgrade/codex/-", "1.1"), issue(7, "update-notice-off/codex/-", "1.1"), issue(8, "update-feed/codex/-", "1.1"), issue(2, "test-failed/codex/-", "1.0"), issue(3, "test-failed/grok/-", "1.1"), issue(4, "resolve-failed/codex/npm", null)]) {
     assert.equal(held([i]).state, "found", i.key);
   }
   assert.equal(explaining("codex", "1.1", []), null);

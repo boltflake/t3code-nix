@@ -1512,6 +1512,34 @@ let
               c.programs.t3code.package.name or "this package"
             }; or set T3CODE_TELEMETRY_ENABLED=false in its environment yourself."
         ) c.assertions;
+      # The update notice's check (updateCheck.enable).
+      updateCheckOf = c: name: map (p: p.passthru.updateCheck) (installed c name);
+      updOff = system self.nixosModules.default {
+        enable = true;
+        cli.enable = true;
+        updateCheck.enable = false;
+      };
+      updOther = system self.nixosModules.default {
+        enable = true;
+        package = pkgs.hello;
+        updateCheck.enable = false;
+      };
+      updOlder = system self.nixosModules.default {
+        enable = true;
+        package = telOlderPkg;
+        updateCheck.enable = false;
+      };
+      updateCheckFails =
+        c:
+        builtins.any (
+          a:
+          !a.assertion
+          &&
+            a.message
+            == "programs.t3code: updateCheck.enable = false needs this flake's desktop app from a t3code-nix that has it (t3code, t3code-nightly, t3code-free … or an .override of one), not ${
+              c.programs.t3code.package.name or "this package"
+            }."
+        ) c.assertions;
       # The desktop app's port (openFirewall, port).
       portOf = c: name: map (p: p.passthru.port) (installed c name);
       opened = c: c.networking.firewall.allowedTCPPorts;
@@ -1741,6 +1769,26 @@ let
       "telemetry: a foreign app with the option at its default still evaluates" =
         !failedAssertion otherCli
         && (builtins.tryEval (builtins.deepSeq (map (p: p.name) otherCli.environment.systemPackages) true))
+          .success;
+      "updateCheck.enable = false reaches the app, not the CLI; on by default" =
+        updateCheckOf updOff "t3code" == [ false ]
+        && updateCheckOf updOff "t3" == [ true ]
+        && updateCheckOf real "t3code" == [ true ]
+        && !failedAssertion updOff;
+      "updateCheck: the app's URL is its pins' file; the CLI has none and refuses it" =
+        packages.t3code.updateUrl == "https://boltflake.github.io/t3code-nix/updates/t3code.json"
+        &&
+          packages.t3code-nightly.updateUrl
+          == "https://boltflake.github.io/t3code-nix/updates/t3code-nightly.json"
+        && packages.t3code-free.updateUrl == packages.t3code.updateUrl
+        && packages.t3.updateUrl == null
+        && throws (packages.t3.override { updateCheck = false; }).drvPath
+        && throws (packages.t3code.override { updateCheck = "no"; }).drvPath
+        && !throws (packages.t3code.override { updateCheck = false; }).drvPath;
+      "updateCheck: a package that can't take it fails with its own message" =
+        updateCheckFails updOther
+        && updateCheckFails updOlder
+        && (builtins.tryEval (builtins.deepSeq (map (p: p.name) updOlder.environment.systemPackages) true))
           .success;
       "the doctor gets the app's and the CLI's usage data settings" =
         (doctorOf telOff).appTelemetry == false
@@ -6914,6 +6962,207 @@ let
       '') offs
       + "touch $out"
     );
+  # The desktop app's update notice (pkgs/t3code/update-notice.cjs,
+  # scripts/asar-patch.ts). Each release package says in its build whether
+  # the notice fitted (share/t3code-nix/<program>/update-notice); either is accepted, a
+  # release that doesn't fit still ships, but its wrapper must match: the
+  # URL (a default) when `on`, none when `off`. The flags snippet itself is
+  # tried with both lines, and the opt-out (updateCheck = false) with an
+  # inherited URL: the app gets it blank. The packages' own `on` is the
+  # pinned releases' (tests/asar-patch.test.ts asserts it on fixed cuts).
+  # The bundled providers' list (wrap.nix, providers.json): with the notice
+  # on, exactly the providers the app bundles by name, at this set's pin
+  # versions (read from the pins here, not from the wrapper), and only on
+  # the desktop app's programs; with it off, or for the CLI, none.
+  t3code-update-notice =
+    let
+      apps = present [
+        packages.t3code
+        (packages.t3code-nightly or null)
+        (packages.t3code-free or null)
+      ];
+      app = builtins.head apps;
+      inner = app.passthru.unwrapped;
+      off = app.override { updateCheck = false; };
+      # Spelled out, so a set that reads another's file can't pass: the
+      # NixOS-stable set's (its own pins) has its own.
+      site = "https://boltflake.github.io/t3code-nix/updates";
+      expected = {
+        t3code = if pinsDir == ../versions then "${site}/t3code.json" else "${site}/stable/t3code.json";
+        t3code-free = expected.t3code;
+        t3code-nightly = "${site}/t3code-nightly.json";
+      };
+      urls = map (p: {
+        name = lib.getName p;
+        got = p.passthru.updateUrl;
+      }) apps;
+      wrong = builtins.filter (u: u.got != expected.${u.name} or null) urls;
+      # What an app should list: each provider it bundles that this set
+      # pins, at the pin's version.
+      providerNames = builtins.attrValues (lib.importJSON ../pkgs/t3code/provider-names.json);
+      expectedList =
+        p:
+        builtins.listToAttrs (
+          lib.concatMap (
+            n:
+            lib.optional (
+              builtins.pathExists (pinsDir + "/${n}.json")
+              && builtins.any (q: lib.getName q == n) p.passthru.providers
+            ) (lib.nameValuePair n (pinOf n).version)
+          ) providerNames
+        );
+      listOf = p: (app.override p).passthru.bundledVersions;
+      # The cases that need a provider run only where the set has it (a
+      # stable snapshot may lack one).
+      bundles = n: builtins.elem n (builtins.attrNames (expectedList app));
+      selections =
+        lib.optional (bundles "claude-code") {
+          what = "an alias";
+          got = builtins.attrNames (listOf {
+            providers = [ "claude" ];
+          });
+          want = [ "claude-code" ];
+        }
+        ++ lib.optional (bundles "codex") {
+          what = "excludeProviders";
+          got = builtins.attrNames (listOf {
+            excludeProviders = [ "codex" ];
+          });
+          want = lib.remove "codex" (builtins.attrNames (expectedList app));
+        }
+        ++ [
+          {
+            what = "none";
+            got = listOf { providers = [ ]; };
+            want = { };
+          }
+        ]
+        ++ lib.optional (packages ? codex && bundles "codex") {
+          what = "a package given directly";
+          got = listOf {
+            providers = [ packages.codex ];
+          };
+          want = { };
+        }
+        ++ lib.optional (packages ? t3code-free && bundles "codex") {
+          what = "an override of t3code-free";
+          got =
+            builtins.attrNames
+              (packages.t3code-free.override {
+                excludeProviders = [ "codex" ];
+              }).passthru.bundledVersions;
+          want = lib.remove "codex" (builtins.attrNames (expectedList packages.t3code-free));
+        }
+        ++ lib.optional (packages ? codex && bundles "codex") {
+          what = "a package given directly, also named";
+          got = builtins.attrNames (listOf {
+            providers = [
+              packages.codex
+              "codex"
+            ];
+          });
+          want = [ ];
+        };
+      wrongLists =
+        builtins.filter (c: c.got != c.want) selections
+        ++ lib.concatMap (
+          p:
+          lib.optional (p.passthru.bundledVersions != expectedList p) {
+            what = p.name;
+            got = p.passthru.bundledVersions;
+            want = expectedList p;
+          }
+        ) apps;
+      withCli = app.override { withCli = true; };
+    in
+    assert lib.assertMsg (wrong == [ ]) "t3code-update-notice: wrong URLs: ${builtins.toJSON wrong}";
+    assert lib.assertMsg (
+      wrongLists == [ ]
+    ) "t3code-update-notice: wrong provider lists: ${builtins.toJSON wrongLists}";
+    runCommand "t3code-update-notice" { nativeBuildInputs = [ pkgs.makeWrapper ]; } (
+      lib.concatMapStrings (
+        pkg:
+        let
+          u = pkg.passthru.unwrapped;
+        in
+        ''
+          line=$(head -1 ${u}/share/t3code-nix/${u.meta.mainProgram}/update-notice)
+          f=$(readlink -f ${u}/bin/${u.meta.mainProgram})
+          case "$line" in
+            on)
+              grep -qxF ${lib.escapeShellArg "export T3CODE_NIX_UPDATE_URL=\${T3CODE_NIX_UPDATE_URL-'${u.passthru.updateUrl}'}"} "$f" \
+                || { echo "${u.name}: notice on, but its wrapper doesn't default T3CODE_NIX_UPDATE_URL to ${u.passthru.updateUrl}"; exit 1; } ;;
+            off:\ ?*)
+              echo "${u.name}: built without the update notice ($line)"
+              rc=0; grep -q T3CODE_NIX_UPDATE_URL "$f" || rc=$?
+              [ "$rc" = 1 ] || { echo "${u.name}: notice off, but its wrapper mentions T3CODE_NIX_UPDATE_URL"; exit 1; } ;;
+            *) echo "${u.name}: no notice line ($line)"; exit 1 ;;
+          esac
+          # The wrapped package with the default adds nothing about it.
+          for bin in ${pkg}/bin/*; do
+            rc=0; grep -q T3CODE_NIX_UPDATE_URL "$(readlink -f "$bin")" || rc=$?
+            [ "$rc" = 1 ] || { echo "$bin (default) mentions T3CODE_NIX_UPDATE_URL"; exit 1; }
+          done
+          # Its provider list, only with the notice on.
+          list=${pkg}/share/t3code-nix/${u.meta.mainProgram}/providers.json
+          w=$(readlink -f ${pkg}/bin/${u.meta.mainProgram})
+          case "$line" in
+            on)
+              [ "$(cat "$list")" = ${lib.escapeShellArg (builtins.toJSON (expectedList pkg))} ] \
+                || { echo "${pkg.name}: its providers.json is $(cat "$list")"; exit 1; }
+              grep -qxF "export T3CODE_NIX_PROVIDERS=\''${T3CODE_NIX_PROVIDERS-'$list'}" "$w" \
+                || { echo "${pkg.name}: its wrapper doesn't default T3CODE_NIX_PROVIDERS to $list"; exit 1; } ;;
+            *)
+              [ ! -e "$list" ] || { echo "${pkg.name}: notice off, but it has a providers.json"; exit 1; }
+              rc=0; grep -q T3CODE_NIX_PROVIDERS "$w" || rc=$?
+              [ "$rc" = 1 ] || { echo "${pkg.name}: notice off, but its wrapper mentions T3CODE_NIX_PROVIDERS"; exit 1; } ;;
+          esac
+          # Not for the unwrapped app.
+          rc=0; grep -q T3CODE_NIX_PROVIDERS "$f" || rc=$?
+          [ "$rc" = 1 ] || { echo "${u.name} mentions T3CODE_NIX_PROVIDERS"; exit 1; }
+        ''
+      ) apps
+      + ''
+        printf '%s\n' on > on
+        printf '%s\n' 'off: hide check: 0 matches' > off
+        ${inner.passthru.noticeFlags "off"}
+        [ "''${#noticeFlags[@]}" = 0 ] || { echo "the flags snippet sets a URL for an off line"; exit 1; }
+        ${inner.passthru.noticeFlags "on"}
+        [ "''${noticeFlags[*]}" = ${lib.escapeShellArg "--set-default T3CODE_NIX_UPDATE_URL ${inner.passthru.updateUrl}"} ] \
+          || { echo "the flags snippet for on: ''${noticeFlags[*]}"; exit 1; }
+        # The chain an opted-out app runs: wrap.nix's flag outside, the
+        # desktop wrapper's default inside; an inherited URL ends up blank.
+        makeWrapper ${pkgs.writeShellScript "print-url" ''printf '%s\n' "''${T3CODE_NIX_UPDATE_URL-<unset>}"''} inner "''${noticeFlags[@]}"
+        grep -qxF ${lib.escapeShellArg "export T3CODE_NIX_UPDATE_URL=''"} "$(readlink -f ${off}/bin/${off.meta.mainProgram})" \
+          || { echo "${off.name} (updateCheck = false): its wrapper doesn't set T3CODE_NIX_UPDATE_URL blank"; exit 1; }
+        makeWrapper ./inner outer --set T3CODE_NIX_UPDATE_URL ""
+        [ "$(env -u T3CODE_NIX_UPDATE_URL ./inner)" = ${lib.escapeShellArg inner.passthru.updateUrl} ] || { echo "the default isn't the URL"; exit 1; }
+        [ "$(T3CODE_NIX_UPDATE_URL=https://example.com/x ./inner)" = https://example.com/x ] || { echo "an explicit URL doesn't win"; exit 1; }
+        [ "$(T3CODE_NIX_UPDATE_URL=https://example.com/x ./outer)" = "" ] || { echo "the opt-out doesn't beat an inherited URL"; exit 1; }
+        # The provider list's snippet, with both lines.
+        ${app.passthru.providerFlags "off" "$PWD/off.json"}
+        [ "''${#providerFlags[@]}" = 0 ] && [ ! -e off.json ] || { echo "the provider snippet acts on an off line"; exit 1; }
+        ${app.passthru.providerFlags "on" "$PWD/on.json"}
+        [ "''${providerFlags[*]}" = "--set-default T3CODE_NIX_PROVIDERS $PWD/on.json" ] && [ -e on.json ] \
+          || { echo "the provider snippet for on: ''${providerFlags[*]}"; exit 1; }
+        # The opt-out blanks the list too; the CLI never gets it, inside the
+        # desktop app (withCli) or on its own.
+        grep -qxF ${lib.escapeShellArg "export T3CODE_NIX_PROVIDERS=''"} "$(readlink -f ${off}/bin/${off.meta.mainProgram})" \
+          || { echo "${off.name} (updateCheck = false): its wrapper doesn't set T3CODE_NIX_PROVIDERS blank"; exit 1; }
+        for bin in ${withCli}/bin/t3 ${
+          lib.concatMapStringsSep " " (p: "${p}/bin/*") (present [
+            (packages.t3 or null)
+            (packages.t3-nightly or null)
+            (packages.t3-free or null)
+          ])
+        }; do
+          rc=0; grep -q T3CODE_NIX_PROVIDERS "$(readlink -f "$bin")" || rc=$?
+          [ "$rc" = 1 ] || { echo "$bin (the CLI) mentions T3CODE_NIX_PROVIDERS"; exit 1; }
+        done
+        touch $out
+      ''
+    );
+
   # The desktop app's pinned port (pkgs/t3code/wrap.nix, `port`; the NixOS
   # module's openFirewall). The line a pinned app's wrappers run: unset,
   # empty and blank become the port, anything else stays (tried under
@@ -7734,6 +7983,11 @@ let
     cp -r ${../watcher} $out/watcher
     cp -r ${../ci} $out/ci
     mkdir $out/pkgs && cp ${../pkgs/unfree.nix} $out/pkgs/unfree.nix
+    # The update notice's shim (feeds.ts and the tests load it) and the
+    # bundled providers' names (status.ts reads them).
+    mkdir $out/pkgs/t3code
+    cp ${../pkgs/t3code/update-notice.cjs} $out/pkgs/t3code/update-notice.cjs
+    cp ${../pkgs/t3code/provider-names.json} $out/pkgs/t3code/provider-names.json
     # The status page's package list is checked against these, and the
     # workflows' and actions' wiring that tests read.
     cp ${../README.md} $out/README.md
@@ -8394,6 +8648,7 @@ in
     relay-client
     t3code-telemetry-wrapper
     t3code-port-wrapper
+    t3code-update-notice
     t3-telemetry-sends
     t3-nightly-telemetry-sends
     nix-format

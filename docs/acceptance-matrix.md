@@ -340,9 +340,13 @@ Provider behaviour the guards don't cover (upstream's, seen 2026-11-16):
   the user's choice; see the README).
 - t3code enables only codex and claude by default; the others are switched
   on in its settings.
-- On a Nix install the update notice shows "behind latest" with
-  `canUpdate: false` for codex; claude, grok and pi report `canUpdate: true`
-  with their own update command, which the guards refuse.
+- On a Nix install, T3 Code (0.1.13 and the 2026-11-27 nightlies) offers no
+  update for a provider it finds in the Nix store: its maintenance resolver
+  makes any `/nix/store/` command path "manual only" (`canUpdate: false`),
+  so neither the sidebar nor Settings' "Update all" lists it. (Older
+  releases reported `canUpdate: true` for claude, grok and pi, with their own
+  update command, which the guards refuse.) t3code-nix's own update notice
+  tells of newer bundled providers instead (README, "Update notices").
 - Antigravity is found through a link named `agy_acp_server.par` to `agy`,
   which lives only on t3code's `PATH` (`pkgs/t3code/wrap.nix`).
 - The desktop app registers `t3code://` as `Exec=<bin> %U` (profile-stable).

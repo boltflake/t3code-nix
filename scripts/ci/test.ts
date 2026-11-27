@@ -48,6 +48,21 @@ export interface Check { out: string; drv: string; electron?: string | null; na?
 
 export interface Note { package: string; detail: string }
 
+/** The desktop apps whose build says whether the update notice fitted
+ * (share/t3code-nix/<package>/update-notice: `on`, or `off: <why>`). */
+export const NOTICE_PACKAGES = ["t3code", "t3code-nightly"] as const;
+
+/** Each built desktop app's notice line, read from its output. */
+export function noticeOf(outs: Record<string, string>): Record<string, string> {
+  const found: Record<string, string> = {};
+  for (const p of NOTICE_PACKAGES) {
+    const out = outs[p];
+    const file = out && join(out, "share/t3code-nix", p, "update-notice");
+    if (file && existsSync(file)) found[p] = readFileSync(file, "utf8").split("\n")[0];
+  }
+  return found;
+}
+
 /** What the guard checks among `outs` (directories with `checked` and
  * `notes`; other checks' outputs are files) compared, and what they noted. */
 export function notesOf(outs: string[]): { checked: string[]; notes: Note[] } {
@@ -511,6 +526,7 @@ export async function main(argv: string[]): Promise<void> {
     for (const p of built) if (hashes.has(checks[p].out)) manifest[p] = { path: checks[p].out, narHash: hashes.get(checks[p].out)! };
   }
   const { checked, notes } = notesOf(names.filter((n) => !failed.includes(n)).map((n) => checks[n].out));
+  const updateNotice = noticeOf(Object.fromEntries(names.filter((n) => !failed.includes(n)).map((n) => [n, checks[n].out])));
   for (const n of notes) console.log(`note for ${n.package}: ${n.detail.replaceAll("\t", " | ")}`);
   failed.push(...failedOnNotes(set === "branch" && argv.includes("--strict-guards"), names.filter((n) => !failed.includes(n)), (n) => checks[n].out));
   const electron = electronEvidence(checks, failed, smokes, ROOT, undefined, part === undefined ? undefined : new Set(names));
@@ -530,7 +546,8 @@ export async function main(argv: string[]): Promise<void> {
   // Written again after NixOS stable's evaluations below: atomically.
   const suffix = part === undefined ? "" : `-${part}`;
   const write = () => rewriteJson(join(outDir, `${set}-${system}${suffix}.json`),
-    { set, system, passed: failed.length === 0, failed, checked, notes, electron, ...(reported.length ? { reported } : {}), nixCalls });
+    { set, system, passed: failed.length === 0, failed, checked, notes, ...(Object.keys(updateNotice).length ? { updateNotice } : {}), electron,
+      ...(reported.length ? { reported } : {}), nixCalls });
   // The manifest first: a saved result always has its manifest beside it
   // (the cache job needs both).
   rewriteJson(join(outDir, `manifest-${set}-${system}${suffix}.json`), manifest);

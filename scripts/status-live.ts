@@ -103,9 +103,10 @@ export function explaining(pin: string, version: string, issues: OpenIssue[]): O
   const ranked = issues.flatMap((i) => {
     const [kind, p, channel] = i.key.split("/");
     if (kind === "env-broken") return [{ ...i, kind, tier: 2 }];
-    // A lag, a guard review (the version shipped anyway) or a downgrade (it
-    // holds nothing) explains nothing.
-    if (p !== pin || channel !== "-" || kind === "update-lag" || kind === "guard-review" || kind === "downgrade") return [];
+    // A lag, a guard review (the version shipped anyway), a downgrade (it
+    // holds nothing) or the update notice's issues (they hold nothing
+    // either) explain nothing.
+    if (p !== pin || channel !== "-" || ["update-lag", "guard-review", "downgrade", "update-feed", "update-notice-off"].includes(kind)) return [];
     if (i.version !== null && versionOfTag(i.version) === version) return [{ ...i, kind, tier: 0 }];
     if (kind === "resolve-failed" && i.version === null) return [{ ...i, kind, tier: 1 }];
     return [];

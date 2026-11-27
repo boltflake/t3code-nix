@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import * as candidate from "../scripts/ci/candidate.ts";
 import { current } from "../scripts/ci/gate.ts";
 import { UPDATE_JOBS } from "../scripts/ci/gh.ts";
-import { BRANCH_ONLY, checkNames, failedOnNotes, notesOf } from "../scripts/ci/test.ts";
+import { BRANCH_ONLY, checkNames, failedOnNotes, noticeOf, notesOf } from "../scripts/ci/test.ts";
 import { DryRun } from "../scripts/ci/gh.ts";
 import { Fake } from "./fake-gh.ts";
 import type { Release } from "../scripts/ci/gh.ts";
@@ -180,7 +180,7 @@ test("narrow: a published set's guard notes become guard-review, never a hold", 
 });
 
 test("narrow: guard notes only for our packages, and the same note keeps its version", () => {
-  const s: narrow.SetResult = { passed: true, failed: new Set(), systems: new Set(SYSTEMS), checked: new Set(), notes: new Map(), perSystem: new Map() };
+  const s: narrow.SetResult = { passed: true, failed: new Set(), systems: new Set(SYSTEMS), checked: new Set(), notes: new Map(), notice: new Map(), perSystem: new Map() };
   for (const system of SYSTEMS) {
     writeFileSync(join(tmp, `final-${system}.json`), JSON.stringify({ set: "final", system, passed: true, failed: [],
       checked: ["codex", "a/b", "@someone"], notes: [{ package: "a/b", detail: "x" }, { package: "codex", detail: 7 }, { package: "codex", detail: "y" }] }));
@@ -238,7 +238,7 @@ test("issues: a guard check's items become the issue's words, end to end", async
   writeFileSync(join(out, "checked"), "codex\nt3\n");
   writeFileSync(join(out, "notes"), "codex\tcodex-level-new\tapp-server daemon\tlogs\ncodex\tunreadable\tcodex-guard-flags\t\n");
   const { checked, notes } = notesOf([out]);
-  const s: narrow.SetResult = { passed: true, failed: new Set(), systems: new Set(SYSTEMS), checked: new Set(checked), notes: new Map(), perSystem: new Map() };
+  const s: narrow.SetResult = { passed: true, failed: new Set(), systems: new Set(SYSTEMS), checked: new Set(checked), notes: new Map(), notice: new Map(), perSystem: new Map() };
   for (const n of notes) s.notes.set(n.package, new Set([...(s.notes.get(n.package) ?? []), n.detail]));
   const found = narrow.guardReview(s, [], () => "3");
   const gh = new Fake();
@@ -1880,7 +1880,12 @@ test("workflows: one queue of real update runs, no separate retry run", () => {
   // Real runs only once UPDATES is on; dry runs always. The backstop waits too.
   assert.ok(update.includes("  resolve:\n    if: inputs.dry_run || vars.UPDATES == 'true'\n"), "resolve is gated");
   assert.ok(health.includes("  dispatch:\n    if: vars.UPDATES == 'true'\n"), "the backstop is gated");
-  assert.ok(health.includes("  issues:\n    if: vars.UPDATES == 'true' && "), "and its lag issues");
+  // Its issue job runs for the watcher's checks or for Pages' version
+  // files; the watcher's (lag issues among them) only once UPDATES is on.
+  assert.ok(health.includes("  issues:\n    if: >-\n      github.ref == 'refs/heads/main'\n      && ((vars.UPDATES == 'true' && vars.WATCHER_URL != '') || vars.PAGES == 'true')\n"), "and its issues");
+  assert.ok(health.includes("      - name: Read the watcher's health\n        id: watcher\n        if: vars.UPDATES == 'true' && vars.WATCHER_URL != ''\n"), "the watcher's read");
+  assert.ok(health.includes('          if [ "$WATCHER_READ" = success ]; then\n            obs="$RUNNER_TEMP/observations-health.json"\n            node scripts/ci/health.ts'), "and its lag issues, only after a read that ran");
+  assert.ok(health.includes("          WATCHER_READ: ${{ steps.watcher.outcome }}\n"));
   assert.ok(read("deploy-watcher.yml").includes("    if: github.ref == 'refs/heads/main' && "), "the watcher deploys only from main");
   // A branch's runs (dry, or real by mistake) never join main's queue.
   assert.ok(update.includes("group: ${{ (inputs.dry_run || github.ref != 'refs/heads/main') && format('update-dry-{0}', github.ref) || 'update' }}"));
@@ -2819,4 +2824,60 @@ test("workflow: update runs test and final in parts, merged for every job that r
   for (const f of ["update.yml", "ci.yml"]) {
     assert.doesNotMatch(readFileSync(join(import.meta.dirname, "..", ".github", "workflows", f), "utf8"), /cache-nix-action/, f);
   }
+});
+
+test("update notice: each desktop app's line, from its build, into the result and the issues once published", async () => {
+  const out = (line: string | null, bin = "t3code") => {
+    const d = mkdtempSync(join(tmp, "app-"));
+    if (line !== null) {
+      mkdirSync(join(d, "share/t3code-nix", bin), { recursive: true });
+      writeFileSync(join(d, "share/t3code-nix", bin, "update-notice"), `${line}\n`);
+    }
+    return d;
+  };
+  // Only the desktop apps', and only a built one's, each from its own path.
+  assert.deepEqual(noticeOf({ t3code: out("on"), "t3code-nightly": out("off: hide check: 0 matches", "t3code-nightly"), codex: out("on", "codex"), t3: out(null) }),
+    { t3code: "on", "t3code-nightly": "off: hide check: 0 matches" });
+  assert.deepEqual(noticeOf({ t3code: out(null) }), {});
+  // load(): only our packages and the two shapes of line.
+  for (const system of SYSTEMS) {
+    writeFileSync(join(tmp, `candidate-${system}.json`), JSON.stringify({ set: "candidate", system, passed: true, failed: [],
+      updateNotice: { t3code: "on", "t3code-nightly": system === SYSTEMS[0] ? "off: icon helper: 0 matches" : "on", "a/b": "on", codex: "maybe" } }));
+  }
+  const s = narrow.load(tmp).get("candidate")!;
+  assert.deepEqual([...s.notice.keys()].sort(), ["t3code", "t3code-nightly"]);
+  const found = narrow.noticeIssues(s, [{ name: "t3code-nightly", files: [], from: "1", to: "2" }], (p) => (p === "t3code" ? "0.1.13" : null));
+  assert.deepEqual(found.map((o) => [o.kind, o.package, o.version]), [["update-notice-on", "t3code", "0.1.13"], ["update-notice-off", "t3code-nightly", "2"]]);
+  assert.equal(found[1].detail, `${SYSTEMS[0]}: off: icon helper: 0 matches`);
+  // A system without a line proves nothing: no `on`.
+  const partial: narrow.SetResult = { ...s, notice: new Map([["t3code", new Map([[SYSTEMS[0], "on"]])]]) };
+  assert.deepEqual(narrow.noticeIssues(partial, [], () => "1"), []);
+  // The issue opens on off and closes on a later published `on`.
+  const gh = new Fake();
+  await issues.apply([found[1]], gh, now);
+  assert.equal(gh.issueList.length, 1);
+  assert.equal(gh.issueList[0].title, "update-notice-off: t3code-nightly");
+  assert.equal(gh.issueList[0].state, "open");
+  await issues.apply([obs("update-notice-on", "t3code-nightly", "3", "")], gh, hours(1));
+  assert.equal(gh.issueList[0].state, "closed");
+});
+
+test("update feed: health's issue opens per file and closes when the file answers right", async () => {
+  const gh = new Fake();
+  await issues.apply([obs("update-feed", "t3code", null, "updates/stable/t3code.json: HTTP 404", "stable"), obs("update-feed-ok", "t3code", "0.1.13", "")], gh, now);
+  assert.deepEqual(gh.issueList.map((i) => [i.title, i.state]), [["update-feed: t3code (stable)", "open"]]);
+  // The latest file's ok doesn't close the stable file's issue.
+  await issues.apply([obs("update-feed-ok", "t3code", "0.1.13", "")], gh, hours(1));
+  assert.equal(gh.issueList[0].state, "open");
+  await issues.apply([obs("update-feed-ok", "t3code", "0.1.12", "", "stable")], gh, hours(2));
+  assert.equal(gh.issueList[0].state, "closed");
+});
+
+test("pages: a forced run deploys an unchanged site, only where deploys are on", () => {
+  const pages = readFileSync(join(import.meta.dirname, "..", ".github", "workflows", "pages.yml"), "utf8");
+  assert.match(pages, /\n      force:\n        description: [^\n]+\n        type: boolean\n        default: false\n/);
+  assert.ok(pages.includes("          FORCE: ${{ inputs.force == true }}\n"));
+  assert.ok(pages.includes('          if [ "$ENABLED" = true ] && [ "$FORCE" = true ]; then deploy=true; fi\n'));
+  // Still after the deploy decision and before the live-read failure check.
+  assert.ok(pages.indexOf('[ "$FORCE" = true ]') < pages.indexOf("the live reads failed and nothing else changed"));
 });

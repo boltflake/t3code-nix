@@ -7,8 +7,10 @@
 #             while the watcher is dead, and a quiet hour's run retries held
 #             versions (see scripts/update.ts); fails on its own
 #   issues    reads the watcher's /health, works out watcher-stalled,
-#             watcher-auth and update-lag (scripts/ci/health.ts) and writes
-#             them, in the shared `issues` concurrency group
+#             watcher-auth and update-lag (scripts/ci/health.ts), and once
+#             Pages is on (PAGES) checks the desktop app's update notice
+#             files on the site (scripts/ci/feeds.ts: update-feed), and
+#             writes them, in the shared `issues` concurrency group
 # Needs the repository variable WATCHER_URL and the secret
 # WATCHER_HEALTH_TOKEN.
 name: health
@@ -37,11 +39,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run update.yml --repo "$GITHUB_REPOSITORY" --ref main
 
-  # Not before the watcher is deployed (build step 6): no URL, no checks.
-  # Only on main: a branch's versions/ would raise false lags. Not before
-  # updates are on (UPDATES): with nothing publishing, every release is a lag.
+  # The watcher's checks not before the watcher is deployed (build step 6):
+  # no URL, no checks; and not before updates are on (UPDATES): with nothing
+  # publishing, every release is a lag. The update notice's files once
+  # Pages is on (PAGES). Only on main: a branch's versions/ would raise
+  # false lags. One writer for both, in the shared `issues` group.
   issues:
-    if: vars.UPDATES == 'true' && vars.WATCHER_URL != '' && github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main'
+      && ((vars.UPDATES == 'true' && vars.WATCHER_URL != '') || vars.PAGES == 'true')
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     concurrency:
@@ -56,10 +62,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # feeds.ts reads when each pin's version last changed (the
+          # history is a few MB).
+          fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
           nix: false
+      # Against main as it is now (this job can wait behind other writers).
+      - name: Check the update notice's files on the site
+        if: vars.PAGES == 'true'
+        continue-on-error: true
+        run: |
+          git fetch --quiet origin main
+          site="https://$GITHUB_REPOSITORY_OWNER.github.io/${GITHUB_REPOSITORY#*/}/"
+          node scripts/ci/feeds.ts "$site" FETCH_HEAD > "$RUNNER_TEMP/observations-feeds.json.part"
+          mv "$RUNNER_TEMP/observations-feeds.json.part" "$RUNNER_TEMP/observations-feeds.json"
       - name: Read the watcher's health
+        id: watcher
+        if: vars.UPDATES == 'true' && vars.WATCHER_URL != ''
         env:
           URL: ${{ vars.WATCHER_URL }}
           TOKEN: ${{ secrets.WATCHER_HEALTH_TOKEN }}
@@ -71,12 +91,24 @@ jobs:
             mv "$out.err" "$out"
           fi
       - name: Write issues
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Only a read that ran: a setup that failed before it isn't a
+          # watcher with no reply.
+          WATCHER_READ: ${{ steps.watcher.outcome }}
         run: |
-          obs="$RUNNER_TEMP/observations-health.json"
-          node scripts/ci/health.ts "$RUNNER_TEMP/health.json" > "$obs"
+          files=()
+          if [ "$WATCHER_READ" = success ]; then
+            obs="$RUNNER_TEMP/observations-health.json"
+            node scripts/ci/health.ts "$RUNNER_TEMP/health.json" > "$obs"
+            files+=("$obs")
+          fi
+          # Only a complete probe (it writes its file at the end).
+          feeds="$RUNNER_TEMP/observations-feeds.json"
+          if [ -s "$feeds" ]; then files+=("$feeds"); fi
+          [ "${#files[@]}" -gt 0 ] || exit 0
           # As escaped text: versions and details come from upstream.
-          { echo '<pre>'; jq -r '.observations[] | "\(.kind) \(.package // "") \(.version // "") \(.detail)" | @html' "$obs"; echo '</pre>'; } >> "$GITHUB_STEP_SUMMARY"
-          node scripts/ci/issues.ts "$obs"
+          { echo '<pre>'; jq -r '.observations[] | "\(.kind) \(.package // "") \(.version // "") \(.detail)" | @html' "${files[@]}"; echo '</pre>'; } >> "$GITHUB_STEP_SUMMARY"
+          node scripts/ci/issues.ts "${files[@]}"

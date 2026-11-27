@@ -16,8 +16,7 @@ This flake packages the [<img src="docs/logos/t3code.png" height="16" alt=""> T3
 - **One line to install.** `programs.t3code.enable = true;` installs the app and every provider.
 - **Tested before it's published**. Automatic tests must pass for the flake to update.
 - **A binary cache**. Free packages on the latest channel are cached and are ready to run after download.
-- **Update notifications.** T3 Code tells you as soon as it sees a newer version of a provider.
-- **Nix stays in charge.** Built-in updaters are disabled. When you see the update icon and t3code-nix has published that version, run `nix flake update t3code-nix` and rebuild.
+- **Update notifications, Nix in charge.** Built-in updaters are disabled. The desktop app's update icon tells you when t3code-nix has a newer T3 Code or newer bundled providers: update t3code-nix (`nix flake update t3code-nix` with flakes) and rebuild.
 
 ## Contents
 
@@ -356,6 +355,7 @@ What each package is built from is in
 | `electron` | `null` (the package's own: `"auto"`) | which Electron the desktop app runs on: `"auto"`, `"bundled"`, `"nixpkgs"` or an Electron package (see [The desktop app's Electron](#the-desktop-apps-electron)) |
 | `acpRuntimes` | `null` (the package's own: none) | runtimes for agents T3 Code installs from the ACP registry: `"nodejs"`, `"uv"` (see [ACP registry agents](#acp-registry-agents)) |
 | `telemetry.enable` | `true` | whether T3 Code sends its usage data; `false` turns it off for the app, the CLI and the server (see [Usage data](#usage-data)) |
+| `updateCheck.enable` | `true` | whether the desktop app checks t3code-nix for a newer T3 Code and newer bundled providers, for its update icon; `false` turns the check off (see [Update notices](#update-notices)) |
 | `agentTools.boat.enable` | `false` | installs [boat](#agent-tools), with or without the app |
 | `agentTools.agent-browser.enable` | `false` | installs [agent-browser](#agent-tools), with or without the app |
 | `agentTools.agent-browser.package` | this flake's `agent-browser` | which agent-browser: an `.override { … }` of it, or `pkgs.agent-browser` from the overlay |
@@ -522,7 +522,8 @@ Without the module, the same on the package:
 `homeManagerModules`) has the NixOS module's options that make sense for one
 user, with the same names, defaults and meaning: `enable`, `channel`,
 `nixpkgs`, `providers`, `excludeProviders`, `providersOnPath`, `electron`,
-`acpRuntimes`, `telemetry.enable` ([Usage data](#usage-data)), `agentTools.*`,
+`acpRuntimes`, `telemetry.enable` ([Usage data](#usage-data)),
+`updateCheck.enable` ([Update notices](#update-notices)), `agentTools.*`,
 `cli.*`, `package`, and `server.*` without
 `users` and `openFirewall`. It installs into your profile (`home.packages`),
 and `server.enable` writes `t3code-server` as your own systemd user service.
@@ -1151,6 +1152,92 @@ each new T3 Code on the latest channel, and at least once a week. A move
 waits until everything it needs from nixpkgs is on cache.nixos.org, so you
 never build any of it yourself, and it's tested like any release.
 
+### Update notices
+
+The desktop app's update icon (the round arrow at the bottom of its
+sidebar) shows only when there is an update:
+
+- **t3code-nix has a newer T3 Code, or newer versions of the providers
+  this app bundles**: for the package you run (the latest channel, nightly,
+  or the [NixOS-stable](#nixos-stable) set's own versions). Its tooltip
+  says what's new and what to do, for example "T3 Code 0.1.14 and 2
+  provider updates are now available. Update t3code-nix and rebuild your
+  system to install the updates." (or "T3 Code 0.1.14 is now available. …",
+  "1 provider update is now available. …"). Clicking it lists each update
+  with the version you have:
+
+  > T3 Code 0.1.14 (you have 0.1.13)<br>
+  > Claude Code 2.1.340 (you have 2.1.332)<br>
+  > Codex 0.173.0 (you have 0.172.0)<br>
+  > <br>
+  > Update t3code-nix and rebuild your system to install the updates.
+
+  The app's menu, Check for Updates…, checks and says the same, where the
+  app shows a menu bar (not on Linux). Nothing is downloaded: Nix installs
+  T3 Code and its providers, and upstream's own updater stays off. After
+  the rebuild the icon stays until you restart the app.
+- **An update upstream offers itself** (another machine's T3 server that
+  can update itself, or a provider you installed outside Nix), or an update
+  running: as upstream has it, with its own wording ("Update 2 providers")
+  and its own dialog when you click. With a t3code-nix update too, its
+  sentence follows upstream's in the tooltip.
+
+Otherwise there's no icon (it stays while upstream's update dialog is open).
+
+Only the providers this app bundles from t3code-nix count (all of them by
+default; with `providers = [ … ]` or `excludeProviders`, the ones you
+name). T3 Code itself offers no update for a provider in the Nix store, so
+bundled providers are only ever updated by a rebuild, and this notice is
+how you hear of them. "You have" is the bundled version: a provider you
+installed yourself that comes first on your login shell's `PATH` is what
+T3 Code runs, and isn't followed here.
+
+A provider counts as newer when its version on `main` is higher, or the
+same version as another vendor build (cursor-agent's
+`2026.11.22-e9042b2`, muse's `1.4.25-R9361.1`), since those suffixes can't
+be ordered. So right after such a bump, an app rebuilt from a `main`
+newer than the site can be offered the site's older build until the site
+catches up (within the hour) and its next check (within 4 hours).
+
+The app learns of new versions from one small file t3code-nix publishes
+with its [status page](https://boltflake.github.io/t3code-nix/)
+(`updates/t3code.json`, `updates/t3code-nightly.json`,
+`updates/stable/t3code.json`: T3 Code's version and the set's provider
+pins), once `main` has them and the site has been rebuilt, usually within
+an hour. It fetches that file 15 seconds after it starts, every 4 hours,
+and when you click the icon for it (alone; with an update upstream offers
+the click is upstream's) or use the menu item, through your system's proxy
+settings, with a fixed User-Agent (`t3code-nix update check`) and no
+cookies, ID or version: GitHub Pages sees your IP address and which file.
+The list of bundled providers stays on your machine. To turn the check off:
+
+```nix
+programs.t3code.updateCheck.enable = false;   # programs.t3code-nix in Home Manager
+```
+
+or, without the module, `t3code.override { updateCheck = false; }` (also
+`t3code-nightly`, `t3code-free`, the overlay's `pkgs.t3code`). Then the
+version file isn't fetched, and the icon shows only for updates upstream
+offers itself.
+
+- **Another file:** the app reads its URL from `T3CODE_NIX_UPDATE_URL`
+  (HTTPS; plain HTTP only to `127.0.0.1`, for tests), and its bundled
+  providers from the JSON file `T3CODE_NIX_PROVIDERS` names, which the
+  package sets as defaults: a value already in the app's environment wins,
+  and a blank URL turns the check off. The opt-out sets both blank over any
+  value the app inherits. The app removes them from the environment of
+  everything it starts.
+- **A managed policy** (`/etc/t3code/policy.json`) that limits updates, or
+  that T3 Code can't use, turns the check off: the organisation's rule
+  stands.
+- **A release this can't follow:** the icon and the notice are changes to
+  upstream's built app (its web UI and its main process), made while the
+  package builds. When a release changes that code too much, it still
+  ships, without them: the app is as
+  upstream has it under Nix (the icon always there, "Updates unavailable:
+  Nix manages this install…") until a later build fits again.
+- The new wording is in English only.
+
 ## Details
 
 ### How T3 Code finds its providers
@@ -1177,19 +1264,17 @@ providers and breaks after garbage collection; use this flake's `t3` instead.
 
 ### Provider updates
 
-T3 Code's "update provider" notice still works: it tells you when a newer
-version of a provider is out. Once t3code-nix has published it (the
-[status page](https://boltflake.github.io/t3code-nix/) shows what it has),
-run `nix flake update t3code-nix` and rebuild to get it. The notice comes
-from the provider's own release feed, so it can show a version this flake
-hasn't published yet.
+Bundled providers are updated like T3 Code: update t3code-nix and rebuild
+your system. The desktop app's update icon tells you when t3code-nix has
+newer ones ([Update notices](#update-notices)); the
+[status page](https://boltflake.github.io/t3code-nix/) shows what it has.
+T3 Code itself offers no update for a provider in the Nix store.
 
 Providers mostly can't update themselves here, with the two exceptions
 below. Their own update and self-install commands (`claude update`,
 `codex update`, `pi update --self` and so on) print a short message and do
 nothing, because they'd install a second copy outside Nix that can shadow
-this one and may not run on NixOS. If T3 Code
-shows an Update button, pressing it shows that message.
+this one and may not run on NixOS.
 
 **claude's settings files.** The wrapper turns claude's self-update off,
 but a settings file can turn it back on: a repository's
@@ -1298,9 +1383,10 @@ flake pins.
 
 The desktop app is upstream's own app (`app.asar` and the rest of
 `resources/`, unchanged apart from pointing its native libraries at
-nixpkgs, and one sentence: with updates off, it says "Nix manages this
+nixpkgs; one sentence: with updates off, it says "Nix manages this
 install. Please rebuild your system to update T3 Code." where upstream
-names the switch), running packaged as on any Debian machine. Only the
+names the switch; and the [update notices](#update-notices)), running
+packaged as on any Debian machine. Only the
 Electron it runs on can change:
 
 | `electron` | What you get |

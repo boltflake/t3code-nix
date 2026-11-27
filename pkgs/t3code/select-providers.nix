@@ -66,4 +66,21 @@ in
     builtins.deepSeq excluded (
       lib.unique (builtins.filter (p: !builtins.elem (driverOrNull (lib.getName p)) excluded) packages)
     );
+
+  # The drivers `select` bundles by name (aliases resolved, exclusions
+  # applied), which are this set's own packages: the update notice's
+  # providers. A driver a package was given for directly is left out, even
+  # if also named: that package may be the one on PATH. (A package under
+  # another name that supplies the same command isn't recognised.)
+  named =
+    { providers, excludeProviders }:
+    let
+      excluded = map driver excludeProviders;
+      direct = map (p: driverOrNull (lib.getName p)) (
+        builtins.filter (p: !builtins.isString p) providers
+      );
+    in
+    builtins.filter (d: !builtins.elem d excluded && !builtins.elem d direct) (
+      lib.unique (map driver (builtins.filter builtins.isString providers))
+    );
 }

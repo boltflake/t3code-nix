@@ -57,6 +57,9 @@ export interface SetResult {
   /** The guard checks' packages and notes (test.ts), from every system. */
   checked: Set<string>;
   notes: Map<string, Set<string>>;
+  /** The desktop apps' update notice lines (test.ts noticeOf): package ->
+   * system -> `on` or `off: <why>`. */
+  notice: Map<string, Map<string, string>>;
   /** Per system: the failures left once an active Electron fallback has
    * taken its channel's runtime failures, and the Electron evidence. */
   perSystem: Map<string, { failed: string[]; electron: ElectronEvidence | null }>;
@@ -78,7 +81,7 @@ export function load(dir: string, trusted: Trusted | null = null): Map<string, S
       throw new Failed(`${file} is not a test result`);
     }
     const s = sets.get(r.set)
-      ?? { passed: true, failed: new Set<string>(), systems: new Set<string>(), checked: new Set<string>(), notes: new Map(), perSystem: new Map() };
+      ?? { passed: true, failed: new Set<string>(), systems: new Set<string>(), checked: new Set<string>(), notes: new Map(), notice: new Map(), perSystem: new Map() };
     // An active fallback's channel: its runtime failures are passes.
     const electron = electronOf(r.electron);
     const t = trusted?.(r.set) ?? null;
@@ -98,6 +101,11 @@ export function load(dir: string, trusted: Trusted | null = null): Map<string, S
       if (!ALL.includes(n?.package) || typeof n.detail !== "string") continue;
       if (!s.notes.has(n.package)) s.notes.set(n.package, new Set());
       s.notes.get(n.package)!.add(clip(canonical(n.detail), 2000));
+    }
+    for (const [p, line] of Object.entries(r.updateNotice && typeof r.updateNotice === "object" ? r.updateNotice : {})) {
+      if (!ALL.includes(p) || typeof line !== "string" || !/^(on|off: .+)$/.test(line)) continue;
+      if (!s.notice.has(p)) s.notice.set(p, new Map());
+      s.notice.get(p)!.set(r.system, clip(canonical(line), 500));
     }
     s.systems.add(r.system);
     sets.set(r.set, s);
@@ -433,8 +441,25 @@ export function verdict(inputs: Input[], dir: string, set: string, names: string
   // Kept apart: the workflow passes them on only once this set is published
   // (an unpublished set's notes name versions that never shipped, and its
   // guard-reviewed would close the published version's issue).
-  const guard = ok ? [...guardReview(sets.get(set)!, chosen), ...electronIssues(sets.get(set)!, trusted?.(set) ?? null)] : [];
+  const guard = ok ? [...guardReview(sets.get(set)!, chosen), ...electronIssues(sets.get(set)!, trusted?.(set) ?? null),
+    ...noticeIssues(sets.get(set)!, chosen)] : [];
   return { ok, tree: ok ? tree : null, observations, guard, move: ok ? moveOf(st, set) : null };
+}
+
+/** What a published set says about each desktop app's update notice: off
+ * on any system (the notice skipped, a release whose web UI it doesn't
+ * fit: asar-patch.ts) is update-notice-off, with each system's reason; on on
+ * every system closes it. A system without a line says nothing. Passed on
+ * only once the set is published, like the guard notes. */
+export function noticeIssues(s: SetResult, chosen: Input[], pinOf = pinOnMain): Observation[] {
+  const out: Observation[] = [];
+  for (const [p, bySystem] of [...s.notice].sort(([a], [b]) => a.localeCompare(b))) {
+    const version = chosen.find((i) => i.name === p)?.to ?? pinOf(p);
+    const off = SYSTEMS.filter((sys) => bySystem.get(sys)?.startsWith("off"));
+    if (off.length) out.push(obs("update-notice-off", p, version, off.map((sys) => `${sys}: ${bySystem.get(sys)}`).join("\n")));
+    else if (SYSTEMS.every((sys) => bySystem.get(sys) === "on")) out.push(obs("update-notice-on", p, version, ""));
+  }
+  return out;
 }
 
 /** What a published set says about each channel's Electron fallback (the

@@ -397,3 +397,45 @@ test("t3-smoke: startServer's failures name what happened", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("desktop smoke: upstream's updater leaves no trace, the notice line is the build's", async () => {
+  const { updaterTraces, noticeLine, feedServer, bundledList, bumped, versionOf } = await import("../scripts/desktop-smoke.ts");
+  assert.equal(versionOf("/nix/store/fh5aim9dmw6slkznb8dcghyn06rjk5nz-t3code-0.1.13"), "0.1.13");
+  assert.equal(versionOf("/nix/store/mgx6p2m0ly7806cyzybisml4cc6h8wsk-t3code-nightly-0.1.14-nightly.20261128.5372"), "0.1.14-nightly.20261128.5372");
+  assert.equal(versionOf("/nix/store/0pf05iliyl903z6g7ssrzd9s420ks11k-t3code-free-0.1.13"), "0.1.13");
+  assert.deepEqual(updaterTraces(["/h/.cache/t3code-updater", "/h/.cache/t3code-updater/pending/x", "/h/electron/.updaterId", "/h/.config/t3code-updates.json"]),
+    ["/h/.cache/t3code-updater", "/h/.cache/t3code-updater/pending/x", "/h/electron/.updaterId"]);
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const pkg = mkdtempSync(join(tmpdir(), "smoke-pkg-"));
+  try {
+    assert.equal(noticeLine(pkg, "t3code"), "off: none");
+    mkdirSync(join(pkg, "share/t3code-nix/t3code"), { recursive: true });
+    writeFileSync(join(pkg, "share/t3code-nix/t3code/update-notice"), "on\n");
+    assert.equal(noticeLine(pkg, "t3code"), "on");
+    assert.equal(noticeLine(pkg, "t3code-nightly"), "off: none", "another channel's line isn't this one's");
+    // The build's provider list, or none.
+    assert.deepEqual(bundledList(pkg, "t3code"), {});
+    writeFileSync(join(pkg, "share/t3code-nix/t3code/providers.json"), '{"codex":"0.172.0"}');
+    assert.deepEqual(bundledList(pkg, "t3code"), { codex: "0.172.0" });
+  } finally {
+    rmSync(pkg, { recursive: true, force: true });
+  }
+  // A provider version one step on, suffix kept.
+  assert.equal(bumped("0.172.0"), "0.172.1");
+  assert.equal(bumped("2026.11.22-e9042b2"), "2026.11.23-e9042b2");
+  assert.equal(bumped("1.4.25-R9361.1"), "1.4.26-R9361.1");
+  // The local file answers its current contents, and records each request.
+  const feed = await feedServer("0.0.1", { codex: "0.172.0" });
+  try {
+    assert.deepEqual(await (await fetch(feed.url, { headers: { "user-agent": "x" } })).json(), { version: "0.0.1", providers: { codex: "0.172.0" } });
+    feed.version = "999.0.0";
+    feed.providers = { codex: "0.172.1" };
+    assert.deepEqual(await (await fetch(feed.url)).json(), { version: "999.0.0", providers: { codex: "0.172.1" } });
+    assert.equal(feed.requests.length, 2);
+    assert.equal(feed.requests[0]["user-agent"], "x");
+  } finally {
+    await feed.close();
+  }
+});

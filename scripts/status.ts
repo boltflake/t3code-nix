@@ -20,7 +20,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { git, releaseNotes, tryRun, type Pin, type Released, shownVersion } from "./lib/util.ts";
 import { REPO } from "./ci/gh.ts";
@@ -238,6 +238,73 @@ export function pinsAt(ref = "HEAD"): { path: string; pin: Pin }[] {
   return files.map((path) => ({ path, pin: JSON.parse(git("show", `${ref}:${path}`)) as Pin }));
 }
 
+/** The desktop app's update notice files (pkgs/t3code/update-notice.cjs):
+ * each package's version file on this site, from its pin at REF, with the
+ * pins of the providers the desktop app bundles from the same set. The
+ * NixOS-stable set's t3code reads the snapshot's. */
+export const UPDATE_FEEDS: { file: string; pin: string }[] = [
+  { file: "updates/t3code.json", pin: "versions/t3code.json" },
+  { file: "updates/t3code-nightly.json", pin: "versions/t3code-nightly.json" },
+  { file: "updates/stable/t3code.json", pin: "versions/stable/t3code.json" },
+];
+
+/** The bundled providers' package names (pkgs/t3code/provider-names.json,
+ * which providers.nix reads too), sorted. */
+export const PROVIDER_NAMES: string[] = Object.values(
+  JSON.parse(readFileSync(new URL("../pkgs/t3code/provider-names.json", import.meta.url), "utf8")) as Record<string, string>,
+).sort();
+
+/** The most a version file may be: half the app's 4 KiB cap. */
+export const FEED_MAX_BYTES = 2048;
+
+/** One version file's contents. */
+export interface Feed {
+  version: string;
+  providers: Record<string, string>;
+}
+
+/** A pin's version at REF, or null when the pin isn't there. */
+function pinVersion(ref: string, path: string): string | null {
+  const r = tryRun("git", ["show", `${ref}:${path}`]);
+  if (r.status !== 0) return null;
+  const version = JSON.parse(r.stdout).version;
+  return typeof version === "string" ? version : null;
+}
+
+/** The bundled providers' names as REF has them (provider-names.json there;
+ * a REF from before the file: this checkout's), sorted. */
+export function providerNamesAt(ref: string): string[] {
+  const r = tryRun("git", ["show", `${ref}:pkgs/t3code/provider-names.json`]);
+  return r.status === 0 ? Object.values(JSON.parse(r.stdout) as Record<string, string>).sort() : PROVIDER_NAMES;
+}
+
+/** file -> its contents, for the feeds whose pin is at REF. A provider pin
+ * the set lacks is left out. */
+export function updateFeeds(ref = "HEAD"): Record<string, Feed> {
+  const out: Record<string, Feed> = {};
+  const names = providerNamesAt(ref);
+  for (const { file, pin } of UPDATE_FEEDS) {
+    const version = pinVersion(ref, pin);
+    if (version === null) continue;
+    const providers: Record<string, string> = {};
+    for (const name of names) {
+      const v = pinVersion(ref, `${dirname(pin)}/${name}.json`);
+      if (v !== null) providers[name] = v;
+    }
+    out[file] = { version, providers };
+  }
+  return out;
+}
+
+/** A version file's text, or null (logged) when it's over FEED_MAX_BYTES:
+ * then it's left out, and the app and the health probe see it missing. */
+export function feedText(file: string, feed: Feed): string | null {
+  const text = `${JSON.stringify(feed)}\n`;
+  if (Buffer.byteLength(text) <= FEED_MAX_BYTES) return text;
+  console.error(`status: leaving out ${file}: ${Buffer.byteLength(text)} bytes, over ${FEED_MAX_BYTES}`);
+  return null;
+}
+
 /** A delivery as status.json lists it. */
 export interface Delivery {
   version: string;
@@ -350,13 +417,21 @@ export function build(out: string, ref = "HEAD", repo = REPO, reads: LiveReads |
   // written depends on it otherwise.
   const live = reads ? liveView(pinsAt(ref).map((p) => p.pin), reads.health, reads.runs, reads.issues, repo, now) : null;
   const stable = stableView(ref, reads?.issues ?? null);
-  const base = { packages: list, live, stable, delivery: medianDelivery(all) };
+  // The version files that fit the size limit: only those are published,
+  // and the manifest lists those.
+  const feedTexts = Object.entries(updateFeeds(ref)).flatMap(([file, feed]) => {
+    const text = feedText(file, feed);
+    return text === null ? [] : [[file, feed, text] as const];
+  });
+  const updates = Object.fromEntries(feedTexts.map(([file, feed]) => [file, feed]));
+  const base = { packages: list, live, stable, delivery: medianDelivery(all), updates };
   const id = dataId(base);
   const files: Record<string, string | Buffer> = { "index.html": html(list, repo, live, id, stable, base.delivery) };
   // The link preview's image, from this checkout like the page's code
   // (scripts/social-card.sh renders it).
   files[PREVIEW.image] = readFileSync(new URL("../docs/social-card.png", import.meta.url));
   for (const r of list) files[`badges/${r.name}.json`] = `${JSON.stringify(badge(r))}\n`;
+  for (const [file, , text] of feedTexts) files[file] = text;
   // All an open tab checks for (see status-page.ts SCRIPT): the page's id and
   // the check time, in a few bytes instead of the whole status.json.
   files["live.json"] = `${JSON.stringify({ id, checked: live?.checked ?? null })}\n`;
@@ -365,7 +440,12 @@ export function build(out: string, ref = "HEAD", repo = REPO, reads: LiveReads |
   // Badges of packages that are gone mustn't survive a rebuild in place.
   rmSync(join(out, "badges"), { recursive: true, force: true });
   mkdirSync(join(out, "badges"), { recursive: true });
-  for (const [name, text] of Object.entries(files)) writeFileSync(join(out, name), text);
+  // Nor the version files of packages that are gone.
+  rmSync(join(out, "updates"), { recursive: true, force: true });
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(out, name)), { recursive: true });
+    writeFileSync(join(out, name), text);
+  }
   writeFileSync(join(out, "status.json"), `${JSON.stringify({ ...status, digest: d }, null, 2)}\n`);
   return { digest: d, live: live !== null };
 }
@@ -376,14 +456,16 @@ export function build(out: string, ref = "HEAD", repo = REPO, reads: LiveReads |
  * site: no, and the run fails, so a passing outage doesn't flip the site to
  * the plain view and back (the site's `live.checked` ages into its
  * out-of-date note). Before the watcher exists no live reads are expected. */
-export function decide(built: { digest: string; packages: Row[]; stable?: StableView; delivery?: unknown }, site: any, liveFailed: boolean): { deploy: boolean; fail: boolean } {
+export function decide(built: { digest: string; packages: Row[]; stable?: StableView; delivery?: unknown; updates?: Record<string, Feed> }, site: any, liveFailed: boolean): { deploy: boolean; fail: boolean } {
   if (!site || typeof site !== "object") return { deploy: true, fail: false };
-  // The git-derived part of the page: the pins and the stable snapshot (its
+  // The git-derived part of the page: the pins, the update notice's version
+  // files (so the first site with them deploys during an outage too) and
+  // the stable snapshot (its
   // issue number comes from the live reads, so an outage alone can't move it).
   // A browser pin's browsers and channel are also in its version, so they're
   // left out: a site from before they were added still compares equal.
   const pins = (list: any) => (Array.isArray(list) ? list.map(({ browsers, channel, ...r }: any) => r) : list);
-  const pinned = (s: any) => JSON.stringify({ packages: pins(s?.packages), current: s?.stable?.current, differing: s?.stable?.differing, delivery: s?.delivery });
+  const pinned = (s: any) => JSON.stringify({ packages: pins(s?.packages), current: s?.stable?.current, differing: s?.stable?.differing, delivery: s?.delivery, updates: s?.updates });
   if (liveFailed && pinned(site) === pinned(built)) return { deploy: false, fail: true };
   if (site.digest === built.digest) return { deploy: false, fail: false };
   return { deploy: true, fail: false };

@@ -48,7 +48,11 @@ export const PROBLEMS = new Set(["test-failed", "combination-failed", "integrity
   // agent-browser's optional browsers (lib/browserpins.ts, ci/variants.ts).
   "browser-waiting", "browser-failed",
   // The project's own CI tooling (tooling.ts, weekly).
-  "tooling-outdated"]);
+  "tooling-outdated",
+  // The desktop app's update notice: its version file on the site is wrong
+  // or unreachable (health), or a published build came out without the
+  // notice (publish; upstream's built app changed shape, asar-patch.ts).
+  "update-feed", "update-notice-off"]);
 
 // Positive evidence: the problem kinds an observation closes, and the fields
 // that must match. Evidence only closes what it proves. A resolver `pass`
@@ -116,12 +120,16 @@ export const CLOSES: Record<string, Rule | Rule[]> = {
   "browser-ok": { kinds: new Set(["browser-failed"]), match: ["package", "channel"], allSystems: true },
   // The item (runner-image, nodejs, actionlint-labels) is current again.
   "tooling-ok": { kinds: new Set(["tooling-outdated"]), match: ["package"] },
+  // The version file answered as the app reads it, with main's version.
+  "update-feed-ok": { kinds: new Set(["update-feed"]), match: ["package", "channel"] },
+  // A published build of that package and set has the notice again.
+  "update-notice-on": { kinds: new Set(["update-notice-off"]), match: ["package", "channel"] },
 };
 // A resolver `pass` closes test failures of its package too (see above).
 const CLOSED_BY_PASS = new Set(["test-failed", "combination-failed"]);
 // Issue kinds about one package; only these close when the package is gone.
 const PACKAGE_SCOPED = new Set(["test-failed", "combination-failed", "integrity", "latest-mismatch", "resolve-failed", "update-lag",
-  "guard-review", "no-match", "bump-waiting", "downgrade", "browser-waiting"]);
+  "guard-review", "no-match", "bump-waiting", "downgrade", "browser-waiting", "update-feed", "update-notice-off"]);
 // Valid inputs that aren't packages in versions/.
 const NON_PACKAGE_INPUTS = new Set(["nixpkgs", "t3code-releases"]);
 const WATCHER = new Set(["watcher-stalled", "watcher-auth"]);
@@ -233,6 +241,15 @@ export const DETAIL_MAX = 2000;
 // A detail is shown in code (markdown.ts), so Markdown and @mentions in
 // upstream's text do nothing.
 
+/** What some kinds of issue mean, in their body. */
+const EXPLAINED: Record<string, string> = {
+  "update-notice-off": "This release was published without the desktop app's update notice (README, \"Update notices\"): "
+    + "its built app (web UI or main process) no longer fits the checks and edits in `scripts/asar-patch.ts` (above: which one, per system). It ships anyway, as "
+    + "before the notice. MAINTAINING.md, `update-notice-off`, says how to fix it; this closes with the next publish that has it.",
+  "update-feed": "The desktop app reads this file to learn of a newer T3 Code and newer versions of the providers it bundles (README, \"Update notices\"); "
+    + "until it answers with main's versions, the apps don't hear of them. MAINTAINING.md, `update-feed`, says what to check.",
+};
+
 /** An issue's body. A guard-review's names the run that found what it
  * lists. */
 function render(o: Observation, meta: Meta, runUrl = ""): string {
@@ -244,7 +261,10 @@ function render(o: Observation, meta: Meta, runUrl = ""): string {
   if (o.channel) who += ` (${o.channel})`;
   return [`<!-- t3code-nix: ${sorted(meta)} -->`,
     `**${o.kind}** for ${who}${o.version ? `, version ${inline(o.version)}` : ""}`, "", shown(o.detail ?? ""), "",
-    o.kind === "tooling-outdated" ? "Opened and closed by t3code-nix's weekly tooling check." : "Opened and closed by t3code-nix's update workflow."].join("\n");
+    ...(EXPLAINED[o.kind] ? [EXPLAINED[o.kind], ""] : []),
+    o.kind === "tooling-outdated" ? "Opened and closed by t3code-nix's weekly tooling check."
+      : o.kind === "update-feed" ? "Opened and closed by t3code-nix's hourly health check."
+      : "Opened and closed by t3code-nix's update workflow."].join("\n");
 }
 /** A downgrade's body: the move, the version it waits for, what to expect. */
 function renderDowngrade(o: Observation, meta: Meta): string {

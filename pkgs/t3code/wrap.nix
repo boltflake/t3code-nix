@@ -60,6 +60,16 @@
 # app only: the CLI inside it (withCli) isn't given it. With the default
 # (null), the wrappers are as without this.
 #
+# The desktop app tells you when this flake has a newer T3 Code (its
+# sidebar's update icon; desktop.nix, update-notice.cjs), checking one small
+# file on this flake's site. To turn that check off:
+#
+#   t3code.override { updateCheck = false; }
+#
+# which starts the app with T3CODE_NIX_UPDATE_URL set blank, over any value
+# it inherits. Desktop app only. With the default, the wrappers are as
+# without this.
+#
 # The CLI refuses `t3 update`, `t3 service install`, `t3 up` and plain
 # `t3 connect` (lib/guard.nix); for upstream's own service on purpose (with
 # the module's runtimeCompat):
@@ -102,6 +112,7 @@ let
       makeWrapper,
       installShellFiles,
       runCommand,
+      writeText,
       replaceVars,
       coreutils,
       cloudflared,
@@ -123,6 +134,9 @@ let
       telemetry ? true,
       # The desktop app's port (T3CODE_PORT), or null for upstream's scan.
       port ? null,
+      # The desktop app's update notice (update-notice.cjs): false turns its
+      # check off.
+      updateCheck ? true,
       # Put into the name: "-free" for t3code-free and t3-free.
       variant ? "",
       # The CLI inside the desktop app (withCli): the same channel's unwrapped
@@ -145,6 +159,27 @@ let
         available = availableProviders;
       };
       selected = helper.select { inherit providers excludeProviders; };
+      # The update notice's bundled providers (desktop app): package name ->
+      # version, for the ones bundled by name from this set.
+      providerNames = builtins.fromJSON (builtins.readFile ./provider-names.json);
+      bundledVersions = builtins.listToAttrs (
+        map (
+          d:
+          lib.nameValuePair (providerNames.${d} or (lib.getName availableProviders.${d})
+          ) availableProviders.${d}.version
+        ) (helper.named { inherit providers excludeProviders; })
+      );
+      providersJson = writeText "providers.json" (builtins.toJSON bundledVersions);
+      # The wrapper's flags for the notice's provider list, given the desktop
+      # build's notice file and where the list goes (shell words): the list
+      # only when the notice fitted.
+      providerFlags = notice: target: ''
+        providerFlags=()
+        if [ "$(cat ${notice})" = on ]; then
+          install -Dm444 ${providersJson} ${target}
+          providerFlags=(--set-default T3CODE_NIX_PROVIDERS ${target})
+        fi
+      '';
 
       # The ACP registry's runners: npm (with node) for npm agents; uv with a
       # full python3 for uv agents (uv would otherwise download a Python that
@@ -243,6 +278,23 @@ let
         else
           ''case "''${T3CODE_PORT-}" in *[![:space:]]*) ;; *) export T3CODE_PORT=${toString port} ;; esac'';
       portFlags = lib.optionalString (portRun != null) " --run ${lib.escapeShellArg portRun}";
+      # Off: the variable set blank, a force (not a default), so an inherited
+      # URL can't turn it back on. The desktop app only; with the default the
+      # build script is unchanged.
+      updateFlags =
+        if !builtins.isBool updateCheck then
+          throw "t3code: updateCheck takes true or false, not ${builtins.typeOf updateCheck}"
+        else if updateCheck then
+          ""
+        else if cli == "1" then
+          throw "t3code: updateCheck applies to the desktop app only, not ${app.name}"
+        else if !(app ? passthru.updateUrl) then
+          throw "t3code: updateCheck needs a desktop app that has the update notice, not ${app.name}"
+        else
+          " --set T3CODE_NIX_UPDATE_URL '' --set T3CODE_NIX_PROVIDERS ''";
+      # The desktop app with its check on: the provider list, when the notice
+      # fitted (the snippet sets providerFlags).
+      withProviderList = cli == "0" && updateCheck == true && app ? passthru.updateUrl;
 
       # The CLI inside the desktop app.
       innerCli =
@@ -276,11 +328,18 @@ let
         for bin in ${app}/bin/*; do
           name=$(basename "$bin")
           rm "$out/bin/$name"
+          ${
+            if withProviderList then
+              providerFlags "${app}/share/t3code-nix/$name/update-notice" "$out/share/t3code-nix/$name/providers.json"
+            else
+              "providerFlags=()"
+          }
           makeWrapper "$bin" "$out/bin/$name" \
             ${lib.concatStringsSep " " guardFlags} \
             --prefix PATH : ${pathFlag} \
             ${lib.escapeShellArgs runtimeFlags} \
-            --run ${lib.escapeShellArg cloudflaredRun}${telemetryFlags}${portFlags} \
+            --run ${lib.escapeShellArg cloudflaredRun}${telemetryFlags}${portFlags}${updateFlags} \
+            "''${providerFlags[@]}" \
             ${lib.escapeShellArgs browserFlags}
         done
       ''
@@ -319,6 +378,13 @@ let
         # The desktop app's pinned port (null: upstream's scan), and the line
         # that sets it (for the port-wrapper check).
         inherit port portRun;
+        # Whether the update notice's check is left on (false: off), and the
+        # URL the desktop app checks when it is (null for the CLI).
+        inherit updateCheck;
+        updateUrl = app.passthru.updateUrl or null;
+        # The update notice's provider list (package name -> version) and,
+        # for the update-notice check, the snippet that adds it.
+        inherit bundledVersions providerFlags;
         # For the preview-browser-link check.
         inherit linkPreviewBrowser;
       };
