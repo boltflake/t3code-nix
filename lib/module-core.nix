@@ -355,9 +355,10 @@ in
 
         environmentFile = lib.mkOption {
           # Absolute, or under `%h/` (systemd ignores a relative one); a
-          # leading `-` makes it optional.
+          # leading `-` makes it optional. Not ending in `\`, which would join
+          # the next line of the unit (EnvironmentFile= is written unquoted).
           type = lib.types.nullOr (
-            pathWithHome "absolute path, or one under `%h/` (`%` only as `%h`, no control characters)" "-?(/|%h/)([^%[:cntrl:]]|%h)*"
+            pathWithHome "absolute path, or one under `%h/` (`%` only as `%h`, no control characters, not ending in `\\`)" "-?(/|%h/)(([^%[:cntrl:]]|%h)*([^\\%[:cntrl:]]|%h))?"
           );
           default = null;
           example = "/run/secrets/t3code-server.env";
@@ -477,7 +478,9 @@ in
           )
         else
           cfg.package;
-      installedApp = wrapApp app;
+      # Wrapped (Home Manager: nixGL) only when the app is installed: the
+      # doctor reads it on a server-only host too.
+      installedApp = if cfg.enable then wrapApp app else app;
       # The CLI bundles what the app bundles: its providers, its ACP runtimes
       # and, if it has one, its preview browser; and it has the app's usage
       # data setting (off when telemetry.enable is, as for a server without

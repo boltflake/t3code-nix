@@ -2036,6 +2036,8 @@ let
             "%u/t3.env"
             "/run/t3-%u.env"
             "/run/secrets/t3.env\nUnsetEnvironment=T3CODE_HOME"
+            # A trailing backslash would join the unit's next line.
+            "/run/secrets/t3\\"
           ]
         &&
           builtins.all
@@ -2049,6 +2051,7 @@ let
               "/run/secrets/t3"
               "%h/.config/t3.env"
               "-%h/t3.env"
+              "/run/odd\\name"
             ];
       "server.home takes `%` only as `%h`" =
         builtins.all
@@ -2662,7 +2665,10 @@ let
           ln -s ${cli}/bin/t3 $work/scenario/path/t3
           nixld /nix/store/x-nix-ld-2.0/libexec/nix-ld
         }
-        upstream() { mkdir -p $work/scenario/home/.config/systemd/user; touch $work/scenario/home/.config/systemd/user/t3code.service; }
+        # A stand-in for upstream's service, running its own download: a unit
+        # systemd loads (an empty file would be a mask).
+        upunit() { printf '[Service]\nExecStart=%%h/.t3/runtime/t3 serve\n' > "$1"; }
+        upstream() { mkdir -p $work/scenario/home/.config/systemd/user; upunit $work/scenario/home/.config/systemd/user/t3code.service; }
         # Antigravity's own download in the T3 home $1, for both systems.
         agydl() { for a in x64 arm64; do mkdir -p "$1/tools/antigravity-acp/linux-$a"; touch "$1/tools/antigravity-acp/linux-$a/active.json"; done; }
         # The doctor run from $work/cwd with PATH=$1: warnings only (exit 0).
@@ -3141,6 +3147,72 @@ let
         has "systemctl --user unmask t3code-server"
         hasnt "systemd loaded"
         hasnt "there are two t3code-server units"
+        # Masked for every user in /etc (NixOS's enable = false): the system
+        # config, not a user unmask.
+        rm $work/scenario/home/.config/systemd/user/t3code-server.service
+        rm $work/scenario/root/etc/systemd/user/t3code-server.service
+        ln -s /dev/null $work/scenario/root/etc/systemd/user/t3code-server.service
+        printf 'masked\ninactive\n/etc/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        run ${nixosOn} server-masked-system 0
+        has "it's masked for every user (/etc/systemd/user/t3code-server.service), by the NixOS config (systemd.user.services.t3code-server.enable = false writes that mask): turn it back on there and rebuild, then \`systemctl --user daemon-reload\`"
+        hasnt "systemctl --user unmask t3code-server"
+        hasnt "sudo systemctl --global unmask"
+        # Not on NixOS: one made by hand, a global unmask.
+        rm $work/scenario/root/etc/NIXOS
+        run ${nixosOn} server-masked-system-not-nixos 0
+        has "it's masked for every user (/etc/systemd/user/t3code-server.service): \`sudo systemctl --global unmask t3code-server\`, then \`systemctl --user daemon-reload\`"
+        # A Home Manager unit folder that is /etc's: still the global unmask.
+        run ${hmWith "on" { userUnits = "/etc/systemd/user"; }} server-masked-system-hm-units 0
+        has "it's masked for every user (/etc/systemd/user/t3code-server.service): \`sudo systemctl --global unmask t3code-server\`"
+        hasnt "systemctl --user unmask t3code-server"
+        touch $work/scenario/root/etc/NIXOS
+        # The same mask, for a user server.users leaves out: still the mask.
+        run ${withServerUsers [ "bob" ]} server-masked-system-excluded 0
+        has "it's masked for every user (/etc/systemd/user/t3code-server.service)"
+        hasnt "name yourself in programs.t3code.server.users"
+        # Even with XDG_CONFIG_HOME at /etc: a global mask, not the user's own.
+        XDG_CONFIG_HOME=/etc run ${withServerUsers [ "bob" ]} server-masked-system-excluded-xdg 0
+        has "it's masked for every user (/etc/systemd/user/t3code-server.service)"
+        hasnt "name yourself in programs.t3code.server.users"
+        # A runtime mask that wins on its own (nothing in your folder or /etc,
+        # which systemd reads first), for you or for every user, and one in a
+        # folder unmask doesn't touch.
+        rm $work/scenario/root/etc/systemd/user/t3code-server.service
+        printf 'masked\ninactive\n/run/user/1000/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        run ${nixosOn} server-masked-runtime 0
+        has "it's a runtime mask (/run/user/1000/systemd/user/t3code-server.service): unmask it with \`systemctl --user unmask --runtime t3code-server\`"
+        printf 'masked\ninactive\n/run/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        run ${nixosOn} server-masked-runtime-global 0
+        has "it's a runtime mask for every user (/run/systemd/user/t3code-server.service): \`sudo systemctl --global unmask --runtime t3code-server\`, then \`systemctl --user daemon-reload\`"
+        # For a user server.users leaves out, even with XDG_CONFIG_HOME at /run:
+        # a global mask, not the user's own.
+        XDG_CONFIG_HOME=/run run ${withServerUsers [ "bob" ]} server-masked-runtime-global-excluded 0
+        has "it's a runtime mask for every user (/run/systemd/user/t3code-server.service)"
+        hasnt "name yourself in programs.t3code.server.users"
+        printf 'masked\ninactive\n/run/user/1000/systemd/generator.early/t3code-server.service\n' > $work/scenario/unit
+        run ${nixosOn} server-masked-generator 0
+        has "it's masked by /run/user/1000/systemd/generator.early/t3code-server.service, a folder none of systemctl's unmask commands works on"
+        # Masked in your data folder: plain unmask doesn't work there.
+        printf 'masked\ninactive\n%s\n' $work/home/.local/share/systemd/user/t3code-server.service > $work/scenario/unit
+        run ${nixosOn} server-masked-data 0
+        has "it's masked by $work/home/.local/share/systemd/user/t3code-server.service, a folder none of systemctl's unmask commands works on"
+        echo ${lib.escapeShellArg "Description=${packages.doctor.unitDescription}"} > $work/scenario/root/etc/systemd/user/t3code-server.service
+        ln -s /dev/null $work/scenario/home/.config/systemd/user/t3code-server.service
+        printf 'masked\ninactive\n%s\n' $work/home/.config/systemd/user/t3code-server.service > $work/scenario/unit
+        # Your own mask, for a user server.users leaves out: it stops only
+        # yours, which doesn't run for you anyway.
+        run ${withServerUsers [ "bob" ]} server-masked-own-excluded 0
+        has "runs for bob (programs.t3code.server.users), not for you (alice)"
+        hasnt "is masked"
+        # The same for your runtime or data folder's mask: yours alone.
+        printf 'masked\ninactive\n/run/user/1000/systemd/user/t3code-server.service\n' > $work/scenario/unit
+        run ${withServerUsers [ "bob" ]} server-masked-runtime-excluded 0
+        has "runs for bob (programs.t3code.server.users), not for you (alice)"
+        hasnt "is masked"
+        printf 'masked\ninactive\n%s\n' $work/home/.local/share/systemd/user/t3code-server.service > $work/scenario/unit
+        run ${withServerUsers [ "bob" ]} server-masked-data-excluded 0
+        has "runs for bob (programs.t3code.server.users), not for you (alice)"
+        printf 'masked\ninactive\n%s\n' $work/home/.config/systemd/user/t3code-server.service > $work/scenario/unit
         # An empty file is a mask too.
         rm $work/scenario/home/.config/systemd/user/t3code-server.service
         : > $work/scenario/home/.config/systemd/user/t3code-server.service
@@ -3237,8 +3309,20 @@ let
         machine ${hmAsModule} hm-fix-as-module "Home Manager can't: import this flake's NixOS module in the NixOS config"
         machine ${hmOn} hm-fix-standalone-nixos "the NixOS module can't see a standalone Home Manager: add the README's lines"
         rm $work/scenario/root/etc/NIXOS
+        # A single-user Nix (no daemon): no restart.
         machine ${hmOn} hm-fix-elsewhere "Home Manager can't (it's a machine setting): "
-        has "add ${cacheUrl} and its key to /etc/nix/nix.conf"
+        has "add ${cacheUrl} and its key to /etc/nix/nix.conf (extra-substituters, extra-trusted-public-keys)"
+        hasnt "restart the Nix daemon"
+        # A multi-user one: restart its daemon after.
+        # A plain file there isn't a daemon's socket.
+        mkdir -p $work/scenario/root/nix/var/nix/daemon-socket
+        touch $work/scenario/root/nix/var/nix/daemon-socket/socket
+        machine ${hmOn} hm-fix-elsewhere-file "Home Manager can't (it's a machine setting): "
+        hasnt "restart the Nix daemon"
+        rm $work/scenario/root/nix/var/nix/daemon-socket/socket
+        ${pkgs.python3}/bin/python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' $work/scenario/root/nix/var/nix/daemon-socket/socket
+        machine ${hmOn} hm-fix-elsewhere-daemon "Home Manager can't (it's a machine setting): "
+        has "add ${cacheUrl} and its key to /etc/nix/nix.conf (extra-substituters, extra-trusted-public-keys), then restart the Nix daemon (\`sudo systemctl restart nix-daemon\`)"
         has "in /etc/claude-code/managed-settings.d/10-t3code-nix.json"
 
         # This flake's units carry its Description; others in the same
@@ -3278,8 +3362,9 @@ let
         printf 'not-found\ninactive\n\n' > $work/scenario/unit
         run ${hmOn} two-units-none-loaded 0
         has "; systemd has loaded neither yet"
-        # Masked elsewhere (--runtime, as systemd reports it) over two real
-        # units: still two units, and the mask.
+        # Masked elsewhere (--runtime) over two real units: still two units,
+        # and the mask. (systemd reads ~/.config and /etc first, so this is a
+        # load from before they were there: no daemon-reload since.)
         mkdir -p $work/scenario/root/run/user/1000/systemd/user
         ln -s /dev/null $work/scenario/root/run/user/1000/systemd/user/t3code-server.service
         printf 'masked\ninactive\n/run/user/1000/systemd/user/t3code-server.service\n' > $work/scenario/unit
@@ -3287,6 +3372,8 @@ let
         has "there are two t3code-server units"
         has "systemd loaded a mask over both (/run/user/1000/systemd/user/t3code-server.service;"
         has "t3code-server is masked, so it can't start"
+        # A runtime mask: plain unmask wouldn't remove it.
+        has "it's a runtime mask (/run/user/1000/systemd/user/t3code-server.service): unmask it with \`systemctl --user unmask --runtime t3code-server\`"
         rm -r $work/scenario/root/run/user/1000/systemd
         # From what systemd reports, not the file: masked with none there.
         run ${hmOn} two-units-runtime-mask-reported 0
@@ -3415,7 +3502,7 @@ let
         hasnt "upstream's own service: not installed"
         scenario
         mkdir -p $work/scenario/root/etc/systemd/user
-        touch $work/scenario/root/etc/systemd/user/t3code.service
+        upunit $work/scenario/root/etc/systemd/user/t3code.service
         printf 'loaded\ninactive\n/etc/systemd/user/t3code.service\n' > $work/scenario/upstream-unit
         run ${hmOn} t3code-service-system 0
         has "it's installed for every user ($work/scenario/root/etc/systemd/user/t3code.service): have it removed from the system's configuration"
@@ -3430,7 +3517,7 @@ let
         # Your config folder outside your home folder (XDG_CONFIG_HOME): yours.
         scenario
         mkdir -p $work/xdg/systemd/user
-        touch $work/xdg/systemd/user/t3code.service
+        upunit $work/xdg/systemd/user/t3code.service
         printf 'loaded\ninactive\n%s\n' $work/xdg/systemd/user/t3code.service > $work/scenario/upstream-unit
         XDG_CONFIG_HOME=$work/xdg run ${hmOn} t3code-service-xdg 0
         has "t3 service uninstall"
@@ -3439,24 +3526,73 @@ let
         # Even as an XDG_CONFIG_HOME, a system folder's unit is everyone's.
         scenario
         mkdir -p $work/scenario/root/etc/systemd/user
-        touch $work/scenario/root/etc/systemd/user/t3code.service
+        upunit $work/scenario/root/etc/systemd/user/t3code.service
         printf 'loaded\ninactive\n%s\n' $work/scenario/root/etc/systemd/user/t3code.service > $work/scenario/upstream-unit
         XDG_CONFIG_HOME=$work/scenario/root/etc run ${hmOn} t3code-service-xdg-system 0
         has "it's installed for every user ($work/scenario/root/etc/systemd/user/t3code.service)"
         hasnt "t3 service uninstall"
         # A distribution's package, outside /etc: installed for every user.
         scenario
-        mkdir -p $work/scenario/pkgunits
-        touch $work/scenario/pkgunits/t3code.service
-        printf 'loaded\ninactive\n%s\n' $work/scenario/pkgunits/t3code.service > $work/scenario/upstream-unit
+        mkdir -p $work/scenario/root/usr/lib/systemd/user
+        upunit $work/scenario/root/usr/lib/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/scenario/root/usr/lib/systemd/user/t3code.service > $work/scenario/upstream-unit
         run ${hmOn} t3code-service-package 0
-        has "it's installed for every user ($work/scenario/pkgunits/t3code.service)"
+        has "it's installed for every user ($work/scenario/root/usr/lib/systemd/user/t3code.service)"
+        hasnt "t3 service uninstall"
+        # Your data folder outside your home folder (XDG_DATA_HOME): yours.
+        scenario
+        mkdir -p $work/xdgdata/systemd/user
+        upunit $work/xdgdata/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/xdgdata/systemd/user/t3code.service > $work/scenario/upstream-unit
+        XDG_DATA_HOME=$work/xdgdata run ${hmOn} t3code-service-xdg-data 0
+        has "t3 service uninstall"
+        hasnt "installed for every user"
+        # Anywhere else: not claimed as everyone's.
+        XDG_DATA_HOME=$work/elsewhere run ${hmOn} t3code-service-unknown-place 0
+        has "it's outside your folders and the system's ($work/xdgdata/systemd/user/t3code.service), so whose it is isn't known here"
+        hasnt "installed for every user"
+        rm -r $work/xdgdata
+        # Your data folder under /run (removable media) or your runtime
+        # folder: still yours, not everyone's or a runtime unit.
+        scenario
+        mkdir -p $work/scenario/root/run/media/alice/data/systemd/user
+        upunit $work/scenario/root/run/media/alice/data/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/scenario/root/run/media/alice/data/systemd/user/t3code.service > $work/scenario/upstream-unit
+        XDG_DATA_HOME=$work/scenario/root/run/media/alice/data run ${hmOn} t3code-service-xdg-data-media 0
+        has "t3 service uninstall"
+        hasnt "installed for every user"
+        scenario
+        mkdir -p $work/scenario/rt/data/systemd/user
+        upunit $work/scenario/rt/data/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/scenario/rt/data/systemd/user/t3code.service > $work/scenario/upstream-unit
+        XDG_RUNTIME_DIR=$work/scenario/rt XDG_DATA_HOME=$work/scenario/rt/data run ${hmOn} t3code-service-xdg-data-runtime 0
+        has "t3 service uninstall"
+        hasnt "runtime unit of yours"
+        # XDG_DATA_HOME with a trailing slash: still yours.
+        XDG_RUNTIME_DIR=$work/scenario/rt XDG_DATA_HOME=$work/scenario/rt/data/ run ${hmOn} t3code-service-xdg-data-slash 0
+        has "t3 service uninstall"
+        # A generator's, in your runtime folder: it comes back from the
+        # generator.
+        scenario
+        mkdir -p $work/scenario/rt/systemd/generator.late
+        upunit $work/scenario/rt/systemd/generator.late/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/scenario/rt/systemd/generator.late/t3code.service > $work/scenario/upstream-unit
+        XDG_RUNTIME_DIR=$work/scenario/rt run ${hmOn} t3code-service-generator 0
+        has "a generator writes it into your runtime folder ($work/scenario/rt/systemd/generator.late/t3code.service)"
+        hasnt "installed for every user"
+        # XDG_DATA_HOME pointing at a system folder: still everyone's.
+        scenario
+        mkdir -p $work/scenario/root/usr/share/systemd/user
+        upunit $work/scenario/root/usr/share/systemd/user/t3code.service
+        printf 'loaded\ninactive\n%s\n' $work/scenario/root/usr/share/systemd/user/t3code.service > $work/scenario/upstream-unit
+        XDG_DATA_HOME=$work/scenario/root/usr/share run ${hmOn} t3code-service-xdg-data-system 0
+        has "it's installed for every user ($work/scenario/root/usr/share/systemd/user/t3code.service)"
         hasnt "t3 service uninstall"
 
         # From your own NixOS per-user profile: a package in your configs.
         scenario
         mkdir -p $work/scenario/root/etc/profiles/per-user/alice/share/systemd/user
-        touch $work/scenario/root/etc/profiles/per-user/alice/share/systemd/user/t3code.service
+        upunit $work/scenario/root/etc/profiles/per-user/alice/share/systemd/user/t3code.service
         printf 'loaded\ninactive\n/etc/profiles/per-user/alice/share/systemd/user/t3code.service\n' > $work/scenario/upstream-unit
         run ${hmOn} t3code-service-own-profile 0
         has "it comes from a package in your NixOS per-user profile ($work/scenario/root/etc/profiles/per-user/alice/share/systemd/user/t3code.service): remove that package"
@@ -3466,7 +3602,7 @@ let
         # disable and delete it, nothing to remove from any configuration.
         scenario
         mkdir -p $work/scenario/rt/systemd/transient
-        touch $work/scenario/rt/systemd/transient/t3code.service
+        upunit $work/scenario/rt/systemd/transient/t3code.service
         printf 'loaded\ninactive\n%s\n' $work/scenario/rt/systemd/transient/t3code.service > $work/scenario/upstream-unit
         XDG_RUNTIME_DIR=$work/scenario/rt run ${hmOn} t3code-service-runtime 0
         has "it's a runtime unit of yours ($work/scenario/rt/systemd/transient/t3code.service): \`systemctl --user disable --runtime --now t3code.service\`"
@@ -3639,12 +3775,22 @@ let
         # environment, not even the two values it reads.
         senv 'API_KEY=sentinel-secret\0DO_NOT_TRACK=sentinel-dnt\0T3CODE_TELEMETRY_ENABLED=sentinel-tel\0'
         run ${telemetryOff} telemetry-server-traced 0
-        # The shell's own two values too.
+        # Untraced: it read the server's values (as states: a value T3 Code
+        # rejects, a DO_NOT_TRACK that isn't an opt-out), and printed none.
+        has "server: started with T3CODE_TELEMETRY_ENABLED rejected"
+        has "DO_NOT_TRACK set, but not to an opt-out"
+        hasnt "sentinel"
+        # Traced, the shell's own two values too: the run gets as far as the
+        # server, succeeds, and neither stream holds a value.
+        rc=0
         T3CODE_DOCTOR_USER=alice T3CODE_DOCTOR_UID=1000 HOME=$work/home T3CODE_DOCTOR_ROOT=$work/scenario/root \
           T3CODE_TELEMETRY_ENABLED=sentinel-shell-tel DO_NOT_TRACK=sentinel-shell-dnt \
-          PATH="$work/scenario/path:$work/bin:$PATH" bash -x ${telemetryOff}/bin/t3code-nix-doctor > /dev/null 2> $work/trace || true
+          PATH="$work/scenario/path:$work/bin:$PATH" bash -x ${telemetryOff}/bin/t3code-nix-doctor > $work/traced-out 2> $work/trace || rc=$?
+        [ "$rc" = 0 ] || { echo "telemetry-server-traced: the traced run exited $rc"; tail -5 $work/trace; exit 1; }
         grep -q 'set +x' $work/trace || { echo "telemetry-server-traced: no trace"; exit 1; }
-        ! grep -q sentinel $work/trace || { echo "telemetry-server-traced: the server's environment reached the trace"; grep sentinel $work/trace | head -3; exit 1; }
+        grep -q "server: started with T3CODE_TELEMETRY_ENABLED rejected, DO_NOT_TRACK set, but not to an opt-out" $work/traced-out \
+          || { echo "telemetry-server-traced: the traced run didn't reach the server"; exit 1; }
+        ! grep -q sentinel $work/trace $work/traced-out || { echo "telemetry-server-traced: a value reached the output or the trace"; grep sentinel $work/trace $work/traced-out | head -3; exit 1; }
         senv 'T3CODE_TELEMETRY_ENABLED=false\0'
         run ${telemetryOn} telemetry-server-own-off 0
         has "OK       server: started with T3CODE_TELEMETRY_ENABLED false"

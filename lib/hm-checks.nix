@@ -404,7 +404,7 @@ let
     in
     {
       nixosUnit = pkgs.writeText "nixos-t3code-server.service" (
-        valueOr "" c.systemd.user.units."t3code-server.service".text
+        valueOr "" (c.systemd.user.units."t3code-server.service".text or "")
       );
       homeUnit =
         valueOr ""
@@ -532,9 +532,10 @@ in
           let
             u = unitOf serverOnly;
           in
-          u.Unit.X-SwitchMethod == "keep-old"
-          && u.Install.WantedBy == [ "default.target" ]
-          && u.Service.ExecStart == [ "${(first (installed serverOnly "t3")).outPath}/bin/t3 serve" ];
+          (u.Unit.X-SwitchMethod or null) == "keep-old"
+          && (u.Install.WantedBy or null) == [ "default.target" ]
+          &&
+            (u.Service.ExecStart or null) == [ "${(first (installed serverOnly "t3")).outPath}/bin/t3 serve" ];
         "the server needs Home Manager's systemd integration" =
           failsWith noSystemd "server.enable needs Home Manager's systemd.user.enable";
         "the module tells the NixOS module what it needs" =
@@ -590,7 +591,54 @@ in
           !(has gl packages.t3code)
           && installed gl "t3code" != [ ]
           && map providersOf (installed gl "t3code") == [ (providersOf packages.t3code) ]
+          # Wrapped, not dropped: a hello there, and not the unwrapped one.
+          && installed other "hello" != [ ]
           && !(has other pkgs.hello);
+        "with nixGL a store path given as a string is installed as it is, app or server-only" =
+          let
+            str = "${pkgs.hello}";
+            app = withGL {
+              enable = true;
+              package = str;
+            };
+            serverOnly = withGL {
+              package = str;
+              server.enable = true;
+            };
+          in
+          builtins.elem str (pkgsOf app)
+          && noneFailed app
+          &&
+            lib.hasSuffix ".drv"
+              (first (
+                builtins.filter (p: builtins.isAttrs p && lib.getName p == "t3code-nix-doctor") (pkgsOf serverOnly)
+              )).drvPath
+          && noneFailed serverOnly;
+        "with nixGL a bare derivation (no overrideAttrs) is installed as it is" =
+          let
+            bare = derivation {
+              name = "bare-app";
+              system = pkgs.stdenv.hostPlatform.system;
+              builder = "/bin/sh";
+              args = [
+                "-c"
+                "echo > $out"
+              ];
+            };
+            h = withGL {
+              enable = true;
+              package = bare;
+            };
+          in
+          builtins.elem bare.drvPath (drvs (builtins.filter builtins.isAttrs (pkgsOf h))) && noneFailed h;
+        "with nixGL a server-only host's doctor gets the app as it is, not wrapped" =
+          let
+            h = withGL {
+              package = packages.t3code;
+              server.enable = true;
+            };
+          in
+          (first (installed h "t3code-nix-doctor")).t3code.drvPath == packages.t3code.drvPath;
         "with nixGL the doctor knows the app it runs" =
           let
             gl = withGL { enable = true; };
@@ -861,6 +909,10 @@ in
             echo "${name}: the units differ"; exit 1
           fi
           [ "$(lines ${p.nixosUnit} | wc -l)" -ge 6 ] || { echo "${name}: too few lines compared"; exit 1; }
+          # Both run the database copy first (the same, compared above).
+          for u in ${p.nixosUnit} ${p.homeUnit}; do
+            grep -q '^ExecStartPre=.*t3code-server-backup' $u || { echo "${name}: $u doesn't run the database copy first (ExecStartPre)"; exit 1; }
+          done
         ''
         + lib.optionalString (name == "quoted") ''
           # Its environmentFile is in both, not left out of both.

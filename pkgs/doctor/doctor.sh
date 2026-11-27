@@ -432,7 +432,11 @@ else
     [ "$trusted" = yes ] || ! has "$allowed" "$CACHE_URL" || allowed_url=1
     [ -z "$allowed_url" ] || ! has "$mine" "$CACHE_URL" || has_url=1
     ! has "$keys" "$CACHE_KEY" || has_key=1
-    fix=$(machinefix binaryCache "add $CACHE_URL and its key to /etc/nix/nix.conf")
+    # A multi-user Nix reads nix.conf at its daemon's start; a single-user one
+    # at each command.
+    daemonfix=''
+    [ ! -S "$root/nix/var/nix/daemon-socket/socket" ] || daemonfix=", then restart the Nix daemon (\`sudo systemctl restart nix-daemon\`)"
+    fix=$(machinefix binaryCache "add $CACHE_URL and its key to /etc/nix/nix.conf (extra-substituters, extra-trusted-public-keys)$daemonfix")
     if [ -n "$has_url" ] && [ -n "$has_key" ]; then
       ok "binary cache: $CACHE_URL is set up"
     elif [ -n "$allowed_url" ] && [ -n "$has_key" ]; then
@@ -460,7 +464,12 @@ else
 fi
 
 # Upstream's own service, and ours.
-userunits=${XDG_CONFIG_HOME:-$home/.config}/systemd/user
+# (Trailing slashes off: systemd reports paths with single ones.)
+nosl() { local p=$1; while [ "${p%/}" != "$p" ] && [ "$p" != / ]; do p=${p%/}; done; printf '%s' "$p"; }
+userunits=$(nosl "${XDG_CONFIG_HOME:-$home/.config}")/systemd/user
+dataunits=$(nosl "${XDG_DATA_HOME:-$home/.local/share}")/systemd/user
+# Your runtime folder.
+rt=$(nosl "${XDG_RUNTIME_DIR:-/run/user/$uid}")
 # The folder Home Manager writes units to (USER_UNITS, its xdg.configHome;
 # `~/` is the home folder), which can differ from this shell's.
 ownunits=${USER_UNITS:-$userunits}
@@ -528,24 +537,34 @@ for unit in "${units[@]}"; do
   fi
   found=1
   remove="\`t3 service uninstall\`, or \`systemctl --user disable --now t3code.service\` and delete $unit; $ns.server is the Nix-managed one"
-  # One outside your home folder (/etc, /usr/lib, /run/systemd/user, the
-  # system's profile) is installed for every user: not yours to delete. Your
-  # own profile's (NixOS's per-user one) is a package in your NixOS or Home
-  # Manager config, whoever put it there; one in
-  # your runtime folder (systemd-run --user, edit --runtime) is yours, gone
-  # at logout, or once disabled and deleted.
+  # One in systemd's folders for every user (/etc, /usr/lib, /run/systemd/user,
+  # the system's profile) isn't yours to delete. Your own profile's (NixOS's
+  # per-user one) is a package in your NixOS or Home Manager config, whoever
+  # put it there; one in your runtime folder (systemd-run --user, edit
+  # --runtime) is yours, gone at logout, or once disabled and deleted; a
+  # generator's there comes back from it; your config and data folders' are
+  # yours wherever they are.
   everyone="it's installed for every user ($unit): have it removed from the system's configuration; $ns.server is the Nix-managed one"
   case $unit in
     "$home"/*) ;;
-    "${XDG_RUNTIME_DIR:-/run/user/$uid}"/*)
+    # systemd's own folders for every user's units, exactly (even as an
+    # XDG_CONFIG_HOME or XDG_DATA_HOME).
+    /etc/systemd/user/* | /run/systemd/user/* | /usr/lib/systemd/user/* | /usr/share/systemd/user/* | /usr/local/lib/systemd/user/* | /usr/local/share/systemd/user/* \
+      | "$root"/etc/systemd/user/* | "$root"/run/systemd/user/* | "$root"/usr/*/systemd/user/* | "$root"/usr/local/*/systemd/user/*)
+      remove=$everyone ;;
+    "$rt"/systemd/generator*/*)
+      remove="a generator writes it into your runtime folder ($unit), so it comes back at each daemon-reload: find the generator that writes it; $ns.server is the Nix-managed one" ;;
+    "$rt"/systemd/user/* | "$rt"/systemd/transient/*)
       remove="it's a runtime unit of yours ($unit): \`systemctl --user disable --runtime --now t3code.service\`, delete it if it's still there, then \`systemctl --user daemon-reload\`; $ns.server is the Nix-managed one" ;;
     /etc/profiles/per-user/"$me"/* | "$root"/etc/profiles/per-user/"$me"/*)
       remove="it comes from a package in your NixOS per-user profile ($unit): remove that package (users.users.<you>.packages in the NixOS config, or Home Manager's home.packages with useUserPackages; then rebuild); $ns.server is the Nix-managed one" ;;
-    # The system's folders, even as an XDG_CONFIG_HOME.
+    # Your config and data folders' units, wherever XDG_CONFIG_HOME and
+    # XDG_DATA_HOME put them (/run/media/…, under your runtime folder): yours.
+    "$userunits"/* | "$ownunits"/* | "$dataunits"/*) ;;
+    # Elsewhere in the system's folders.
     /etc/* | /usr/* | /run/* | "$root"/etc/* | "$root"/usr/* | "$root"/run/*) remove=$everyone ;;
-    # Your config folder's units, wherever XDG_CONFIG_HOME puts it: yours.
-    "$userunits"/* | "$ownunits"/*) ;;
-    *) remove=$everyone ;;
+    # Anywhere else: whose it is isn't known here.
+    *) remove="it's outside your folders and the system's ($unit), so whose it is isn't known here: remove it wherever it was installed from; $ns.server is the Nix-managed one" ;;
   esac
   if [ -n "$upnotloaded" ]; then
     # Of either kind: systemd has no t3code.service, so this one doesn't run.
@@ -708,16 +727,41 @@ elif [ "$SERVER" = off ] && [ -n "$running" ]; then
 elif [ "$SERVER" = on ] && [ -n "$notyours" ] && [ -n "$running" ]; then
   warn "server: t3code-server is still running for you ($me), from before; it runs for $forwhom now, and holds its port" \
     "stop it with \`systemctl --user stop t3code-server\`"
-elif [ "$SERVER" = on ] && [ -n "$notyours" ] && [ "$state" != "loaded failed" ]; then
+# (A mask elsewhere is reported below either way: it stops the server for
+# everyone. One in your own folder only stops yours, which doesn't run for you
+# anyway. The folders for every user are ruled out first: an XDG folder can
+# be one of them.)
+elif [ "$SERVER" = on ] && [ -n "$notyours" ] && [ "$state" != "loaded failed" ] \
+  && { [ "${unitstate[0]-}" != masked ] || case $fragment in /etc/systemd/user/* | /run/systemd/user/*) false ;; "$userunits"/* | "$ownunits"/* | "$dataunits"/* | "$rt"/*) true ;; *) false ;; esac; }; then
   ok "server: t3code-server runs for $forwhom, not for you ($me); name yourself in programs.t3code.server.users to run it too"
 else
+  # Where the mask is, as systemd reports it: each unmask removes a mask
+  # from one folder only.
+  case $fragment in
+    "$rt"/systemd/user/*)
+      unmaskfix="it's a runtime mask ($fragment): unmask it with \`systemctl --user unmask --runtime t3code-server\`" ;;
+    /run/systemd/user/*)
+      unmaskfix="it's a runtime mask for every user ($fragment): \`sudo systemctl --global unmask --runtime t3code-server\`, then \`systemctl --user daemon-reload\`" ;;
+    /etc/systemd/user/*)
+      if [ -n "$nixos" ]; then
+        # /etc/systemd/user is the system config's, read-only: nothing to
+        # unmask by hand.
+        unmaskfix="it's masked for every user ($fragment), by the NixOS config (systemd.user.services.t3code-server.enable = false writes that mask): turn it back on there and rebuild, then \`systemctl --user daemon-reload\`"
+      else
+        unmaskfix="it's masked for every user ($fragment): \`sudo systemctl --global unmask t3code-server\`, then \`systemctl --user daemon-reload\`"
+      fi ;;
+    # After the folders for every user (a Home Manager unit folder may be one).
+    '' | "$userunits"/* | "$ownunits"/*)
+      unmaskfix="unmask it with \`systemctl --user unmask t3code-server\`" ;;
+    *) unmaskfix="it's masked by $fragment, a folder none of systemctl's unmask commands works on (a generator's, or elsewhere): find what puts it there" ;;
+  esac
   case "$SERVER $state" in
     "off "*) ok "server ($ns.server): not enabled" ;;
     *" loaded active") ok "server: t3code-server is running" ;;
     *" loaded failed") problem "server: t3code-server has failed" "$logs" ;;
     *" loaded activating") warn "server: t3code-server is starting or restarting (several in a row mean it keeps failing)" "$logs" ;;
-    *" masked active" | *" masked activating") warn "server: t3code-server is masked, but still running" "unmask it with \`systemctl --user unmask t3code-server\` (or stop it)" ;;
-    *" masked "*) warn "server: t3code-server is masked, so it can't start" "unmask it with \`systemctl --user unmask t3code-server\`" ;;
+    *" masked active" | *" masked activating") warn "server: t3code-server is masked, but still running" "$unmaskfix (or stop it)" ;;
+    *" masked "*) warn "server: t3code-server is masked, so it can't start" "$unmaskfix" ;;
     "on error "* | "on bad-setting "*) problem "server: t3code-server's unit couldn't be loaded" "$logs" ;;
     *" loaded "*) warn "server: t3code-server isn't running" "start it with \`systemctl --user start t3code-server\`; $linger" ;;
     "on "*) warn "server: enabled, but its unit isn't loaded for you (or systemd couldn't be asked)" "$notloaded" ;;

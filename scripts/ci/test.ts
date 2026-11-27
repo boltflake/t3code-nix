@@ -29,7 +29,7 @@
 // OUT_DIR/manifest-SET-SYSTEM.json (store path and narHash of every package in
 // ci/cache-allowlist.json, which the cache job compares before uploading).
 // Exits 0 whatever the tests say; only a broken runner or Nix fails it.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { narHashes, nixCalls, readJson, rewriteJson, ROOT, run, tryRun } from "../lib/util.ts";
 import { desktopSmoke } from "../desktop-smoke.ts";
@@ -320,16 +320,26 @@ export function lazyFailures(system: string, copy = () => unpack(workingTree()),
   }
 }
 
-/** home-manager-lazy: the check list, and the drvPath of every check but
- * the hm-* ones, with Home Manager's source replaced by an abort
- * (flake.nix's homeManagerSrc, in a copy of the tree). So only the hm-*
+/** What the probe reads: CI's own CHECKS_APPLY for every check but the hm-*
+ * ones, which are listed as null (never evaluated). */
+export const hmLazyApply = () => `cs: let hm = builtins.filter (n: builtins.substring 0 3 n == "hm-") (builtins.attrNames cs); in
+      (${CHECKS_APPLY}) (builtins.removeAttrs cs hm) // builtins.listToAttrs (map (n: { name = n; value = null; }) hm)`;
+/** The abort the probe swaps in for Home Manager's source. */
+export const HM_LAZY_ABORT = "home-manager-lazy: Home Manager was evaluated";
+/** home-manager-lazy: with Home Manager's source replaced by an abort
+ * (flake.nix's homeManagerSrc, in a copy of the tree; exactly one such
+ * binding, in a flake.nix that isn't a link), the check list and every check
+ * but the hm-* ones read as CI reads them (hmLazyApply), so only the hm-*
  * checks fetch or evaluate Home Manager, and a store path already present
- * can't hide a fetch some other check forces (CI reads every check's
- * drvPath). A flake.nix whose homeManagerSrc isn't found, or a list
- * without hm-* checks, fails it too, so it can't pass vacuously. */
+ * can't hide a fetch some other check forces. A control then evaluates an
+ * hm-* check, which must reach the abort: the binding swapped is the live
+ * one. A list without hm-* checks, or without another check read, fails it
+ * too, so it can't pass vacuously. */
 export function homeManagerLazyFailures(system: string, copy = () => unpack(workingTree()),
-  evaluate = (dir: string, sys: string) => tryRun("nix", ["eval", "--json", `path:${dir}#checks.${sys}`, "--apply",
-    'cs: builtins.mapAttrs (n: c: if builtins.substring 0 3 n == "hm-" then null else c.drvPath) cs'])): string[] {
+  evaluate = (dir: string, sys: string) => tryRun("nix", ["eval", "--json", `path:${dir}#checks.${sys}`, "--apply", hmLazyApply()]),
+  // A positive control: an hm-* check, evaluated, must reach the abort, so the
+  // binding swapped is the live one (not a copy in a comment).
+  control = (dir: string, sys: string, name: string) => tryRun("nix", ["eval", "--raw", `path:${dir}#checks.${sys}.${name}.drvPath`])): string[] {
   let dir: string;
   try {
     dir = copy();
@@ -339,16 +349,25 @@ export function homeManagerLazyFailures(system: string, copy = () => unpack(work
   }
   try {
     let flake: string, swapped: string;
+    // The one live binding: a copy elsewhere (in a comment) makes it unclear
+    // which is swapped, so that fails too.
+    const binding = /homeManagerSrc = builtins\.fetchTarball \{[\s\S]*?\n\s*\};/g;
     try {
+      // Read and written as the copy's own file, never through a link out of it.
+      if (lstatSync(join(dir, "flake.nix")).isSymbolicLink()) {
+        console.error("home-manager-lazy: the copied flake.nix is a symbolic link");
+        return ["home-manager-lazy"];
+      }
       flake = readFileSync(join(dir, "flake.nix"), "utf8");
-      swapped = flake.replace(/homeManagerSrc = builtins\.fetchTarball \{[\s\S]*?\n\s*\};/, 'homeManagerSrc = abort "home-manager-lazy: Home Manager was evaluated";');
-      if (swapped !== flake) writeFileSync(join(dir, "flake.nix"), swapped);
+      const found = flake.match(binding) ?? [];
+      if (found.length !== 1) {
+        console.error(`home-manager-lazy: flake.nix has ${found.length} \`homeManagerSrc = builtins.fetchTarball { … };\` bindings, not exactly one to swap`);
+        return ["home-manager-lazy"];
+      }
+      swapped = flake.replace(binding, `homeManagerSrc = abort "${HM_LAZY_ABORT}";`);
+      writeFileSync(join(dir, "flake.nix"), swapped);
     } catch (e: any) {
       console.error(`home-manager-lazy: couldn't prepare the copied flake: ${e?.message ?? e}`);
-      return ["home-manager-lazy"];
-    }
-    if (swapped === flake) {
-      console.error("home-manager-lazy: flake.nix has no `homeManagerSrc = builtins.fetchTarball { … };` to swap");
       return ["home-manager-lazy"];
     }
     const r = evaluate(dir, system);
@@ -366,14 +385,20 @@ export function homeManagerLazyFailures(system: string, copy = () => unpack(work
       console.error(`home-manager-lazy: the evaluation printed no check list (${r.stdout.slice(0, 200)})`);
       return ["home-manager-lazy"];
     }
-    const listed = Object.entries(parsed as Record<string, string | null>);
+    const listed = Object.entries(parsed as Record<string, { drv?: unknown } | null>);
     if (!listed.some(([n]) => n.startsWith("hm-"))) {
       console.error("home-manager-lazy: no hm-* checks were listed");
       return ["home-manager-lazy"];
     }
-    // Some other check's drvPath was evaluated, so the abort was in reach.
-    if (!listed.some(([n, drv]) => !n.startsWith("hm-") && typeof drv === "string" && drv.endsWith(".drv"))) {
+    // Some other check was read, so the abort was in reach.
+    if (!listed.some(([n, c]) => !n.startsWith("hm-") && typeof c?.drv === "string" && c.drv.endsWith(".drv"))) {
       console.error("home-manager-lazy: no other check's drvPath was evaluated");
+      return ["home-manager-lazy"];
+    }
+    const hm = listed.find(([n]) => n.startsWith("hm-"))![0];
+    const c = control(dir, system, hm);
+    if (c.status === 0 || !c.stderr.includes(HM_LAZY_ABORT)) {
+      console.error(`home-manager-lazy: ${hm}, evaluated, didn't reach the swapped-in abort (${c.status === 0 ? "it evaluated" : `exit ${c.status}: ${c.stderr.slice(-800)}`}): the binding swapped may not be the live homeManagerSrc`);
       return ["home-manager-lazy"];
     }
     return [];
