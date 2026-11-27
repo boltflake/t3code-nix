@@ -1246,8 +1246,10 @@ flake pins.
 
 The desktop app is upstream's own app (`app.asar` and the rest of
 `resources/`, unchanged apart from pointing its native libraries at
-nixpkgs), running packaged as on any Debian machine. Only the Electron it
-runs on can change:
+nixpkgs, and one sentence: with updates off, it says "Nix manages this
+install. Please rebuild your system to update T3 Code." where upstream
+names the switch), running packaged as on any Debian machine. Only the
+Electron it runs on can change:
 
 | `electron` | What you get |
 | --- | --- |

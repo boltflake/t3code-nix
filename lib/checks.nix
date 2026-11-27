@@ -7564,10 +7564,11 @@ let
               passthru.electronNotApplicable = true;
             } "echo 'no usable nixpkgs Electron of the bundled major' > $out";
       };
-  # The swapped app folder against upstream's (the latest channel): the same
-  # app.asar and non-native files, no default_app.asar, the program linked
-  # against the same libraries as upstream's Electron, and every top-level
-  # file upstream ships there.
+  # The swapped app folder against the bundled one (the latest channel): the
+  # same app.asar (upstream's, with the desktop build's one sentence) and
+  # non-native files, no default_app.asar, the program linked against the
+  # same libraries as upstream's Electron, and every top-level file upstream
+  # ships there.
   electron-swap =
     let
       swapped = packages.t3code-unwrapped or null;
@@ -7583,7 +7584,7 @@ let
           s=${swapped}/libexec/t3code b=${bundled}/libexec/t3code e=${nixElectron}/libexec/electron
           cmp $s/resources/app.asar $b/resources/app.asar
           [ ! -e $s/resources/default_app.asar ]
-          # Every non-ELF file of resources/ is upstream's.
+          # Every non-ELF file of resources/ is the bundled app's.
           (cd $b/resources && find . -type f) | while read -r f; do
             head -c4 "$b/resources/$f" | grep -q ELF && continue
             cmp "$s/resources/$f" "$b/resources/$f"

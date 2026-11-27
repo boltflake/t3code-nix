@@ -1,6 +1,7 @@
 # The T3 Code desktop app from upstream's .deb, without providers (see
 # wrap.nix). Its libraries are re-pointed at nixpkgs, those it opens at run
 # time put on its RUNPATH, and its bundled Vulkan loader replaced by nixpkgs'.
+# One sentence in app.asar changes: why its updates are off (installPhase).
 #
 # Electron (lib/electron.nix):
 #
@@ -57,6 +58,7 @@
   libxcb,
   libxshmfence,
   patchelf,
+  nodejs,
   pkgs,
   # T3 Code's release channel: "latest" or "nightly".
   channel ? "latest",
@@ -131,6 +133,7 @@ stdenv.mkDerivation {
     dpkg
     autoPatchelfHook
     makeWrapper
+    nodejs
   ]
   ++ lib.optional swapped patchelf;
   buildInputs = [
@@ -173,7 +176,10 @@ stdenv.mkDerivation {
   disallowedRequisites = lib.optional swapped chosenOk.package;
 
   # Runtime settings live here, so "unwrapped" only means "without providers":
-  # - T3CODE_DISABLE_AUTO_UPDATE: Nix decides the version.
+  # - T3CODE_DISABLE_AUTO_UPDATE: Nix decides the version. Upstream's reason
+  #   for it, shown under "Updates unavailable", only names the setting, so
+  #   app.asar gets ours in its place (asar-replace.ts fails the build if
+  #   upstream's sentence changes).
   # - T3CODE_DESKTOP_LAUNCHER_PATH: the t3code:// handler the app registers
   #   runs `${binName}` through the user's profile, not a store path, so it
   #   survives upgrades and garbage collection.
@@ -218,6 +224,11 @@ stdenv.mkDerivation {
         ''
     }
     ${versions.dropMusl "$out/libexec/${binName}"}
+    asar=$out/libexec/${binName}/resources/app.asar
+    chmod u+w $asar
+    node ${../../scripts/asar-replace.ts} $asar apps/desktop/dist-electron/main.cjs \
+      'Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.' \
+      'Nix manages this install. Please rebuild your system to update T3 Code.'
     cp -r usr/share/icons $out/share/
     # Each channel's icons under its own name, so both apps can be
     # installed and keep their own pictures (nightly's differ).

@@ -98,6 +98,18 @@ land it like any change.
 **`guard-review`.** See [A new command or option in a
 provider](#a-new-command-or-option-in-a-provider) below.
 
+**A T3 Code release fails to build in `asar-replace`.** The desktop app's
+build swaps upstream's reason for its updates being off ("Automatic updates
+are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.") for ours, in
+`app.asar`. When upstream rewords that sentence, or moves or wraps it (in a
+translation call, say), the build fails with `asar-replace: … expected the
+text exactly once` (or `no apps/desktop/dist-electron/main.cjs in the
+archive`, when that file is gone). Find the new sentence in upstream's
+`apps/desktop/src/updates/DesktopUpdates.ts` and put it, with the bundle
+file it ends up in, in `pkgs/t3code/desktop.nix`. If it is no longer a
+plain returned string, change `scripts/asar-replace.ts` to match, or drop
+the swap.
+
 **`watcher-auth`.** Make a new GitHub token the same way as the first one.
 Then, in `watcher/` with `CLOUDFLARE_ACCOUNT_ID` set, run
 `nix shell --inputs-from .. nixpkgs#wrangler -c wrangler secret put GITHUB_TOKEN`
