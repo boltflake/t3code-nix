@@ -49,6 +49,7 @@
     "as-shipped"
     "relay-client"
     "t3code-telemetry-wrapper"
+    "t3code-port-wrapper"
     "t3-telemetry-sends"
     "completions"
     "boat-self-update-off"

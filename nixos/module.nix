@@ -29,6 +29,7 @@ let
     kind = "nixos";
     tailscale = config.services.tailscale.package;
     serverUsers = srv.users;
+    appPort = if cfg.enable && cfg.openFirewall then cfg.port else null;
   };
   inherit (d) app cli;
   shared = core.options {
@@ -69,6 +70,8 @@ in
           {
             server.users = null;
             server.openFirewall = null;
+            openFirewall = null;
+            port = null;
             binaryCache = null;
             claudeCodePolicy = null;
             runtimeCompat = null;
@@ -124,6 +127,37 @@ in
       };
     };
 
+    openFirewall = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Whether to open the desktop app's port, `port`, in the firewall, for
+        the app's Network access (Settings → Sharing & access, which stays
+        the app's setting), so devices on your network and tailnet reach
+        the app's own server. It also starts the app with `T3CODE_PORT` set
+        to `port`, so the app listens there rather than on the first free
+        port from 3773 up; while something else holds that port, the app's
+        server can't start (the app says so and keeps retrying). A
+        non-blank `T3CODE_PORT` already in the app's environment wins, and
+        the firewall still opens `port`. For the server (`server.enable`), use
+        `server.openFirewall`. T3 Connect and Tailscale HTTPS (Tailscale
+        Serve) need no open port. Applies as an override of `package`.
+      '';
+    };
+
+    port = lib.mkOption {
+      type = lib.types.ints.between 1 65535;
+      default = 3773;
+      description = ''
+        The desktop app's port, with `openFirewall`: the app is started
+        with it (`T3CODE_PORT`) and it's opened in the firewall. Not
+        `server.port` while the server is on, since only one of them can
+        listen on a port. Ports below 1024 normally need root, which the
+        app doesn't have. Without `openFirewall` it does nothing (the rebuild
+        warns); pin the package's `port` instead.
+      '';
+    };
+
     binaryCache = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -164,8 +198,9 @@ in
         Whether to turn on `programs.nix-ld` with the libraries needed by
         the T3 Code server that T3 Code downloads itself, which this flake
         therefore can't patch: the one another machine's T3 Code installs
-        and starts here when it connects over SSH (and upstream's own
-        service, with `cli.allowUpstreamService`). Works on its own, without
+        and starts here when it connects over SSH and finds no `t3` of its
+        own version here (and upstream's own service, with
+        `cli.allowUpstreamService`). Works on its own, without
         `enable` or `server.enable`. For a server on this machine, use
         `server`. Off by default because nix-ld changes how
         every unpatched program on the system starts. Best effort: what
@@ -220,6 +255,46 @@ in
 
     # Whatever the app or the server use: the same selection.
     (lib.mkIf (cfg.enable || srv.enable) { assertions = d.selectionAssertions; })
+
+    # The desktop app's port (openFirewall), the app's only.
+    {
+      warnings =
+        lib.optional (cfg.openFirewall && !cfg.enable) ''
+          ${ns}.openFirewall opens the desktop app's port, so without
+          ${ns}.enable it does nothing; for the server, use
+          ${ns}.server.openFirewall.''
+        # Set by the user: a priority above the default's (mkOptionDefault).
+        ++ lib.optional (!cfg.openFirewall && options.programs.t3code.port.highestPrio < 1500) ''
+          ${ns}.port applies with ${ns}.openFirewall only, so on its own
+          it does nothing. To pin the app's port without opening it here
+          (another firewall rule, or none), use
+          package = ….t3code.override { port = …; } instead.''
+        # A port pinned on the package, which openFirewall replaces.
+        ++
+          lib.optional
+            (
+              cfg.enable
+              && cfg.openFirewall
+              && (cfg.package.passthru.port or null) != null
+              && cfg.package.passthru.port != cfg.port
+            )
+            ''
+              ${ns}.openFirewall pins the app to ${ns}.port
+              (${toString cfg.port}) and opens that one, in place of the port
+              its package is pinned to (${toString cfg.package.passthru.port});
+              to keep that one, set ${ns}.port = ${toString cfg.package.passthru.port}.'';
+    }
+    (lib.mkIf (cfg.enable && cfg.openFirewall) {
+      assertions = [
+        {
+          assertion = d.canPort cfg.package;
+          message = "${ns}: openFirewall needs this flake's desktop app from a t3code-nix that has `port` (t3code, t3code-nightly, t3code-free or an .override of one), not ${
+            cfg.package.name or "this package"
+          }; or open the app's port with networking.firewall.allowedTCPPorts yourself.";
+        }
+      ];
+      networking.firewall.allowedTCPPorts = [ cfg.port ];
+    })
 
     (lib.mkIf (cfg.claudeCodePolicy && (d.wantsPolicy || hmNeeds "policy")) {
       # A drop-in, so an owner's own managed-settings.json keeps working

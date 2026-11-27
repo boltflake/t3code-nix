@@ -47,6 +47,19 @@
 # is never set: it would reach every agent T3 Code starts. With the
 # default, the wrappers are as without this.
 #
+# The desktop app's own server takes the first free port from 3773 up. To
+# pin it (for a port opened in the firewall, the NixOS module's
+# openFirewall):
+#
+#   t3code.override { port = 3780; }
+#
+# which starts the app with T3CODE_PORT set to it when the variable is
+# unset, empty or only whitespace (as for telemetry); any other value is the
+# user's and stays. The app takes it from its own environment and leaves it
+# out of its server's, so its terminals and agents don't get it. Desktop
+# app only: the CLI inside it (withCli) isn't given it. With the default
+# (null), the wrappers are as without this.
+#
 # The CLI refuses `t3 update`, `t3 service install`, `t3 up` and plain
 # `t3 connect` (lib/guard.nix); for upstream's own service on purpose (with
 # the module's runtimeCompat):
@@ -108,6 +121,8 @@ let
       guard,
       allowUpstreamService ? false,
       telemetry ? true,
+      # The desktop app's port (T3CODE_PORT), or null for upstream's scan.
+      port ? null,
       # Put into the name: "-free" for t3code-free and t3-free.
       variant ? "",
       # The CLI inside the desktop app (withCli): the same channel's unwrapped
@@ -214,6 +229,20 @@ let
           throw "t3code: telemetry takes true or false, not ${builtins.typeOf telemetry}"
         else
           lib.optionalString (!telemetry) " --run ${lib.escapeShellArg telemetryRun}";
+      # The desktop app's programs only, after telemetryFlags on the same line,
+      # so that with the default the build script is unchanged.
+      portRun =
+        if port == null then
+          null
+        else if !builtins.isInt port || port < 1 || port > 65535 then
+          throw "t3code: port takes a TCP port number (1 to 65535) or null, not ${
+            if builtins.isInt port then toString port else builtins.typeOf port
+          }"
+        else if cli == "1" then
+          throw "t3code: port applies to the desktop app only, not ${app.name} (the CLI takes T3CODE_PORT or --port itself)"
+        else
+          ''case "''${T3CODE_PORT-}" in *[![:space:]]*) ;; *) export T3CODE_PORT=${toString port} ;; esac'';
+      portFlags = lib.optionalString (portRun != null) " --run ${lib.escapeShellArg portRun}";
 
       # The CLI inside the desktop app.
       innerCli =
@@ -251,7 +280,7 @@ let
             ${lib.concatStringsSep " " guardFlags} \
             --prefix PATH : ${pathFlag} \
             ${lib.escapeShellArgs runtimeFlags} \
-            --run ${lib.escapeShellArg cloudflaredRun}${telemetryFlags} \
+            --run ${lib.escapeShellArg cloudflaredRun}${telemetryFlags}${portFlags} \
             ${lib.escapeShellArgs browserFlags}
         done
       ''
@@ -287,6 +316,9 @@ let
         # Whether usage data is left on (false: turned off), and the line that
         # turns it off (for the telemetry-wrapper check).
         inherit telemetry telemetryRun;
+        # The desktop app's pinned port (null: upstream's scan), and the line
+        # that sets it (for the port-wrapper check).
+        inherit port portRun;
         # For the preview-browser-link check.
         inherit linkPreviewBrowser;
       };

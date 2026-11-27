@@ -407,6 +407,9 @@ in
       tailscale ? null,
       # programs.t3code.server.users, NixOS only (for the doctor).
       serverUsers ? [ ],
+      # The desktop app's port, pinned (T3CODE_PORT) for a port opened in the
+      # firewall (the NixOS module's openFirewall); null: upstream's scan.
+      appPort ? null,
       # What the app is installed as (Home Manager: through nixGL).
       wrapApp ? (p: p),
       # More for the doctor: which module installed it.
@@ -427,7 +430,8 @@ in
         // lib.optionalAttrs (cfg.excludeProviders != [ ]) { inherit (cfg) excludeProviders; }
         // lib.optionalAttrs (cfg.acpRuntimes != null) { inherit (cfg) acpRuntimes; }
         // lib.optionalAttrs (cfg.electron != null) { inherit (cfg) electron; }
-        // lib.optionalAttrs (!cfg.telemetry.enable) { telemetry = false; };
+        // lib.optionalAttrs (!cfg.telemetry.enable) { telemetry = false; }
+        // lib.optionalAttrs (appPort != null) { port = appPort; };
       canSelect = p: p ? override && p ? passthru.providers;
       # acpRuntimes needs a wrapper that has it (a t3code-nix from before it
       # doesn't); without, it's left out here and the assertion below says so.
@@ -437,6 +441,8 @@ in
       # telemetry needs a wrapper that has it (a t3code-nix from before it
       # doesn't); without, it's left out here and the assertion below says so.
       canTelemetry = p: canSelect p && p ? passthru.telemetry;
+      # port needs this flake's desktop app from a t3code-nix that has it.
+      canPort = p: canElectron p && p ? passthru.port;
 
       srv = cfg.server;
       # systemd expands `%` specifiers in Environment=: a value meant as it is
@@ -448,7 +454,12 @@ in
       stateDirOwned = 78;
     in
     rec {
-      inherit onStable nightly canSelect;
+      inherit
+        onStable
+        nightly
+        canSelect
+        canPort
+        ;
       # The set the defaults come from: the flake's, or the NixOS-stable one.
       ours =
         (if onStable then stable else packages).${system}
@@ -461,6 +472,7 @@ in
               lib.optional (!canRuntimes cfg.package) "acpRuntimes"
               ++ lib.optional (!canElectron cfg.package) "electron"
               ++ lib.optional (!canTelemetry cfg.package) "telemetry"
+              ++ lib.optional (!canPort cfg.package) "port"
             )
           )
         else
@@ -560,7 +572,12 @@ in
       # Checks when the app or the server is used.
       selectionAssertions = [
         {
-          assertion = removeAttrs selection [ "telemetry" ] == { } || canSelect cfg.package;
+          assertion =
+            removeAttrs selection [
+              "telemetry"
+              "port"
+            ] == { }
+            || canSelect cfg.package;
           message = "${ns}: providers, excludeProviders and acpRuntimes need a package from this flake with providers (t3code, t3code-nightly, t3code-free, t3 …), not ${
             cfg.package.name or "this package"
           }; or leave them unset and set them with .override.";
@@ -589,6 +606,15 @@ in
         {
           assertion = srv.host == null || !srv.lan;
           message = "${ns}: set server.host or server.lan, not both (a host always wins over lan).";
+        }
+        # Whatever pins the app's port (the NixOS module's openFirewall, or
+        # the package's own `port`), the server can't share it. The app is
+        # read only when it's installed.
+        {
+          assertion = !(cfg.enable && (app.passthru.port or null) == srv.port);
+          message = "${ns}: the desktop app's port and server.port are both ${toString srv.port}, and only one of the app and the server can listen on it; ${
+            if appPort != null then "set ${ns}.port" else "set the package's port"
+          } to another one.";
         }
       ];
       # cli.enable installs the CLI alongside the app; on its own it would do
