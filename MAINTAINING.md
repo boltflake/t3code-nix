@@ -56,6 +56,12 @@ Pages source set to "GitHub Actions".
 variable `CACHIX_CACHE` (the cache's name) is set, and needs the secret
 `CACHIX_AUTH_TOKEN` to push.
 
+**Security settings.** Turn on, in the repository's Settings under "Advanced
+Security": secret scanning with push protection, private vulnerability
+reporting (SECURITY.md's link), and CodeQL's default setup for
+JavaScript/TypeScript only. Its Actions language is left off: zizmor, in the
+unit check, already lints the workflows and fails the change.
+
 ## When an issue opens
 
 The update runs, the hourly health check and the weekly tooling check

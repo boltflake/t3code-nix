@@ -37,7 +37,6 @@
         inherit (self) packages;
         # nixpkgs = "stable": only evaluated when chosen.
         stable = lib.mapAttrs (_: l: l.stable) self.legacyPackages;
-        inherit cache;
         # The server's database copy, from the flake's own package set.
         serverBackup = forAllSystems (system: {
           unstable = import ./lib/server-backup.nix { pkgs = pkgsFor system; };

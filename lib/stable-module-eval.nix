@@ -18,7 +18,6 @@ let
   module = import ../nixos/module.nix {
     core = import ./module-core.nix {
       inherit (self) packages;
-      inherit cache;
       stable.${system} = set;
       serverBackup.${system}.stable = import ./server-backup.nix { inherit pkgs; };
     };

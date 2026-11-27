@@ -6,14 +6,12 @@
 #
 #   packages:     this flake's own packages, by system
 #   stable:       the NixOS-stable set (legacyPackages.<system>.stable), by system
-#   cache:        lib/cache.nix
 #   serverBackup: by system, { unstable, stable }: version -> the database
 #                 copy script (lib/server-backup.nix), from the flake's own
 #                 package set, so both modules' ExecStartPre is one store path
 {
   packages,
   stable ? { },
-  cache,
   serverBackup,
 }:
 let
@@ -517,7 +515,7 @@ in
         in
         if canSelect app then
           base.override {
-            providers = app.providers;
+            inherit (app) providers;
             acpRuntimes = app.passthru.acpRuntimes or [ ];
             withPreviewBrowser = app.passthru.previewBrowser or null != null;
             telemetry = cfg.telemetry.enable && (app.passthru.telemetry or true);

@@ -19,7 +19,7 @@ import * as issues from "../scripts/ci/issues.ts";
 import * as narrow from "../scripts/ci/narrow.ts";
 import { publish, latestChannelTag } from "../scripts/ci/publish.ts";
 import { moved } from "../scripts/lib/snapshot.ts";
-import { firstPublications, reconcile, stableNote } from "../scripts/ci/reconcile.ts";
+import { firstPublications, reconcile, SCHEDULED, stableNote } from "../scripts/ci/reconcile.ts";
 import { obs } from "../scripts/update.ts";
 import { writeHeld } from "../scripts/ci/held.ts";
 import { SYSTEMS, timing } from "../scripts/lib/util.ts";
@@ -584,6 +584,33 @@ test("dependabot: one entry and one group cover the workflows and every composit
   // exclusions (an excluded action would get PRs of its own).
   const groups = cfg.match(/\n    groups:\n((?: {6,}.*\n|\s*\n)*)/);
   assert.equal(groups?.[1].replace(/^\s*\n/gm, ""), '      actions:\n        patterns: ["*"]\n', "one group, matching *");
+});
+
+// Each workflow as parsed YAML (yq, in the unit check's inputs), so a test
+// reads its jobs and steps however they're written.
+function workflows(): [string, any][] {
+  const dir = join(import.meta.dirname, "..", ".github", "workflows");
+  const files = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort();
+  assert.ok(files.length > 0, "workflows found");
+  return files.map((f) => {
+    let json: string;
+    try {
+      json = execFileSync("yq", ["-o=json", ".", join(dir, f)], { encoding: "utf8" });
+    } catch (e: any) {
+      throw new Error(`yq couldn't read ${f} (the unit check has it): ${e.message}`);
+    }
+    try {
+      return [f, JSON.parse(json)];
+    } catch (e: any) {
+      throw new Error(`${f}: not one YAML document: ${e.message}`);
+    }
+  });
+}
+
+test("workflows: every scheduled workflow is in reconcile's SCHEDULED", () => {
+  const scheduled = workflows().filter(([, wf]) => wf?.on?.schedule).map(([f]) => f);
+  assert.ok(scheduled.length > 0);
+  assert.deepEqual(SCHEDULED.map(([w]) => w).sort(), scheduled.sort());
 });
 
 test("workflow: a hanging test fails its step, below the job's limit (a cancelled job isn't narrowed)", () => {
@@ -1860,12 +1887,13 @@ test("workflows: health's run lookups find update.yml's jobs by name", () => {
   }
 });
 
-test("test.ts: formatting is for branch CI only, never a candidate", () => {
+test("test.ts: formatting and linting are for branch CI only, never a candidate", () => {
   // Every branch-only name is a real check (lib/checks.nix defines it).
   const checksNix = readFileSync(join(import.meta.dirname, "..", "lib", "checks.nix"), "utf8");
   for (const name of BRANCH_ONLY) assert.match(checksNix, new RegExp(`\\n  ${name} =\\n`), `${name} is a check`);
-  const all = ["unit", "nix-format", "t3-smoke"];
-  assert.deepEqual(checkNames(all, "branch"), ["nix-format", "t3-smoke", "unit"]);
+  assert.deepEqual([...BRANCH_ONLY].sort(), ["nix-format", "nix-lint"]);
+  const all = ["unit", "nix-format", "nix-lint", "t3-smoke"];
+  assert.deepEqual(checkNames(all, "branch"), ["nix-format", "nix-lint", "t3-smoke", "unit"]);
   for (const set of ["candidate", "final", "set-1"]) assert.deepEqual(checkNames(all, set), ["t3-smoke", "unit"]);
 });
 

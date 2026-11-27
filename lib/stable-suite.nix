@@ -91,6 +91,7 @@
     "typecheck"
     "unit"
     "nix-format"
+    "nix-lint"
     "cache-settings"
     "template"
     "overlay"

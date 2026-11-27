@@ -1109,7 +1109,6 @@ let
       withCache = import ../nixos/module.nix {
         core = import ./module-core.nix {
           inherit (self) packages;
-          cache = example;
           serverBackup.${pkgs.stdenv.hostPlatform.system}.unstable = import ./server-backup.nix {
             inherit pkgs;
           };
@@ -6488,11 +6487,11 @@ let
       ''
     + lib.concatMapStrings guardMatches [
       {
-        t3 = packages.t3;
+        inherit (packages) t3;
         pkg = "t3";
       }
       {
-        t3 = (packages.t3-nightly or null);
+        t3 = packages.t3-nightly or null;
         pkg = "t3-nightly";
       }
     ]
@@ -7305,6 +7304,32 @@ let
           || { echo "run \`nix fmt\` and commit the result"; exit 1; }
         touch $out
       '';
+  # statix (anti-patterns; its settings are statix.toml) and deadnix (unused
+  # bindings and arguments) find nothing in any .nix file, hidden folders'
+  # included. Branch CI only, like nix-format: a nixpkgs bump with stricter
+  # linters never fails on it.
+  nix-lint =
+    runCommand "nix-lint"
+      {
+        nativeBuildInputs = [
+          pkgs.statix
+          pkgs.deadnix
+        ];
+        src = lib.fileset.toSource {
+          root = ../.;
+          fileset = lib.fileset.unions [
+            ../statix.toml
+            (lib.fileset.fileFilter (f: f.hasExt "nix") ../.)
+          ];
+        };
+      }
+      ''
+        cd $src
+        statix check --config statix.toml . \
+          || { echo "fix these (\`statix fix\` does most)"; exit 1; }
+        deadnix --fail --hidden . || { echo "remove the unused bindings (\`deadnix --edit\`)"; exit 1; }
+        touch $out
+      '';
   # Background updaters off, as docs/acceptance-matrix.md lists them: each
   # wrapper sets its provider's switch, and each environment switch is still
   # one the program it runs mentions (a release that renamed it would bring
@@ -7464,7 +7489,6 @@ let
       a = packages.antigravity or null;
       o = packages.opencode or null;
       u = packages.cursor-agent or null;
-      m = packages.muse or null;
       # Every provider and agent tool, with exactly what its bin/ holds: the
       # checks below run on each (its bin/, meta, install check, and every
       # ELF file resolving). A new provider fails until it is added here.
@@ -8034,6 +8058,7 @@ let
           pkgs.zizmor
           pkgs.util-linux # unshare, for tests/smoke.test.ts
           pkgs.jq # ci.yml's `tested` script, run by tests/ci.test.ts
+          pkgs.yq-go # the workflows as parsed YAML, for tests/ci.test.ts
           pkgs.shellcheck # scripts/**/*.sh (actionlint checks only run: steps)
         ];
       }
@@ -8619,7 +8644,6 @@ let
       path
       runCommand
       self
-      cache
       packages
       overlayAllowed
       homeManager
@@ -8652,6 +8676,7 @@ in
     t3-telemetry-sends
     t3-nightly-telemetry-sends
     nix-format
+    nix-lint
     unit
     typecheck
     preview-browser-pin

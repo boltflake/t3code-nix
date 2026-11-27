@@ -81,8 +81,9 @@ export function notesOf(outs: string[]): { checked: string[]; notes: Note[] } {
 
 /** Checks only branch CI builds: they're about the repository's own files,
  * not a candidate, so a version or nixpkgs bump never fails on them (a new
- * nixfmt reformatting a file would otherwise hold the bump). */
-export const BRANCH_ONLY = new Set(["nix-format"]);
+ * nixfmt reformatting a file, or a stricter linter, would otherwise hold
+ * the bump). */
+export const BRANCH_ONLY = new Set(["nix-format", "nix-lint"]);
 
 /** The checks a set builds: all for branch CI, the rest for candidates. */
 export const checkNames = (all: string[], set: string) =>

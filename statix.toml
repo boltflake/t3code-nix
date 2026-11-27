@@ -1,0 +1,4 @@
+# statix (the nix-lint check, lib/checks.nix). repeated_keys is off: the
+# modules and examples set options one dotted line each (home.username,
+# home.homeDirectory), as the Home Manager and NixOS manuals write them.
+disabled = ["repeated_keys"]

@@ -411,8 +411,8 @@ in
       wrapper args
     else
       throw (
-        unknownArgMessage (builtins.replaceStrings [ "-unwrapped" ] [ "" ] (
+        unknownArgMessage (builtins.replaceStrings [ "-unwrapped" ] [ "" ]
           (builtins.parseDrvName (args.unwrapped.name or "t3code")).name
-        )) unknown
+        ) unknown
       );
 }

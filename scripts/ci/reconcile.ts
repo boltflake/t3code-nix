@@ -13,8 +13,8 @@
 //   them (publish.ts). One left behind (a killed runner) is deleted here
 //   once its run has finished, never while it runs (it may still be
 //   publishing; reconcile also runs in the run that made it).
-// - health.yml and pages.yml are re-enabled if GitHub disabled them after 60
-//   quiet days.
+// - The scheduled workflows (SCHEDULED) are re-enabled if GitHub disabled
+//   them after 60 quiet days.
 // - Each verified t3code-v* tag (one at its first-publication commit) gets a
 //   GitHub Release: created once, never edited or deleted, in history order.
 //   GitHub's Latest marker is on the release for the latest-channel version

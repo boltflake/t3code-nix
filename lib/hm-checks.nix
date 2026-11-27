@@ -15,7 +15,6 @@
   path,
   runCommand,
   self,
-  cache,
   packages,
   overlayAllowed,
   homeManager,
@@ -23,9 +22,8 @@
 }:
 let
   inherit (pkgs.stdenv.hostPlatform) system;
-  # Whether v evaluates (deeply: not a derivation, whose inputs deepSeq
-  # would walk), and its value or a fallback.
-  evaluates = v: (builtins.tryEval (builtins.deepSeq v v)).success;
+  # v's value (deeply: not a derivation, whose inputs deepSeq would walk),
+  # or a fallback where it throws.
   valueOr =
     fallback: v:
     let
@@ -125,7 +123,6 @@ let
   routed = import ../home-manager/module.nix {
     core = import ./module-core.nix {
       inherit (self) packages;
-      inherit cache;
       stable.${system} = standInStable;
       serverBackup.${system} = {
         unstable = import ./server-backup.nix { inherit pkgs; };
@@ -341,7 +338,6 @@ let
   nixosModule = import ../nixos/module.nix {
     core = import ./module-core.nix {
       inherit (self) packages;
-      cache = example;
       serverBackup.${system}.unstable = import ./server-backup.nix { inherit pkgs; };
     };
     cache = example;
