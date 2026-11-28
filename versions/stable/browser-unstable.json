@@ -1,43 +1,43 @@
 {
   "name": "browser-unstable",
-  "version": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
+  "version": "58d0d3e9d527ca7263be6a45d1f86eacdc700dab",
   "assets": {},
   "channel": "nixos-unstable",
-  "rev": "2786a2a72088ecf32aea5b3ec52099e6a7cff78f",
-  "narHash": "sha256-f/VVvxf5RsQgWVhUtefoca5ktVg0DA2bnkMOcmSnozo=",
-  "chromium": "158.0.8127.36",
+  "rev": "58d0d3e9d527ca7263be6a45d1f86eacdc700dab",
+  "narHash": "sha256-fD1nLSQM8tFob51/thCOr49JIAIjoqybAY27/+hwZQI=",
+  "chromium": "158.0.8127.88",
   "outPaths": {
-    "x86_64-linux": "/nix/store/jfzyljfjs2d6n31lljnz59vqr6w04lrj-ungoogled-chromium-158.0.8127.36",
-    "aarch64-linux": "/nix/store/wmlgxzkjcxmr1zcydngv6r9jaz6jy9am-ungoogled-chromium-158.0.8127.36"
+    "x86_64-linux": "/nix/store/ykkl8d2a0i1mzpdkzjnj50b13lhsq8zl-ungoogled-chromium-158.0.8127.88",
+    "aarch64-linux": "/nix/store/psvdv3asc78bcyfrn98p5vik5alpxwlv-ungoogled-chromium-158.0.8127.88"
   },
   "browsers": {
     "chromium": {
-      "version": "158.0.8127.36",
+      "version": "158.0.8127.88",
       "outPaths": {
-        "x86_64-linux": "/nix/store/j5jzyirg5xsmiikjy2bpnwhnn2l78dby-chromium-158.0.8127.36",
-        "aarch64-linux": "/nix/store/cyghid12l9ivb5cmrmdlrd2n61j7gkqq-chromium-158.0.8127.36"
+        "x86_64-linux": "/nix/store/pjs3c3z4kln7b54665zs78qg76qb6v44-chromium-158.0.8127.88",
+        "aarch64-linux": "/nix/store/3h8q14bfmf6wckxbkzgwvgqqpkqn4iqx-chromium-158.0.8127.88"
       }
     },
     "google-chrome": {
-      "version": "158.0.8127.36",
+      "version": "158.0.8127.88",
       "outPaths": {
-        "x86_64-linux": "/nix/store/j9qqw07a7m1hv8crybil19bw5msy09mp-google-chrome-158.0.8127.36",
-        "aarch64-linux": "/nix/store/7pg931mav4m6g087v329q5rwkqz51knd-google-chrome-158.0.8127.36"
+        "x86_64-linux": "/nix/store/2prspm29ch3rhcgiv3mz5yv3icdg18ww-google-chrome-158.0.8127.88",
+        "aarch64-linux": "/nix/store/r1xm9wyby0gi29q1vjdxw073hlj3lj35-google-chrome-158.0.8127.88"
       },
       "assets": {
         "x86_64-linux": {
-          "url": "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_158.0.8127.36-1_amd64.deb",
-          "hash": "sha256-Rpa84AsSjzhahwui627t5haY8iN06g2OCa+KHGVD05c="
+          "url": "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_158.0.8127.88-1_amd64.deb",
+          "hash": "sha256-play2wCoy38ToddU9qrZH4QBSQZFLG37fz6tkwNdoDs="
         },
         "aarch64-linux": {
-          "url": "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_158.0.8127.36-1_arm64.deb",
-          "hash": "sha256-4G3BbuAVDZ4t7NcJ36XE11xpWLbjWUdNburbSENJEp0="
+          "url": "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_158.0.8127.88-1_arm64.deb",
+          "hash": "sha256-bHQ5mBJAun+wXDU0tKo+oxBM44jzAMK732aIT4xVQJg="
         }
       }
     }
   },
   "released": {
-    "at": "2026-11-21T15:17:40.369Z",
+    "at": "2026-11-28T06:36:38.257Z",
     "kind": "seen"
   }
 }

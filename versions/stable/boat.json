@@ -1,19 +1,19 @@
 {
   "name": "boat",
-  "version": "1.0.110",
-  "tag": "boat-cli-v1.0.110",
+  "version": "1.0.111",
+  "tag": "boat-cli-v1.0.111",
   "assets": {
     "x86_64-linux": {
-      "url": "https://github.com/ariana-dot-dev/agent-server/releases/download/boat-cli-v1.0.110/boat-linux-x64",
-      "hash": "sha256-/RTd0qnhmB+Tm9xcqzLMWM8GfGQvGFkyYMzF7m8B4r8=",
-      "assetId": 802984909,
-      "digest": "sha256:fd14ddd2a9e1981f939bdc5cab32cc58cf067c642f18593260ccc5ee6f01e2bf"
+      "url": "https://github.com/ariana-dot-dev/agent-server/releases/download/boat-cli-v1.0.111/boat-linux-x64",
+      "hash": "sha256-bV7xvHw1yYKTWS4d2oqu2jz2ka/vkR8+fJFMSey2H+g=",
+      "assetId": 803490654,
+      "digest": "sha256:6d5ef1bc7c35c98293592e1dda8aaeda3cf691afef911f3e7c914c49ecb61fe8"
     },
     "aarch64-linux": {
-      "url": "https://github.com/ariana-dot-dev/agent-server/releases/download/boat-cli-v1.0.110/boat-linux-arm64",
-      "hash": "sha256-bUaX47y+va2eslYA4u4fTTP6HN3Yp5zFOX8GeF563FQ=",
-      "assetId": 802984908,
-      "digest": "sha256:6d4697e3bcbebdad9eb25600e2ee1f4d33fa1cddd8a79cc5397f06785e7adc54"
+      "url": "https://github.com/ariana-dot-dev/agent-server/releases/download/boat-cli-v1.0.111/boat-linux-arm64",
+      "hash": "sha256-EyApKJZZW58XHIttoiD2ff4QoyiLchj98/TEDDzt6Tw=",
+      "assetId": 803490658,
+      "digest": "sha256:1320292896595b9f171c8b6da220f67dfe10a3288b7218fdf3f4c40c3cede93c"
     }
   },
   "licenses": {
@@ -23,7 +23,7 @@
     }
   },
   "released": {
-    "at": "2026-11-28T03:01:41.000Z",
+    "at": "2026-11-28T06:18:55.000Z",
     "kind": "published"
   }
 }
