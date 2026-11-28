@@ -390,6 +390,34 @@ test("main: a default check that reads the snapshot fails the branch", async () 
   } finally { leaky = false; }
 });
 
+test("main: a branch where stable and stable-next disagree fails branch CI (current or behind)", async () => {
+  commit(base);
+  commit({ "flake.nix": "{ }\n" }); // current (not behind)
+  fakeNix();
+  const realDrvs = stable.nix.drvs;
+  const skewed = (src: string, attr: string) => {
+    const d = realDrvs(src, attr);
+    if (!d || !attr.endsWith("stableNextChecks")) return d;
+    return { ...d, "stable-next-t3code": { out: "/out/t3code-other", drv: "/drv/t3code-other.drv" } };
+  };
+  stable.nix.drvs = skewed;
+  stable.smokes.desktop = async () => true;
+  stable.smokes.agentBrowser = async () => true;
+  const want = ["equivalence (stable checks of the moved tree don't match stable-next: t3code)"];
+  await stable.main(["branch", "x86_64-linux", "out", "--next", "--branch", "--parent=HEAD~1"]);
+  assert.deepEqual(JSON.parse(readFileSync("out/stable-branch-x86_64-linux.json", "utf8")).branch, want, "current snapshot");
+  for (const [p, expected] of [["a", want], ["b", []]] as const) {
+    await stable.main(["branch", "x86_64-linux", "out", "--next", "--branch", "--parent=HEAD~1", `--part=${p}`]);
+    assert.deepEqual(JSON.parse(readFileSync(`out/stable-branch-x86_64-linux-${p}.json`, "utf8")).branch, expected, `current part ${p}`);
+  }
+  // Behind: compares the moved tree's stable checks against stable-next.
+  commit({ "versions/codex.json": pin("codex", "2.0.1") });
+  for (const [p, expected] of [["a", want], ["b", []]] as const) {
+    await stable.main(["branch", "x86_64-linux", "out", "--next", "--branch", "--parent=HEAD~1", `--part=${p}`]);
+    assert.deepEqual(JSON.parse(readFileSync(`out/stable-branch-x86_64-linux-${p}.json`, "utf8")).branch, expected, `behind part ${p}`);
+  }
+});
+
 test("noFlakesDisagree: nothing on both sides is a disagreement", () => {
   stable.nix.one = () => null;
   stable.nix.noFlakes = () => null;

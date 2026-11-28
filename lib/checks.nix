@@ -24,6 +24,9 @@
   # Where the pins are read from: versions/, or versions/stable/ for the
   # NixOS-stable suite (the same checks on the stable set, see flake.nix).
   pinsDir ? ../versions,
+  # Whether this is a NixOS-stable suite (stable or stable-next), rather than
+  # the default unstable suite.
+  stable ? false,
   # The same set built without allowing unfree packages, for free-variant;
   # null: the overlay without allowUnfree (the default suite).
   freeSet ? null,
@@ -6987,7 +6990,7 @@ let
       # NixOS-stable set's (its own pins) has its own.
       site = "https://boltflake.github.io/t3code-nix/updates";
       expected = {
-        t3code = if pinsDir == ../versions then "${site}/t3code.json" else "${site}/stable/t3code.json";
+        t3code = if stable then "${site}/stable/t3code.json" else "${site}/t3code.json";
         t3code-free = expected.t3code;
         t3code-nightly = "${site}/t3code-nightly.json";
       };
