@@ -228,6 +228,7 @@ let
       "agent"
       "agents"
       "changelog"
+      "conversations"
       "help"
       "install"
       "mcp"
