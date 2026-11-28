@@ -41,9 +41,10 @@
 //               parent's (REV or HEAD~1) and whose parent build doesn't
 //               fail (passes, or has no result: then unproven); a failing
 //               smoke whose parent run, with the parent's own smoke script,
-//               package and tools, doesn't fail; an incomplete group; and,
-//               when the snapshot is behind, a default check that moving it
-//               would change (whatever stable-next's result)
+//               package and tools, doesn't fail; an incomplete group; when
+//               the snapshot is behind, a default check that moving it would
+//               change; and, with --next, any stable check of the moved tree
+//               that disagrees with stable-next (whatever stable-next's result)
 //   nixCalls    every Nix call it made (util.ts's NixCall)
 //
 // The runner smokes run with xvfb-run, dbus, xdotool and util-linux from the tree's
@@ -207,9 +208,10 @@ export function evaluate(src: string, attr: string): { drvs: Drvs; failed: strin
 const groupAttr = (system: string, prefix: Prefix) => `legacyPackages.${system}.${prefix === "stable-" ? "stableChecks" : "stableNextChecks"}`;
 
 /** Evaluate, build (failures once more) and smoke-test a group. */
-export async function runGroup(src: string, system: string, prefix: Prefix, withSmokes: boolean, part?: StablePart): Promise<{ group: Group; drvs: Drvs }> {
+export async function runGroup(src: string, system: string, prefix: Prefix, withSmokes: boolean, part?: StablePart): Promise<{ group: Group; drvs: Drvs; evalClean: boolean }> {
   const e = evaluate(src, groupAttr(system, prefix));
-  if (!e.complete) return { group: { complete: false, failed: [] }, drvs: {} };
+  if (!e.complete) return { group: { complete: false, failed: [] }, drvs: {}, evalClean: false };
+  const evalClean = e.failed.length === 0;
   // A part builds its own checks (all of them evaluated: `drvs` stays whole);
   // the smokes are part a's.
   const names = Object.keys(e.drvs).sort().filter((n) => part === undefined || stablePart(n) === part);
@@ -217,17 +219,17 @@ export async function runGroup(src: string, system: string, prefix: Prefix, with
   // Failures once more; what's still missing must be a proven failure, or
   // the group has no complete result (nothing held, no evidence).
   const second = nix.build(e.drvs, nix.build(e.drvs, names).missing);
-  if (!second.proven) return { group: { complete: false, failed: [] }, drvs: e.drvs };
+  if (!second.proven) return { group: { complete: false, failed: [] }, drvs: e.drvs, evalClean };
   const failed = [...e.failed.filter((n) => part === undefined || stablePart(n) === part), ...second.missing];
   if (withSmokes) {
     const s = await smokeFailures(src, system, prefix, e.drvs, smokes);
-    if (s === null) return { group: { complete: false, failed: [] }, drvs: e.drvs };
+    if (s === null) return { group: { complete: false, failed: [] }, drvs: e.drvs, evalClean };
     failed.push(...s);
   }
   const all = smokesOfGroup(prefix);
   const notApplicable = Object.keys(e.drvs).filter((n) => e.drvs[n].na && (part === undefined || stablePart(n) === part))
     .flatMap((n) => [n, ...Object.keys(all).filter((sm) => all[sm].pkg === n)]).sort();
-  return { group: { complete: true, failed: [...new Set(failed)].sort(), ...(notApplicable.length ? { notApplicable } : {}) }, drvs: e.drvs };
+  return { group: { complete: true, failed: [...new Set(failed)].sort(), ...(notApplicable.length ? { notApplicable } : {}) }, drvs: e.drvs, evalClean };
 }
 
 /** The runner smokes that fail: the desktop smoke on <prefix>t3code and the
@@ -275,6 +277,14 @@ export function noFlakesDisagree(src: string, system: string): string | null {
   return `default.nix without flakes gives ${viaDefault ?? "nothing"} for the stable t3, the flake ${viaFlake ?? "nothing"}`;
 }
 
+/** Check names whose moved-tree `stable-<k>` and tested `stable-next-<k>`
+ * derivations disagree (or appear on only one side). */
+export function pairMismatches(stableDrvs: Drvs, nextDrvs: Drvs): string[] {
+  const strip = (d: Drvs, p: string) => Object.fromEntries(Object.entries(d).map(([k, v]) => [k.slice(p.length), v.drv]));
+  const s = strip(stableDrvs, "stable-"), n = strip(nextDrvs, "stable-next-");
+  return [...new Set([...Object.keys(s), ...Object.keys(n)])].filter((k) => s[k] !== n[k]).sort();
+}
+
 /** The equivalence step for a move: the moved tree's default checks equal
  * the tested tree's, and each of its stable-<check> the tested
  * stable-next-<check>; default.nix without flakes agrees with the flake on
@@ -289,10 +299,8 @@ export async function equivalence(tested: string, testedSrc: string, system: str
     if (changed.length) return { ok: false, tree, reason: `moving the snapshot changes default checks: ${changed.join(", ")}` };
     const moved_ = nix.drvs(src, groupAttr(system, "stable-"));
     if (!moved_) return { ok: false, tree, reason: "the moved tree's stable checks don't evaluate" };
-    const strip = (d: Drvs, p: string) => Object.fromEntries(Object.entries(d).map(([k, v]) => [k.slice(p.length), v.drv]));
-    const s = strip(moved_, "stable-"), n = strip(nextDrvs, "stable-next-");
-    const pairs = [...new Set([...Object.keys(s), ...Object.keys(n)])].filter((k) => s[k] !== n[k]);
-    if (pairs.length) return { ok: false, tree, reason: `stable checks of the moved tree don't match the tested stable-next ones: ${pairs.sort().join(", ")}` };
+    const pairs = pairMismatches(moved_, nextDrvs);
+    if (pairs.length) return { ok: false, tree, reason: `stable checks of the moved tree don't match the tested stable-next ones: ${pairs.join(", ")}` };
     const disagree = noFlakesDisagree(src, system);
     if (disagree) return { ok: false, tree, reason: `on the moved tree, ${disagree}` };
     const base = nix.tops(testedSrc, `legacyPackages.${system}.stable`), next = nix.tops(testedSrc, `legacyPackages.${system}.stableNext`);
@@ -396,7 +404,7 @@ export async function main(argv: string[]): Promise<void> {
         rmSync(base, { recursive: true, force: true });
       }
     }
-    let next: { group: Group; drvs: Drvs } | null = null;
+    let next: { group: Group; drvs: Drvs; evalClean: boolean } | null = null;
     const behind = !current(tested);
     result.behind = behind;
     if (argv.includes("--next") && only !== "stable") {
@@ -421,17 +429,30 @@ export async function main(argv: string[]): Promise<void> {
         // failure as the branch's.
         const pe = evaluate(parentSrc, groupAttr(system, "stable-")), pne = evaluate(parentSrc, groupAttr(system, "stable-next-"));
         const ps = pe.complete ? pe.drvs : null, pn = pne.complete ? pne.drvs : null;
-        // A default check that reads the snapshot shows up here, whatever
+        // A default check that reads the snapshot, or a stable check that
+        // disagrees with stable-next once moved, shows up here, whatever
         // stable-next's result (the move's own step only runs after a pass).
         let changed: string[] = [];
-        if (behind && part !== "b") {
-          const m = unpack(moved(tested));
-          try { changed = defaultsChanged(src, m, system); } finally { rmSync(m, { recursive: true, force: true }); }
+        let mismatched: string[] = [];
+        if (part !== "b") {
+          if (behind) {
+            const m = unpack(moved(tested));
+            try {
+              changed = defaultsChanged(src, m, system);
+              if (next?.evalClean) {
+                const moved_ = nix.drvs(m, groupAttr(system, "stable-"));
+                mismatched = moved_ ? pairMismatches(moved_, next.drvs) : ["(the moved tree's stable checks don't evaluate)"];
+              }
+            } finally { rmSync(m, { recursive: true, force: true }); }
+          } else if (stable!.evalClean && next?.evalClean) {
+            mismatched = pairMismatches(stable!.drvs, next.drvs);
+          }
         }
         result.branch = [
           ...await branchFailures(stable!.group, stable!.drvs, ps, parentOutcomes(parentSrc, system, "stable-", ps, smokesOf, pe.failed)),
           ...(next ? await branchFailures(next.group, next.drvs, pn, parentOutcomes(parentSrc, system, "stable-next-", pn, smokesOf, pne.failed)) : []),
           ...(changed.length ? [`equivalence (moving the snapshot changes ${changed.join(", ")})`] : []),
+          ...(mismatched.length ? [`equivalence (stable checks of the moved tree don't match stable-next: ${mismatched.join(", ")})`] : []),
         ];
       } finally {
         rmSync(parentSrc, { recursive: true, force: true });

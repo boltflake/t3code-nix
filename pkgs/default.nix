@@ -6,8 +6,8 @@
 # pinsDir: where the pins are read from; a package whose pins aren't there
 # isn't in the set (the snapshot has no nightly pins, so the stable set has
 # no nightly packages, and a package added since the last move isn't in it).
-# nixpkgs: which nixpkgs this set is, for the doctor to name ("stable" for
-# the NixOS-stable sets).
+# nixpkgs: which nixpkgs this set is, for the doctor to name and the desktop
+# app's update feed ("stable" for the NixOS-stable sets).
 {
   pkgs,
   browserChannel ? "unstable",
@@ -61,8 +61,9 @@ let
       channel = "latest";
       electron = "auto";
       inherit electronFallback;
-      # The NixOS-stable set's own snapshot (versions/stable/) has its file.
-      updateFeed = if pinsDir == ../versions then null else "stable/t3code";
+      # The NixOS-stable set has its own feed (stable/t3code.json), for both
+      # the snapshot and stable-next.
+      updateFeed = if nixpkgs == "stable" then "stable/t3code" else null;
     };
     t3code-unwrapped-nightly = callPackage ./t3code/desktop.nix {
       channel = "nightly";

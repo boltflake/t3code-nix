@@ -123,6 +123,7 @@
           packages,
           pinsDir,
           system,
+          stable ? false,
           freeSet ? null,
           noFallback ? packages,
         }:
@@ -132,6 +133,7 @@
             cache
             packages
             pinsDir
+            stable
             freeSet
             noFallback
             ;
@@ -168,6 +170,7 @@
           checks = checksWith {
             inherit system packages pinsDir;
             pkgs = stablePkgsFor system;
+            stable = true;
             # The same set without unfree packages allowed (free-variant).
             freeSet = import ./pkgs {
               pkgs = stableFreePkgsFor system;
