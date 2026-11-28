@@ -117,7 +117,7 @@ string, change `swapReason` in `scripts/asar-patch.ts` to match, or drop
 the swap.
 
 **`update-notice-off`.** A published desktop app was built without the
-[update notice](README.md#update-notices): upstream changed code it checks
+[update notice](docs/details.md#update-notices): upstream changed code it checks
 or patches, in the web UI or the main process (its build log and the issue
 say which check or edit didn't match, on which system). The release ships
 anyway, as before the notice. Find the code again in that release's

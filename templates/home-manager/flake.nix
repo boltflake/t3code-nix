@@ -56,14 +56,14 @@
 
               # Optional: uncomment what you need. All the options are
               # under "The Home Manager module" in t3code-nix's README.
-              # providers = [ "codex" "claude" ];       # bundle only these (default: all ten)
-              # excludeProviders = [ "grok" ];          # or leave some out
-              # channel = "nightly";                    # T3 Code nightly (built on your machine)
-              # cli.enable = true;                      # the headless `t3` CLI too
-              # server.enable = true;                   # T3 Code in the background, as your systemd user service
-              # server.home = "%h/.t3-server";          # its own T3 home, beside the app's ~/.t3
-              # agentTools.agent-browser.enable = true; # lets agents open, click and screenshot web pages
-              # agentTools.boat.enable = true;          # boat.dev's sandbox CLI for agents
+              # providers = [ "antigravity" "claude" "codex" ]; # bundle only these (default: all ten)
+              # excludeProviders = [ "grok" ];                  # or leave some out
+              # channel = "nightly";                            # T3 Code nightly (built on your machine)
+              # cli.enable = true;                              # the headless `t3` CLI too
+              # server.enable = true;                           # T3 Code in the background, as your systemd user service
+              # server.home = "%h/.t3-server";                  # its own T3 home, beside the app's ~/.t3
+              # agentTools.agent-browser.enable = true;         # lets agents open, click and screenshot web pages
+              # agentTools.boat.enable = true;                  # boat.dev's sandbox CLI for agents
             };
 
             # Not NixOS? T3 Code needs your system's GPU drivers: see the

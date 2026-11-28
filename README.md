@@ -7,16 +7,15 @@
   <a href="https://boltflake.github.io/t3code-nix/"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fboltflake.github.io%2Ft3code-nix%2Fbadges%2Ft3code-nightly.json&query=%24.message&label=nightly&color=6e5494&style=flat-square" alt="T3 Code on the nightly channel: the version this flake ships now"></a>
 </p>
 
-This flake packages the [<img src="docs/logos/t3code.png" height="16" alt=""> T3 Code](https://github.com/pingdotgg/t3code) desktop app and CLI for x86_64 and aarch64 Linux. It includes every supported agent provider, plus a few useful agent tools. This is a community project, not affiliated with or endorsed by the T3 Code team or any provider's vendor.
+<a id="supported-systems"></a>This flake packages the [<img src="docs/logos/t3code.png" height="16" alt=""> T3 Code](https://github.com/pingdotgg/t3code) desktop app and CLI for `x86_64-linux` and `aarch64-linux`, with all ten supported agent providers plus extra agent tools. Community project, not affiliated with T3 Code or any provider vendor.
 
 <img src="docs/how-updates-reach-you.svg" width="100%" alt="How an update reaches you: an upstream release, checked for every minute, then built and tested on x86_64 and aarch64, this flake updated on GitHub only if both pass, then free packages cached. On your system: update your flake input and rebuild">
 
-- **<ins>Always up to date</ins>.** T3 Code's releases on the latest and nightly channels are detected, tested and published automatically, within minutes of upstream.
-- **All supported agents:** Codex, Claude, Cursor, Grok, fx, OpenCode, Antigravity, Kiro, Muse and pi.
-- **One line to install.** `programs.t3code.enable = true;` installs the app and every provider.
-- **Tested before it's published**. Automatic tests must pass for the flake to update.
-- **A binary cache**. Free packages on the latest channel are cached and are ready to run after download.
-- **Update notifications, Nix in charge.** Built-in updaters are disabled. The desktop app's update icon tells you when t3code-nix has a newer T3 Code or newer bundled providers: update t3code-nix (`nix flake update t3code-nix` with flakes) and rebuild.
+- **<ins>Always up to date</ins>.** Latest and nightly releases are detected, tested on `x86_64` and `aarch64`, and published automatically within minutes of upstream.
+- **All ten agent providers:** Codex, Claude, Cursor, Grok, fx, OpenCode, Antigravity, Kiro, Muse, and pi.
+- **One line to install:** `programs.t3code.enable = true;` installs the app and every provider.
+- **Binary cache:** free packages on the latest channel are cached ready to download.
+- **Nix in charge of updates:** built-in self-updaters are disabled; the app's update icon notifies you when `t3code-nix` has a newer T3 Code or bundled providers.
 
 ## Contents
 
@@ -29,12 +28,9 @@ This flake packages the [<img src="docs/logos/t3code.png" height="16" alt=""> T3
 - [Binary cache](#binary-cache)
 - [Unfree packages](#unfree-packages)
 - [NixOS stable](#nixos-stable)
-- [When something isn't working: `t3code-nix doctor`](#when-something-isnt-working-t3code-nix-doctor),
-  and [reporting problems](#reporting-problems)
+- [Troubleshooting: `t3code-nix doctor`](#troubleshooting-t3code-nix-doctor)
 - [Channels, pinning and rolling back](#channels-pinning-and-rolling-back)
-- [Following new releases](#following-new-releases)
-- [Details](#details)
-- [Maintainer notes](#maintainer-notes)
+- [Reference and guides](#reference-and-guides)
 
 ## Quick start
 
@@ -49,10 +45,10 @@ nix run github:boltflake/t3code-nix#codex        # runs one agent (Codex) in the
 ## Setup
 
 <details id="with-flakes" open>
-<summary><b>Flake</b></summary>
+<summary><b>Flake (NixOS)</b></summary>
 <br>
 
-Add t3code-nix and its module:
+Add `t3code-nix` and its NixOS module:
 
 ```nix
 {
@@ -62,24 +58,27 @@ Add t3code-nix and its module:
   outputs = { nixpkgs, t3code-nix, ... }: {
     nixosConfigurations.my-machine = nixpkgs.lib.nixosSystem {
       modules = [
-        ./configuration.nix                           # your existing system configuration
+        ./configuration.nix                                   # your existing system configuration
         t3code-nix.nixosModules.default
         {
           programs.t3code = {
             enable = true;
 
             # Optional: uncomment what you need
-            # providers = [ "codex" "claude" ];       # install only these providers (default: all ten)
-            # excludeProviders = [ "grok" ];          # or leave some out
-            # channel = "nightly";                    # T3 Code nightly (default: latest)
-            # nixpkgs = "stable";                     # NixOS stable's libraries (default: unstable)
-            # cli.enable = true;                      # include the headless `t3` CLI
-            # server.enable = true;                   # keep T3 Code running in the background for your phone, laptop or browser
-            # server.lan = true;                      # reachable on your local network and tailnet
-            # server.openFirewall = true;             # open its port (3773) in the firewall
-                                                      # Agent Tools:
-            # agentTools.agent-browser.enable = true; # a headless browser CLI for agents (lets agents open, click and screenshot web pages)
-            # agentTools.boat.enable = true;          # boat.dev's sandbox CLI for agents
+            # providers = [ "antigravity" "claude" "codex" ]; # install only these providers (default: all ten)
+            # excludeProviders = [ "grok" ];                  # or leave some out
+            # channel = "nightly";                            # T3 Code nightly (default: latest)
+            # nixpkgs = "stable";                             # NixOS stable's libraries (default: unstable)
+            # cli.enable = true;                              # install the `t3` CLI on PATH for terminal use and T3 Code over SSH (included automatically with `server.enable`)
+            # openFirewall = true;                            # pins the desktop app to `port` (default 3773) and opens that TCP port in the firewall for Network access
+            # port = 3780;                                    # desktop app port with `openFirewall` (must differ from `server.port` when running both)
+            # server.enable = true;                           # keep T3 Code running in the background for your phone, laptop or browser
+            # server.home = "%h/.t3-server";                  # its own T3 home, beside the desktop app's ~/.t3 (see docs/server.md)
+            # server.lan = true;                              # reachable on your local network and tailnet
+            # server.openFirewall = true;                     # open `server.port` (default 3773) in the firewall
+                                                              # Agent Tools:
+            # agentTools.agent-browser.enable = true;         # a headless browser CLI for agents (lets agents open, click and screenshot web pages)
+            # agentTools.boat.enable = true;                  # boat.dev's sandbox CLI for agents
           };
         }
       ];
@@ -88,52 +87,34 @@ Add t3code-nix and its module:
 }
 ```
 
-For a machine with no desktop, run T3 Code as a server, without the
-desktop app:
+For a **headless server** (no desktop app), replace the inline module above with:
 
 ```nix
 {
-  inputs.t3code-nix.url = "github:boltflake/t3code-nix";
-  # Don't add `inputs.t3code-nix.inputs.nixpkgs.follows`: see "Binary cache".
+  programs.t3code = {
+    server.enable = true;                             # keep T3 Code running in the background, with `t3` on PATH
+    server.users = [ "amber" ];                       # your user name
+    server.lan = true;                                # reachable on your local network and tailnet
+    server.openFirewall = true;                       # open its port (3773) in the firewall
 
-  outputs = { nixpkgs, t3code-nix, ... }: {
-    nixosConfigurations.my-server = nixpkgs.lib.nixosSystem {
-      modules = [
-        ./configuration.nix                           # your existing system configuration
-        t3code-nix.nixosModules.default
-        {
-          programs.t3code = {
-            # No `enable = true`: the desktop app isn't installed.
-            server.enable = true;                     # keep T3 Code running in the background, with `t3` on PATH
-            server.users = [ "amber" ];               # your user name
-            server.lan = true;                        # reachable on your local network and tailnet
-            server.openFirewall = true;               # open its port (3773) in the firewall
-
-            # Optional: uncomment what you need
-            # providers = [ "codex" "claude" ];       # bundle only these (default: all ten)
-            # agentTools.agent-browser.enable = true; # lets agents open, click and screenshot web pages
-            # agentTools.boat.enable = true;          # boat.dev's sandbox CLI for agents
-          };
-
-          # Start the server at boot, without anyone logging in:
-          users.users.amber.linger = true;
-        }
-      ];
-    };
+    # Optional:
+    # providers = [ "antigravity" "claude" "codex" ]; # bundle only these (default: all ten)
+    # agentTools.agent-browser.enable = true;
+    # agentTools.boat.enable = true;
   };
+
+  # Start the server at boot, without anyone logging in:
+  users.users.amber.linger = true;
 }
 ```
 
 Then pair your devices with `t3 pair` (see [Running the server](#running-the-server)).
-All module options are documented in [The NixOS module](#the-nixos-module).
 
 </details>
 
 <details id="home-manager">
 <summary><b>Home Manager</b> (NixOS or another Linux distro)</summary>
 <br>
-
-Add t3code-nix and its Home Manager module:
 
 ```nix
 {
@@ -144,17 +125,17 @@ Add t3code-nix and its Home Manager module:
     homeConfigurations.amber = home-manager.lib.homeManagerConfiguration {
       pkgs = nixpkgs.legacyPackages.x86_64-linux;
       modules = [
-        ./home.nix                                    # your existing Home Manager configuration
+        ./home.nix                                            # your existing Home Manager configuration
         t3code-nix.homeModules.default
         {
           programs.t3code-nix = {
             enable = true;
 
             # Optional: uncomment what you need
-            # providers = [ "codex" "claude" ];       # install only these providers (default: all ten)
-            # cli.enable = true;                      # include the headless `t3` CLI
-            # server.enable = true;                   # keep T3 Code running in the background, as your systemd user service
-            # server.home = "%h/.t3-server";          # its own T3 home, beside the app's ~/.t3
+            # providers = [ "antigravity" "claude" "codex" ]; # install only these providers (default: all ten)
+            # cli.enable = true;                              # install the `t3` CLI on PATH for terminal use and T3 Code over SSH (included automatically with `server.enable`)
+            # server.enable = true;                           # keep T3 Code running in the background, as your systemd user service
+            # server.home = "%h/.t3-server";                  # its own T3 home, beside the app's ~/.t3
           };
         }
       ];
@@ -163,13 +144,7 @@ Add t3code-nix and its Home Manager module:
 }
 ```
 
-With Home Manager as a NixOS module, put `t3code-nix.homeModules.default`
-in `home-manager.users.<name>.imports` (or `home-manager.sharedModules`)
-instead. On another distro, set up its GPU drivers first; that, the
-binary cache and the rest are in
-[The Home Manager module](#the-home-manager-module).
-`nix flake init -t github:boltflake/t3code-nix#home-manager` gives you a
-standalone Home Manager flake to fill in.
+With Home Manager as a NixOS module, import `t3code-nix.homeModules.default` in `home-manager.users.<name>.imports` (or `home-manager.sharedModules`). `nix flake init -t github:boltflake/t3code-nix#home-manager` creates a standalone template. See [The Home Manager module](#the-home-manager-module) for GPU drivers, binary cache, and other Linux distros.
 
 </details>
 
@@ -177,34 +152,21 @@ standalone Home Manager flake to fill in.
 <summary><b>If your system isn't a flake yet</b></summary>
 <br>
 
-Flakes are not enabled by default on NixOS.
-
-1. Turn them on: add this line to your `configuration.nix`:
+1. Enable flakes in `configuration.nix`:
 
    ```nix
    nix.settings.experimental-features = [ "nix-command" "flakes" ];
    ```
 
-2. Rebuild:
+2. Rebuild, then generate `/etc/nixos/flake.nix` with `t3code-nix#init`:
 
    ```sh
    sudo nixos-rebuild switch
-   ```
-
-3. Turn your system into a flake with T3 Code:
-
-   ```sh
    sudo nix run github:boltflake/t3code-nix#init
    sudo nixos-rebuild switch
    ```
 
-   This creates `/etc/nixos/flake.nix` with T3 Code enabled. It follows the same NixOS branch your channel does, so your system stays on its NixOS release, though the first rebuild can bring that branch's newer updates. An existing `flake.nix` is never overwritten. To see the file first, run `sudo nix run github:boltflake/t3code-nix#init -- --dry-run`.
-
-   Its configuration is named after your host, so a plain `nixos-rebuild switch` builds it. If `/etc/nixos` is a git repository, `init` adds the file to it (or tells you the command, when the repository is another user's). It prints the rebuild command to run; use that one if it differs. `nix run github:boltflake/t3code-nix#init -- --help` lists its options, and the file's comments show the options for the providers, the server and the agent tools.
-
-   To go back, delete `flake.nix` (and `flake.lock`); if you've rebuilt with it, rebuild again (or boot the previous generation). `nix flake init -t github:boltflake/t3code-nix` gives you the same template to fill in yourself.
-
-To try a single command without changing your configuration, put `--extra-experimental-features 'nix-command flakes'` after `nix` instead.
+   `init` follows your current NixOS channel, never overwrites an existing `flake.nix`, and prints any `git add` or rebuild command to run before switching (supports `--dry-run` and `--help`). Or use `nix flake init -t github:boltflake/t3code-nix` to start from the template manually.
 
 </details>
 
@@ -212,16 +174,10 @@ To try a single command without changing your configuration, put `--extra-experi
 <summary><b>Without flakes</b></summary>
 <br>
 
-You don't need flakes to use t3code-nix. Everything the flake has (the
-app, the NixOS module and the overlay) also works with the classic Nix
-tools: `nix-env`, `nix-shell`, `nix-build`, or an `import` in your
-`configuration.nix`.
+Everything works with classic Nix tools (`nix-env`, `nix-shell`, or `fetchTarball` in `configuration.nix`):
 
 ```sh
-# Install the T3 Code app for your user (run it again to update):
 nix-env -f https://github.com/boltflake/t3code-nix/archive/main.tar.gz -iA t3code
-
-# Or try the t3 CLI in a temporary shell, without installing anything:
 nix-shell -p '(import (fetchTarball "https://github.com/boltflake/t3code-nix/archive/main.tar.gz") { }).t3'
 ```
 
@@ -236,75 +192,42 @@ in
 }
 ```
 
-- The packages for your machine are right at the top: `t3code` (the
-  app), `t3`, `codex` and the rest. To get another machine type's
-  packages, pass it in the `{ }`, for example
-  `{ system = "aarch64-linux"; }`.
-- For anything else the flake has, `t3code-nix.flake` has it all.
-- Your own nixpkgs config and overlays don't apply to them, so they're the
-  flake's builds, which the binary cache holds.
-- For a fixed version, use a commit's tarball
-  (`…/archive/<commit>.tar.gz`), or the tarball of a `t3code-v*` tag.
+Pass `{ system = "aarch64-linux"; }` for another architecture, use `t3code-nix.flake` for other flake outputs, or replace `main.tar.gz` with a `t3code-v<version>.tar.gz` / `<commit>.tar.gz` tarball to pin a version.
 
 </details>
 
 ## Packages
 
-Where to see what the flake has at this moment:
-
-- **[The status page](https://boltflake.github.io/t3code-nix/)**: every
-  pinned package's version on `main`, when t3code-nix published it and,
-  where upstream's release time is known, how long after it (measured or
-  estimated); the median delivery time over the last 30 days, once there
-  are enough deliveries to count; and each package's update status, such as
-  a newer version found and what it's waiting for, a version being tested,
-  or an update held and why. A version changed since your last visit gets a
-  lightning strike and a small bolt beside it (only the bolt if your system
-  asks for reduced motion). It is rebuilt about hourly, and says
-  "Out of date" when its last check against upstream is over two hours
-  old.
-- **The GitHub Releases**: one per T3 Code version on the latest channel, listing every
-  package in that set (see [Following new releases](#following-new-releases)).
-- **`t3code-nix doctor`** on your machine: the versions your build bundles,
-  and which copy of each provider T3 Code will use there.
-- **[`versions/`](versions/)** in the repository: one pin file per upstream
-  download (T3 Code's app and CLI for each channel, each provider, boat and
-  agent-browser), with its version and files; the nixpkgs pins for NixOS
-  stable and agent-browser's browsers; and `stable/`, the set NixOS stable
-  uses. The preview browser's pin is inside each T3 Code pin file.
+Check current versions and update status on the
+**[status page](https://boltflake.github.io/t3code-nix/)** (updated hourly),
+in **GitHub Releases** (one per latest T3 Code release), in
+[`versions/`](versions/), or locally with `t3code-nix doctor`.
 
 ### T3 Code
 
 | Package | What it is |
 | --- | --- |
-| `t3code` (default) | T3 Code desktop app, latest channel, with all ten providers.<br><br>Its free parts (the app, codex, fx, opencode, pi) come from the [binary cache](#binary-cache). The six unfree providers and the preview browser are downloaded from their vendors |
-| `t3code-nightly` | the same, nightly channel (the nightly app itself isn't in the binary cache) |
-| `t3` / `t3-nightly` | T3 Code's headless CLI and server, with all ten providers |
-| `t3code-free`, `t3-free` | the latest channel's app and headless CLI with only the four free providers (codex, fx, opencode, pi) and no preview browser. Comes ready-made from the binary cache (and its libraries from cache.nixos.org), with nothing to build or patch. |
-| `t3code-unwrapped`, `t3-unwrapped` (+ `-nightly`) | the same without providers or the preview browser |
-| `chrome-headless-shell` (+ `-nightly`) | the browser T3 Code's HTML previews use, at the version its release pins, patched for NixOS (unfree) |
+| `t3code` (default) | Desktop app (latest channel) with all ten providers and the preview browser; free parts come from the [binary cache](#binary-cache), unfree ones are fetched from their vendors |
+| `t3code-nightly` | Desktop app (nightly channel; the app itself isn't cached) |
+| `t3` / `t3-nightly` | Headless CLI and server, with all ten providers |
+| `t3code-free`, `t3-free` | Latest app and CLI with only the four free providers (`codex`, `fx`, `opencode`, `pi`) and no preview browser, served ready-made from the binary cache |
+| `t3code-unwrapped`, `t3-unwrapped` (+ `-nightly`) | App and CLI without providers or the preview browser |
+| `chrome-headless-shell` (+ `-nightly`) | Pinned headless Chrome used for HTML previews, patched for NixOS (unfree) |
 
 ### Agent providers
 
-`t3code` and `t3` bundle all ten providers. Pick some, or leave some out, by
-name:
+`t3code` and `t3` bundle all ten providers by default. Pick or exclude them
+by name (or pass packages directly, e.g. `[ pkgs.codex "opencode" ]`):
 
 ```nix
-t3code.override { providers = [ "codex" "claude" ]; }
+t3code.override { providers = [ "antigravity" "claude" "codex" ]; }
 t3code.override { excludeProviders = [ "grok" "muse" ]; }
 ```
 
-The names are T3 Code's own: `codex`, `claudeAgent` (or `claude`), `cursor`,
-`grok`, `fx`, `opencode`, `antigravity`, `kiro`, `muse`, `pi`. This flake's
-package names (`claude-code`, `cursor-agent`, `kiro-cli`) work too.
-
-`providers` also takes packages, mixed with names if you like
-(`providers = [ pkgs.codex "opencode" ]`), for a provider built some other
-way.
-
-**Signing in** is per provider and depends on its backend. Most need their
-own account, set up once with the provider's own command (for example
-`codex login`) or from T3 Code. Some can also run against a local model.
+Provider names: `codex`, `claudeAgent` (`claude`, `claude-code`), `cursor`
+(`cursor-agent`), `grok`, `fx`, `opencode`, `antigravity`, `kiro`
+(`kiro-cli`), `muse`, `pi`. Sign-in is handled per provider (via each CLI's
+login command or from T3 Code).
 
 | Package | What it is |
 | --- | --- |
@@ -319,392 +242,80 @@ own account, set up once with the provider's own command (for example
 | `kiro-cli` | Kiro CLI: Kiro's coding agent for the terminal (unfree) |
 | `muse` | Muse Code: Meta's coding agent (unfree) |
 
-### Setup and troubleshooting
+### Setup, troubleshooting and extra tools
 
 | Package | What it is |
 | --- | --- |
-| `doctor` | `t3code-nix doctor`: tells you why something isn't working (see [below](#when-something-isnt-working-t3code-nix-doctor)) |
-| `init` | sets up a NixOS system that isn't a flake yet as one with T3 Code (see [Setup](#setup)) |
+| `doctor` | `t3code-nix doctor` for troubleshooting (see [below](#troubleshooting-t3code-nix-doctor)) |
+| `init` | Converts a non-flake NixOS system to a flake with T3 Code (see [Setup](#setup)) |
+| `boat` | boat: boat.dev's cloud sandboxes from the command line (self-update off; see [Agent tools](docs/details.md#agent-tools)) |
+| `agent-browser` | agent-browser: Vercel's headless browser CLI for agents; defaults to `ungoogled-chromium` from `browser-unstable` (or `browser-stable` with `browserChannel = "stable"`; see [Agent tools](docs/details.md#agent-tools)) |
 
-### Extra tools for agents
-
-[Agent tools](#agent-tools), not part of T3 Code:
-
-| Package | What it is |
-| --- | --- |
-| `boat` | boat: boat.dev's cloud sandboxes from the command line (self-update off) |
-| `agent-browser` | agent-browser: Vercel's headless browser CLI for agents. It drives ungoogled-chromium from nixos-unstable by default.<br><br> You can choose `chromium` or `google-chrome` instead, and also take the browser from the newest NixOS release with `browserChannel = "stable"` (see [Agent tools](#agent-tools)). |
-
-The browsers come from nixpkgs. This flake holds each one at a pinned version and moves it forward automatically when nixpkgs gets a newer one and this flake's tests pass with ungoogled-chromium (Chromium and Chrome are tested too; a failure there opens an issue); the current versions are on the status page.
-
-What each package is built from is in
-[docs/acceptance-matrix.md](docs/acceptance-matrix.md).
+See [docs/acceptance-matrix.md](docs/acceptance-matrix.md) for what each
+package is built from.
 
 ## The NixOS module
 
-`programs.t3code`'s options:
+`programs.t3code` (also accepted as `programs.t3code-nix` for portability
+with Home Manager):
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `enable` | `false` | installs `package` for every user |
-| `channel` | `"latest"` | `"latest"` or `"nightly"`: T3 Code's release channel; picks the default `package` and the CLI |
-| `nixpkgs` | `"unstable"` | `"unstable"` or `"stable"`: build on nixos-unstable's libraries, or on the current stable NixOS release's ([NixOS stable](#nixos-stable)). It applies to the app, the CLI, the server, the doctor and the agent tools. It doesn't change which T3 Code you get (that's `channel`), and `"stable"` can't be combined with `channel = "nightly"` |
-| `providers` | `null` (the package's own) | which providers to bundle, by name, as in [Agent providers](#agent-providers) |
+| `channel` | `"latest"` | `"latest"` or `"nightly"` T3 Code release channel |
+| `nixpkgs` | `"unstable"` | `"unstable"` or `"stable"` library set ([NixOS stable](#nixos-stable)); `"stable"` cannot be combined with `"nightly"` |
+| `providers` | `null` (all ten) | providers to bundle, by name ([Agent providers](#agent-providers)) |
 | `excludeProviders` | `[ ]` | providers to leave out, by name |
-| `providersOnPath` | `true` | puts the bundled providers on `PATH` too, at low priority |
-| `electron` | `null` (the package's own: `"auto"`) | which Electron the desktop app runs on: `"auto"`, `"bundled"`, `"nixpkgs"` or an Electron package (see [The desktop app's Electron](#the-desktop-apps-electron)) |
-| `acpRuntimes` | `null` (the package's own: none) | runtimes for agents T3 Code installs from the ACP registry: `"nodejs"`, `"uv"` (see [ACP registry agents](#acp-registry-agents)) |
-| `telemetry.enable` | `true` | whether T3 Code sends its usage data; `false` turns it off for the app, the CLI and the server (see [Usage data](#usage-data)) |
-| `updateCheck.enable` | `true` | whether the desktop app checks t3code-nix for a newer T3 Code and newer bundled providers, for its update icon; `false` turns the check off (see [Update notices](#update-notices)) |
-| `agentTools.boat.enable` | `false` | installs [boat](#agent-tools), with or without the app |
-| `agentTools.agent-browser.enable` | `false` | installs [agent-browser](#agent-tools), with or without the app |
-| `agentTools.agent-browser.package` | this flake's `agent-browser` | which agent-browser: an `.override { … }` of it, or `pkgs.agent-browser` from the overlay |
-| `agentTools.agent-browser.browserChannel` | `null` (the package's own) | `"unstable"` or `"stable"`: which of this flake's browser pins its browser comes from |
-| `agentTools.agent-browser.browser` | `null` (the package's own: `"ungoogled-chromium"`) | `"ungoogled-chromium"`, `"chromium"` or `"google-chrome"`: which browser it drives (see [Agent tools](#agent-tools)) |
-| `cli.enable` | `false` | installs the headless `t3` too (`t3-nightly` on the nightly channel), bundling what the app bundles, with its shell completions |
-| `cli.allowUpstreamService` | `false` | lets this flake's `t3` run the commands for [upstream's own service](#upstreams-own-service), which it refuses |
-| `openFirewall` | `false` | for the desktop app's Network access: opens `port` in the firewall and starts the app with `T3CODE_PORT` set to it unless you set that yourself (see [The app's Network access](#the-apps-network-access)) |
-| `port` | `3773` | the desktop app's port, with `openFirewall`; not `server.port` while the server is on |
-| `server.*` | off | a T3 Code server as a systemd user service: see [Running the server](#running-the-server) |
-| `package` | this flake's `t3code` (`t3code-nightly` on the nightly channel) | what to install: `t3code-free`, `t3`, an `.override { … }` of one, or `pkgs.t3code` from the overlay |
-| `binaryCache` | `true` | adds the [binary cache](#binary-cache) and its key to `nix.settings` |
-| `claudeCodePolicy` | `true` | when claude-code is bundled, writes the policy drop-in `/etc/claude-code/managed-settings.d/10-t3code-nix.json` with claude's update switches, so a project's or your own `.claude/settings.json` can't turn its self-updater back on (see [Provider updates](#provider-updates)); machine-wide, beside any `managed-settings.json` of your own |
-| `runtimeCompat` | `false` | turns on `programs.nix-ld` with the libraries T3 Code's own downloads need; works on its own, without `enable` (see [T3 Code over SSH](#t3-code-over-ssh-runtimecompat)) |
+| `providersOnPath` | `true` | also puts bundled providers on `PATH` at low priority |
+| `electron` | `null` (`"auto"`) | `"auto"`, `"bundled"`, `"nixpkgs"`, or an Electron package ([The desktop app's Electron](docs/details.md#the-desktop-apps-electron)) |
+| `acpRuntimes` | `null` (none) | runtimes for [ACP registry agents](docs/details.md#acp-registry-agents): `"nodejs"`, `"uv"` |
+| `telemetry.enable` | `true` | whether T3 Code sends usage data ([Usage data](docs/details.md#usage-data)) |
+| `updateCheck.enable` | `true` | whether the desktop app's update icon checks `t3code-nix` ([Update notices](docs/details.md#update-notices)) |
+| `agentTools.boat.enable` | `false` | installs `boat` ([Agent tools](docs/details.md#agent-tools)) |
+| `agentTools.agent-browser.*` | off | installs `agent-browser`; configure `browser` (`"ungoogled-chromium"`, `"chromium"`, `"google-chrome"`), `browserChannel`, or `package` ([Agent tools](docs/details.md#agent-tools)) |
+| `cli.enable` | `false` | installs the headless `t3` CLI (with shell completions) alongside `enable = true`, bundling what the app bundles (warns and installs nothing on its own; `server.enable` already includes `t3`) |
+| `cli.allowUpstreamService` | `false` | lets `t3` run [upstream's own service](docs/server.md#upstreams-own-service) commands |
+| `openFirewall` | `false` | pins the desktop app to `port` (`T3CODE_PORT`) and opens it in the firewall for Network access ([The app's Network access](docs/details.md#the-apps-network-access)) |
+| `port` | `3773` | desktop app port when `openFirewall = true` (must differ from `server.port` if the server is enabled) |
+| `server.*` | off | systemd user service for `t3 serve` ([Running the server](#running-the-server)) |
+| `package` | flake's `t3code` | override package (`t3code-free`, `t3`, an `.override`, or overlay `pkgs.t3code`) |
+| `binaryCache` | `true` | adds the [binary cache](#binary-cache) and public key to `nix.settings` |
+| `claudeCodePolicy` | `true` | writes `/etc/claude-code/managed-settings.d/10-t3code-nix.json` to keep Claude Code's self-updater off ([Provider updates](docs/details.md#provider-updates)) |
+| `runtimeCompat` | `false` | enables `programs.nix-ld` with libraries for T3 Code's own downloads ([T3 Code over SSH](docs/details.md#t3-code-over-ssh-runtimecompat)) |
 
 ### Example
 
 ```nix
 programs.t3code = {
   enable = true;
-  providers = [ "codex" "claude" ];
+  providers = [ "antigravity" "claude" "codex" ];
   cli.enable = true;
 };
 ```
 
-- The CLI from `cli.enable` then bundles what the app ends up with: the
-  same providers, and the preview browser only if the app has it.
-- A `package` that has no providers to pick (an `-unwrapped` one, or
-  nixpkgs' own `t3code`) can't take them. Setting them then stops the
-  rebuild, before anything is built, with a message saying so.
-
-### The app's Network access
-
-The desktop app's **Network access** (Settings → Sharing & access) lets
-devices on your network and tailnet pair with the app's own server. NixOS's
-firewall blocks them until the app's port is open:
-
-```nix
-programs.t3code = {
-  enable = true;
-  openFirewall = true;
-  # port = 3780;   # if 3773 is taken, for example by the server
-};
-```
-
-- **The port.** The app normally takes the first free port from 3773 up,
-  so it could land on one the firewall doesn't open. With `openFirewall`,
-  it's started with `T3CODE_PORT` set to `port` (when the variable is
-  unset, empty or only whitespace), so it listens on that one. A
-  `T3CODE_PORT` you set yourself wins, and the firewall still opens
-  `port`. While something else holds the port, the app's server can't
-  start: the app says so and keeps retrying. Ports below 1024 normally
-  need root, which the app doesn't have.
-- **The package** must be this flake's desktop app (`t3code`,
-  `t3code-nightly`, `t3code-free` or an `.override` of one); another stops
-  the rebuild with a message saying so. A port pinned on the package gives
-  way to `port`, and the rebuild warns when they differ.
-- **With the server** on the same machine, the two need different ports
-  (and [different T3 homes](#one-server-per-t3-home)). The app's port
-  equal to `server.port` stops the rebuild with a message saying so; open
-  the server's with `server.openFirewall`.
-- **Several users on one machine:** the pin is the same for everyone, so
-  while one user's app holds the port, another's can't start its server.
-  Give the others a `T3CODE_PORT` of their own (in their session's
-  environment), which wins, and open those ports too
-  (`networking.firewall.allowedTCPPorts`). A `t3 serve` such a user starts
-  by hand then takes that port as well, unless given `--port`.
-- **Pinning without opening** (a firewall rule of your own, such as one for
-  `tailscale0` only, or no firewall): leave `openFirewall` off and pin the
-  package instead, `package = t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.t3code.override { port = 3780; };`.
-  `port` without `openFirewall` does nothing, and the rebuild warns.
-- **Network access stays the app's setting:** turn it on in the app. With
-  it off, the app listens only on this machine (127.0.0.1), so the open
-  port doesn't reach it; another program listening on that port on a
-  network address is still reachable through it.
-- T3 Connect and Tailscale HTTPS (the app's name for
-  [Tailscale Serve](#running-the-server)) need no open port.
-- The terminals and agents the app starts don't get `T3CODE_PORT`: the app
-  leaves it out of its server's environment.
-
-### Without the module
-
-- **A package:** take one from the flake
-  (`t3code-nix.packages.${system}.t3code`).
-- **Home Manager:** use [its module](#the-home-manager-module), or put the
-  package in `home.packages`
-  (`home.packages = [ t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.t3code ];`).
-- **The overlay**, `t3code-nix.overlays.default`, puts every package under
-  `pkgs.t3code-nix` (`pkgs.t3code-nix.t3`, `pkgs.t3code-nix.codex`), and
-  the app and most providers at the top level too. Which ones, and why, is
-  under [The overlay](#the-overlay).
-
-### Usage data
-
-T3 Code's desktop app and server send product usage events (provider,
-model, token counts and the like; these carry no prompts, responses or file
-contents) to T3 Code's own endpoint, `ingest.t3.codes`; and, when its
-build has a tracing endpoint, T3 Connect relay connection traces, to
-Axiom. Upstream describes what's in them:
-[Product usage data](https://github.com/pingdotgg/t3code/blob/main/docs/user/telemetry.md).
-It's on, as upstream ships it. To turn it off:
-
-```nix
-programs.t3code.telemetry.enable = false;   # programs.t3code-nix in Home Manager
-```
-
-Without the module, the same on the package:
-`t3code-nix.packages.${system}.t3code.override { telemetry = false; }`
-(or `t3`, `t3code-free`, the overlay's `pkgs.t3code`).
-
-- **What it does:** the app, the CLI and the server start T3 Code with
-  `T3CODE_TELEMETRY_ENABLED=false`. A value you set yourself where the
-  program starts (exported in the terminal you start it from, the server's
-  `environmentFile`, or the user manager's environment) wins; an empty or
-  blank one counts as unset. The desktop app started from your desktop's
-  menu already has the value, so a `T3CODE_TELEMETRY_ENABLED` in your shell
-  profile doesn't change it there, unless your desktop session's
-  environment has it too (`~/.profile`, `environment.d`, Home Manager's
-  `home.sessionVariables`). It doesn't set `DO_NOT_TRACK`, which would
-  reach every agent T3 Code starts.
-- **Other ways:** `DO_NOT_TRACK=1` in T3 Code's environment (in your shell
-  profile, for the desktop app) turns it off too, and wins over
-  `T3CODE_TELEMETRY_ENABLED=true`. So does a
-  [managed policy](https://github.com/pingdotgg/t3code/blob/main/docs/user/managed-policy.md)
-  with `limits.telemetry: false` in `/etc/t3code/policy.json`, for every
-  user, whatever the environment says.
-- **When it applies:** at the next start. A rebuild or switch doesn't
-  restart a running server: `systemctl --user restart t3code-server`
-  (after `systemctl --user daemon-reload` if the unit changed), and quit
-  the desktop app fully and start it again.
-- **Turning it back on** (`true`, the default) only stops setting the
-  variable: an override with `telemetry = false`, a
-  `T3CODE_TELEMETRY_ENABLED=false` or `DO_NOT_TRACK=1` set elsewhere, or
-  a policy still keep it off. (The desktop app keeps the last value it
-  saw in a cache, which it replaces once it has read your login shell: if
-  it can't read it, a start can still be off.)
-- **Agent feedback**, when you've turned it on in T3 Code, is kept on your
-  machine and not sent while usage data is off. (Reports you send are
-  separate from usage events, and can include what you chose to attach.)
-- **The desktop app's own `t3`:** the app writes a `t3` launcher of its own
-  (`~/.t3/bin/t3`, and on first launch it may link it into `~/.local/bin`)
-  that runs T3 Code without this flake's wrapper: a `t3 serve` started
-  through it doesn't get this setting (nor the bundled providers). The
-  `t3` commands agents run through it inherit the app's server's
-  environment, so they follow its setting. Use the
-  module's `t3` (`cli.enable`) instead; the doctor warns about a `t3` on
-  `PATH` that isn't from Nix.
-- **Not covered:** OpenTelemetry export to endpoints you configure
-  (Settings → Diagnostics, `T3CODE_OTLP_*`), which is yours; the mobile
-  app, which has its own switches (and its activity publishing); the
-  hosted web app, which has no switch (a browser opened from your own
-  T3 Code server follows that server); a T3 Code backend on another
-  machine, or one over SSH with upstream's downloads
-  ([`runtimeCompat`](#t3-code-over-ssh-runtimecompat)), which follows its
-  own environment; [upstream's own service](#upstreams-own-service); and
-  a T3 Code installed outside this flake.
-- **The doctor** says what this build does, and warns when your shell sets
-  a value that turns it back on or that T3 Code rejects, or when the
-  running server started without this build's setting.
+Without the module, install `t3code-nix.packages.${system}.t3code` directly
+or apply `t3code-nix.overlays.default` (see [The overlay](docs/details.md#the-overlay)).
 
 ## The Home Manager module
 
-`programs.t3code-nix` (`t3code-nix.homeModules.default`, also as
-`homeManagerModules`) has the NixOS module's options that make sense for one
-user, with the same names, defaults and meaning: `enable`, `channel`,
-`nixpkgs`, `providers`, `excludeProviders`, `providersOnPath`, `electron`,
-`acpRuntimes`, `telemetry.enable` ([Usage data](#usage-data)),
-`updateCheck.enable` ([Update notices](#update-notices)), `agentTools.*`,
-`cli.*`, `package`, and `server.*` without
-`users` and `openFirewall`. It installs into your profile (`home.packages`),
-and `server.enable` writes `t3code-server` as your own systemd user service.
-It works on NixOS and on other Linux distros (x86_64 and aarch64); it's tested
-with Home Manager's master branch, and should work with release-26.05.
+`t3code-nix.homeModules.default` (also `homeManagerModules`) provides
+`programs.t3code-nix` with all single-user options (everything except
+machine-wide settings like `binaryCache`, `claudeCodePolicy`,
+`runtimeCompat`, `openFirewall`/`port`, `server.openFirewall`, and
+`server.users`). It works on NixOS and other Linux distros.
 
-The NixOS module takes `programs.t3code-nix` too, as another name for
-`programs.t3code`, so a block of these options reads the same in both.
-
-### What Home Manager can't do
-
-These are machine settings. Setting one under Home Manager stops the
-switch with a message saying where it lives.
-
-| NixOS option | Under Home Manager |
-| --- | --- |
-| `binaryCache` | add the [binary cache](#binary-cache) yourself (below) |
-| `claudeCodePolicy` | write the policy file yourself (below), or let the NixOS module do it |
-| `runtimeCompat` | nix-ld is a system setting: on NixOS, the NixOS module's; elsewhere your system's own loader runs T3 Code's downloads (best effort) |
-| `server.openFirewall` | open the port in your system's firewall |
-| `openFirewall`, `port` | open the app's port in your system's firewall, and pin the app to it with `package = t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.t3code.override { port = 3773; }` |
-| `server.users` | the unit is yours alone |
-
-**With Home Manager as a NixOS module** and this flake's NixOS module
-imported (no `programs.t3code.enable` needed), the NixOS module does both
-for every Home Manager user with `programs.t3code-nix`: it writes the
-Claude Code policy when one of them bundles claude-code, and adds the
-binary cache when one of them uses the app, the server or an agent tool,
-by its own `claudeCodePolicy` and `binaryCache` (both on by default). A
-user whose `enable` (or providers) depends on what those settings write,
-say on `osConfig.environment.etc`, makes an infinite recursion; that isn't
-supported.
-
-**Home Manager on NixOS, standalone** (not as a NixOS module): the NixOS
-module can't see your Home Manager config, so add these lines to the NixOS
-config yourself:
-
-```nix
-# The Claude Code policy (as the NixOS module writes it: a copy, not a link).
-environment.etc."claude-code/managed-settings.d/10-t3code-nix.json" = {
-  mode = "0444";
-  text = builtins.toJSON {
-    env = { DISABLE_UPDATES = "1"; DISABLE_AUTOUPDATER = "1"; DISABLE_INSTALLATION_CHECKS = "1"; };
-  };
-};
-# The binary cache.
-nix.settings = {
-  substituters = [ "https://t3code-nix.cachix.org" ];
-  trusted-public-keys = [ "t3code-nix.cachix.org-1:FwZvqgRcnUjCSEUmdosysof1pTedbm/TTmlk8IeDsJA=" ];
-};
-```
-
-**On another distro:** put the cache's two values in `/etc/nix/nix.conf`
-as `extra-substituters` and `extra-trusted-public-keys` and restart the
-daemon (see [Binary cache](#binary-cache)), and the policy, the JSON
-`{"env":{"DISABLE_UPDATES":"1","DISABLE_AUTOUPDATER":"1","DISABLE_INSTALLATION_CHECKS":"1"}}`,
-in `/etc/claude-code/managed-settings.d/10-t3code-nix.json`. `t3code-nix
-doctor` checks both and says which fix applies where you are.
-
-### Other Linux distros
-
-- **GPU drivers.** The desktop app is Electron and needs your system's
-  graphics drivers. Set up Home Manager's `targets.genericLinux.gpu`
-  (drivers in `/run/opengl-driver` after a one-time `sudo` step, no
-  wrapper), as Home Manager recommends. Or, if you use Home Manager's nixGL
-  (`targets.genericLinux.nixGL.packages`), the module runs the desktop app
-  through it. nixGL sets `LD_LIBRARY_PATH` and driver variables, which
-  everything the app starts inherits: its server, the providers, its
-  terminal and the commands agents run there, your system's own programs
-  included, which may then load Nix's graphics libraries. That's one more
-  reason to prefer `targets.genericLinux.gpu`. Don't set up both (Home
-  Manager warns).
-- **User namespaces.** Electron's sandbox, like Chromium's, needs
-  unprivileged user namespaces. Where they're restricted (Ubuntu 23.10 and
-  later, by default), the app quits at start with "The SUID sandbox helper
-  binary was found, but is not configured correctly", asking for
-  `chrome-sandbox` to be owned by root with mode 4755. That can't be done
-  in the Nix store, and isn't the fix: turn the restriction off, or allow
-  `userns` for the app in an AppArmor profile, as the note under
-  [Agent tools](#agent-tools) says for agent-browser. (Tested on Ubuntu:
-  the app quits with the restriction on and starts with it off.)
-- **Starting the server at boot** needs lingering, which Home Manager can't
-  set: `loginctl enable-linger $USER` (on NixOS, `users.users.<name>.linger
-  = true`).
-- **The overlay:** standalone Home Manager imports its own nixpkgs, so an
-  overlay goes in `nixpkgs.overlays` in your Home Manager config, not on
-  the `pkgs` you pass in. The module itself needs no overlay.
-
-### Home Manager's own `programs.t3code`
-
-Home Manager has a `programs.t3code` of its own (settings, keybindings,
-themes and a server). It stays usable beside this module, for its
-settings, keybindings and themes. When its `enable` is on:
-
-- With this module's app on, its `package` becomes `null` (below
-  `mkDefault`), so it doesn't install a second app; its settings still
-  apply. If you set its `package` anyway, the switch stops, naming both.
-- With only this module's server on, its `package` stays: you can keep its
-  app and use this server. This module's `t3` wins in your profile.
-- Its server and this module's server can't both be on (they would contend
-  for port 3773 and `~/.t3`); the switch stops with a message. Its server
-  with this module's app (and not this module's server) stops too: use
-  `programs.t3code-nix.server.enable`.
-- Its settings, keybindings and themes go to `~/.t3/userdata`: the desktop
-  app's home, not a separate `server.home`. Its `userSettings` are written
-  to the Nix store, even in its mutable mode, so keep secrets out of them.
-  When you remove its module, its mutable settings files and the themes it
-  copied stay in `~/.t3` (the links of its immutable ones go).
-
-On a Home Manager without that module, none of this applies.
-
-### The server under Home Manager
-
-Everything in [Running the server](#running-the-server) applies, with these
-differences:
-
-- **Switching.** The unit is wanted by `default.target`. With Home
-  Manager's default `systemd.user.startServices` (`sd-switch`) and your user
-  manager running, the first switch starts it. A switch to a new version
-  doesn't restart a running server (`X-SwitchMethod = keep-old`): there's
-  one user manager and one server across all your sessions, so the new
-  version starts at the unit's next start (a reboot with lingering, your
-  first session after the manager stopped, or `systemctl --user restart
-  t3code-server`). Logging in again while the manager runs doesn't.
-  Rollbacks work the same way. `sd-switch` is the supported mode: with
-  `startServices = "suggest"`, Home Manager only prints what to do (and its
-  suggestions ignore `keep-old`), and with your user manager not running,
-  nothing is reloaded. Then run `systemctl --user daemon-reload`, and
-  start, restart or stop `t3code-server` yourself.
-- **`systemd.user.enable`** must be on (the default on Linux): it writes
-  the unit, and the switch stops without it.
-- **First boot with lingering** (Home Manager as a NixOS module): your user
-  manager can start before Home Manager's activation writes the unit; the
-  activation then starts it. With `home-manager.startAsUserService`, the
-  same should hold, untested.
-- **Turning it off:** the next switch removes the unit and stops it; your
-  T3 home and its [database copies](#database-copies) stay. When no switch
-  will stop it (removing Home Manager or your `home-manager.users.<name>`,
-  rolling back to a generation from before the module, or turning off
-  `systemd.user.enable` in the same switch), switch first to a generation
-  with the server off, then remove. If that's no longer possible:
-  `systemctl --user disable --now t3code-server`, delete
-  `t3code-server.service` from `systemd/user/` in Home Manager's
-  `xdg.configHome` (`~/.config` unless you changed it) and its link from
-  that folder's `default.target.wants/`, and run
-  `systemctl --user daemon-reload`.
-- **Moving between servers** (the NixOS module's, upstream's own, Home
-  Manager's own or this one): the checks see the configuration, not what's
-  running. Stop the old one first, then check with `systemctl --user status
-  t3code-server` (and `t3code-nix doctor`) that the right unit runs.
-- **Both modules' servers** for the same user, with Home Manager as a NixOS
-  module: the Home Manager module warns. Your unit, in
-  `~/.config/systemd/user`, shadows the system's for you; other users may
-  still run the system's on the same port. The doctor says which one
-  systemd loaded.
-- **Several users on one machine** each need their own `port` (two on
-  3773 can't both start, whichever module runs each), and their own T3
-  home.
-- **`environmentFile`** must be readable by you: a user unit reads it as
-  you.
-- **Tailscale Serve** is supported with Home Manager as a NixOS module and
-  `services.tailscale` there (the unit gets its `tailscale`, and the switch
-  stops without it). Elsewhere `t3` looks for `tailscale` on the `PATH` it
-  reads; untested. Its HTTPS port is the machine's, so two users serving on
-  the same `tailscaleServe.port` contend.
+See **[docs/home-manager.md](docs/home-manager.md)** for:
+- <a id="what-home-manager-cant-do"></a>**[What Home Manager can't do](docs/home-manager.md#what-home-manager-cant-do)** (including **Home Manager on NixOS** standalone config for the binary cache and Claude Code policy)
+- <a id="other-linux-distros"></a>**[Other Linux distros](docs/home-manager.md#other-linux-distros)** (GPU drivers / nixGL, Ubuntu 23.10+ user namespaces, lingering)
+- <a id="home-managers-own-programst3code"></a>**[Home Manager's own `programs.t3code`](docs/home-manager.md#home-managers-own-programst3code)** coexistence rules
+- <a id="the-server-under-home-manager"></a>**[The server under Home Manager](docs/home-manager.md#the-server-under-home-manager)** (`sd-switch`, upgrades, teardown, Tailscale Serve)
 
 ## Running the server
 
-`programs.t3code.server` runs this flake's `t3 serve` as a systemd user
-service, `t3code-server`, so your other devices can reach this machine.
-Home Manager's `programs.t3code-nix.server` runs the same, as your own
-user service (see [The server under Home Manager](#the-server-under-home-manager)).
-
-- It has the same channel and providers as the app.
-- It needs no nix-ld, and its version comes from the flake like everything
-  else.
-- It works without `enable`, so a headless machine gets the server and
-  `t3` but not the desktop app.
-
-For example, a server for amber that the other devices on your network
-can reach:
+`programs.t3code.server` (or `programs.t3code-nix.server` in Home Manager)
+runs `t3 serve` as a systemd user service (`t3code-server`), with `t3` on
+`PATH` and no `nix-ld` required. Works without `enable = true` on headless
+machines:
 
 ```nix
 programs.t3code.server = {
@@ -713,927 +324,158 @@ programs.t3code.server = {
   lan = true;
   openFirewall = true;
 };
-# Start at boot and keep running after logout, not only while amber is
-# logged in:
-users.users.amber.linger = true;
+users.users.amber.linger = true; # start at boot and keep running after logout
 ```
 
-**Starting at boot** is NixOS's own `users.users.<name>.linger`, not an
-option here: it's a choice about the user account, and NixOS already has
-the one place for it. Without it, the server runs while the user is logged
-in.
+- **Reachability:** enable `server.lan`, `server.host`,
+  `server.tailscaleServe.enable`, or **T3 Connect** (`t3 connect link`,
+  passing `--base-dir <home>` if `server.home` is set, then
+  `systemctl --user restart t3code-server`), then pair devices with
+  `t3 pair` (with `--base-dir <home>` if `server.home` is set).
+- **Upgrades:** rebuilds never interrupt a running server; restart manually
+  with `systemctl --user restart t3code-server` when ready. Logs are in
+  `journalctl --user -u t3code-server`.
 
-| Option | Default | What it does |
-| --- | --- | --- |
-| `server.enable` | `false` | the `t3code-server` user service, and its `t3` on `PATH` |
-| `server.users` | `[ ]` (every user that isn't a system user) | whose session runs it. Each server listens on `port`, so on a machine with several users, name one |
-| `server.home` | `null` (`~/.t3`) | its T3 home, `T3CODE_HOME` (`%h` is the home folder; no other `%` specifier) |
-| `server.port` | `3773` | `T3CODE_PORT` |
-| `server.host` | `null` (127.0.0.1) | `T3CODE_HOST`: an address to listen on, for any client (not with `lan`) |
-| `server.lan` | `false` | `T3CODE_LAN`: also accept the local network and tailnet (private addresses only; not with `host`) |
-| `server.openFirewall` | `false` | opens `port` in the firewall, for `lan` or `host` (Tailscale Serve and T3 Connect need no open port) |
-| `server.tailscaleServe.enable`, `.port` | `false`, `443` | serve it on the tailnet with Tailscale Serve (needs `services.tailscale` and `tailscale set --operator=<user>`) |
-| `server.logLevel` | `null` (Info) | `T3CODE_LOG_LEVEL`: `All`, `Trace`, `Debug`, `Info`, `Warn`, `Error`, `Fatal` or `None` |
-| `server.environmentFile` | `null` | a file of `NAME=value` lines, read at start and kept out of the Nix store, for secrets or other `T3CODE_*` settings (an absolute path, or under `%h/`). Its values win over the options; set the home with `server.home`, not `T3CODE_HOME` here, since `t3code-nix doctor` only knows `server.home` |
-
-**Pairing.** To use the server from another device (a phone, a laptop, a
-browser), pair it: run `t3 pair` on this machine and open the code or link
-it gives you on the other device.
-
-The other device must be able to reach the server, and by default it can't:
-the server listens only on this machine (127.0.0.1). Make it reachable in
-one of these ways first:
-
-- `server.lan = true`: devices on your local network and tailnet
-- `server.host`: an address of your choice, for any client that reaches it
-- `server.tailscaleServe.enable = true`: over HTTPS on your tailnet
-- T3 Connect (below): from anywhere, through T3's relay, with no port open
-
-Until then, `t3 pair` and `t3 status` suggest `t3 up` or `t3 connect`;
-this flake's `t3` refuses those (see
-[Upstream's own service](#upstreams-own-service)).
-
-**T3 Connect** reaches the server through T3's relay with your T3 account,
-from anywhere, with no port open. Once per T3 home:
-
-```sh
-t3 connect link                           # sign in: open the link it prints
-systemctl --user restart t3code-server    # connects on start
-t3 connect status                         # "Other devices can reach this machine"
-```
-
-With `server.home` set, add `--base-dir` with that home to both `t3`
-commands, with `%h` written as your home folder (for example
-`--base-dir ~/.t3-server`).
-
-Through the overlay, T3 Connect uses your nixpkgs' cloudflared, which must be
-2025.6.1 or newer.
-
-`t3 connect unlink` turns it off (then restart the server to close the
-tunnel), and `t3 connect logout` signs out.
-
-**Logs.** The server logs to the user journal
-(`journalctl --user -u t3code-server`), pairing details included, so
-whoever can read your journal can read those too.
-
-**Upgrades.** A rebuild (or a Home Manager switch) doesn't restart a
-running server, since that would end any agent turns it's running. The new
-version starts the next time the server does (at boot, or at your first
-login after your user manager stopped, without linger), or when you run
-`systemctl --user restart t3code-server`.
-
-### Database copies
-
-Before a new version of the server first starts, the service copies the
-database (`~/.t3/userdata/statev2.sqlite`, with SQLite's online backup) to
-`~/.t3/t3code-nix-backups/statev2-<previous version>-<time>.sqlite`, and
-keeps the newest three. `<previous version>` is the version this service
-last started, or `unknown` when the service first starts on a database
-that was already there. With `server.home` set, these paths are under that
-home instead of `~/.t3`.
-
-- Each copy is the size of the database, which can be several GB
-  (`du -h ~/.t3/userdata/statev2.sqlite`).
-- A new version may migrate the database so that an older one won't open
-  it. If a rollback to an older generation leaves the server failing, put
-  back the copy from the version you rolled back to (changes since then
-  are lost), with that copy's file name in the `cp` line:
-
-  ```sh
-  systemctl --user stop t3code-server
-  cp "$HOME/.t3/t3code-nix-backups/statev2-<version>-<time>.sqlite" ~/.t3/userdata/statev2.sqlite
-  rm -f ~/.t3/userdata/statev2.sqlite-wal ~/.t3/userdata/statev2.sqlite-shm
-  systemctl --user start t3code-server
-  ```
-
-- If a copy fails, the server doesn't start (`systemctl --user status
-  t3code-server` says why), and the next start tries again.
-
-### One server per T3 home
-
-The desktop app runs a server of its own on `~/.t3`. So while
-`t3code-server` uses that home, the desktop app on the same machine says
-"This T3 home is unavailable" and quits. On a machine that runs both,
-either:
-
-- start the app with another `T3CODE_HOME`, and pair it with the server
-  like any other device, or
-- give the server its own `home`, and pass `--base-dir` to the `t3`
-  commands meant for it (with `%h` written as your home folder, for
-  example `--base-dir ~/.t3-server`).
-
-### Upstream's own service
-
-T3 Code can also install a server of its own: `t3 service install`, `t3 up`
-and plain `t3 connect` set up `t3code.service` in `~/.config/systemd/user`.
-That service runs T3 Code's own download from `~/.t3/runtime`, not this
-flake's build: it has none of the bundled providers, updates itself outside
-Nix, and on NixOS starts only with
-[`runtimeCompat`](#t3-code-over-ssh-runtimecompat). So this flake's `t3`
-refuses those commands, and `t3 update`. The rest of `t3 connect` (`link`,
-`login`, `status`, `unlink`, `logout`, `publish`) works for `t3code-server`.
-
-If upstream's service is already installed, remove it with
-`t3 service uninstall` before turning on `t3code-server`: only one server
-can run on a T3 home (see [One server per T3 home](#one-server-per-t3-home)).
-`t3 service protect` doesn't work on NixOS (`/etc/systemd` is read-only);
-set that kind of protection in NixOS instead, with `systemd.slices`,
-`systemd.services."user@"` and
-`systemd.user.services.t3code-server.serviceConfig`.
-
-**Using upstream's service on purpose.** Set `enable`, `cli.enable`,
-`cli.allowUpstreamService` and `runtimeCompat` (without the module:
-`t3.override { allowUpstreamService = true; }` and `programs.nix-ld` with
-the libraries `runtimeCompat` lists in `nixos/module.nix`). Leave
-`server.enable` off, or give the two servers different homes and ports.
+See **[docs/server.md](docs/server.md)** for the full options table, T3
+Connect commands, automatic SQLite <a id="database-copies"></a>[database copies](docs/server.md#database-copies),
+running <a id="one-server-per-t3-home"></a>[both desktop app and server](docs/server.md#one-server-per-t3-home),
+and <a id="upstreams-own-service"></a>[upstream's own service](docs/server.md#upstreams-own-service).
 
 ## Binary cache
 
-A public [Cachix](https://www.cachix.org) cache holds the free packages
-of the latest channel: `t3code-unwrapped`, `t3-unwrapped`, `codex`, `fx`,
-`opencode`, `pi`, and with them all of `t3code-free` and `t3-free`. It
-also holds the agent tools `boat` and `agent-browser` (their nixos-unstable
-builds).
+A public [Cachix](https://www.cachix.org) cache holds the free latest-channel
+packages (`t3code-unwrapped`, `t3-unwrapped`, `codex`, `fx`, `opencode`,
+`pi`, `t3code-free`, `t3-free`, `boat`, and `agent-browser`).
 
-It holds free software only. So what comes from where depends on the
-package you install:
+| Package | From cache | Fetched from vendor & patched locally (seconds) |
+| --- | --- | --- |
+| `t3code` / `t3` | app/CLI + `codex`, `fx`, `opencode`, `pi` | 6 unfree providers + preview browser (+ small wrapper) |
+| `t3code-free` / `t3-free` | everything | nothing |
+| `t3code-nightly` / `t3-nightly` | `codex`, `fx`, `opencode`, `pi` | nightly app/CLI, 6 unfree providers, preview browser |
 
-| You install | From this cache | From each vendor, patched on your machine where needed | Put together on your machine |
-| --- | --- | --- | --- |
-| `t3code` (the default) or `t3` | the app itself, and Codex, fx, OpenCode and pi | Claude Code, Cursor Agent, Grok, Antigravity, Kiro, Muse, and the preview browser | the small wrapper that bundles them |
-| `t3code-free` or `t3-free` | everything | nothing | nothing |
-| `t3code-nightly` or `t3-nightly` | Only Codex, fx, OpenCode and pi | the nightly app, the six unfree providers and the preview browser | the wrapper |
+Nothing is compiled when the cache hits (an uncached OpenCode build compiles
+`wrap-buddy`, taking a few seconds).
 
-- "Patched on your machine" means downloading the vendor's ready-made
-  program and, where it needs that, adjusting it to run on NixOS (Grok
-  and Muse are static programs, used as they are). It takes seconds per
-  package; nothing is compiled.
-- The libraries all of these use come from cache.nixos.org as usual.
-- Choosing `providers` changes the wrapper, which is then put together on
-  your machine; the providers you keep come from the same places as above.
-- It's on Cachix's free plan for open-source projects: 5 GB, and when that
-  fills, the least recently used entries are removed. A full set for both
-  systems is about 1.3 GB compressed (measured for T3 Code 0.1.9 on x86_64
-  and doubled; libraries already on cache.nixos.org aren't stored again),
-  so the cache has room for several releases. Which ones stay is decided by use, not age.
-  A package that has gone is downloaded from its vendor and patched on
-  your machine again.
-
-Three ways to use it:
-
-- **The NixOS module** adds it whenever it installs anything: the app,
-  the server or an agent tool (`programs.t3code.binaryCache`, on by
-  default), and for Home Manager users with `programs.t3code-nix` when Home
-  Manager is a NixOS module. It takes effect from the rebuild after the one
-  that turns it on. The Home Manager module can't add it: see
-  [What Home Manager can't do](#what-home-manager-cant-do).
-- **`nix run` and other flake commands** are offered it by this flake's
-  `nixConfig`. Nix asks first (or pass `--accept-flake-config`), and then
-  uses it only if you're in `trusted-users` or the machine already trusts
-  this cache. Otherwise it prints a warning and builds without the cache,
-  so add it by hand instead.
-- **By hand**, on NixOS:
-
-  ```nix
-  nix.settings = {
-    substituters = [ "https://t3code-nix.cachix.org" ];
-    trusted-public-keys = [ "t3code-nix.cachix.org-1:FwZvqgRcnUjCSEUmdosysof1pTedbm/TTmlk8IeDsJA=" ];
-  };
-  ```
-
-  Elsewhere, the same two values go in `/etc/nix/nix.conf` as
-  `extra-substituters` and `extra-trusted-public-keys`; then restart the
-  daemon (`sudo systemctl restart nix-daemon`).
-
-**Don't make this flake follow your nixpkgs.** With
+The NixOS module configures the cache automatically (`binaryCache = true`,
+effective on the rebuild after enabling it). `nix run` offers it via
+`nixConfig` (`--accept-flake-config` for trusted users). To add it manually:
 
 ```nix
-inputs.t3code-nix.inputs.nixpkgs.follows = "nixpkgs";
-```
-
-the packages would be built on your nixpkgs instead of the one this flake pins
-(all but the NixOS stable set and agent-browser's browsers, which have pins of
-their own).
-
-- The cache holds only what the pinned one produces. Unless yours is at the
-  same revision, the store paths differ and the cache has none of them.
-- Leaving the input alone means your lock file pins two nixpkgs: yours
-  and this flake's. Unless they're the same revision, T3 Code uses its own
-  copy of the libraries it needs (glibc, GTK, Mesa and so on), next to
-  your system's: several hundred MB, downloaded ready-made from
-  cache.nixos.org.
-
-## Unfree packages
-
-Seven of the packages this flake bundles are unfree:
-
-- `claude-code`
-- `cursor-agent`
-- `grok`
-- `antigravity`
-- `kiro-cli`
-- `muse`
-- `chrome-headless-shell`, the [preview browser](#the-preview-browser)
-  (and its `-nightly` build)
-
-The flake's own packages (`nix run`, `t3code-nix.packages.${system}.*`, and
-what the module installs by default) allow exactly these seven, plus Google
-Chrome for agent-browser (below). Nothing else. You don't need
-`allowUnfree` for them.
-
-Google Chrome isn't bundled: agent-browser uses it only when you choose it
-(`browser = "google-chrome"`, see [Agent tools](#agent-tools)), and
-choosing it is the opt-in.
-
-Through the overlay, your own nixpkgs config decides, Google Chrome
-included. For an all-free install, use `t3code-free` or `t3-free` (see
-[T3 Code](#t3-code)). They're on the latest channel only.
-
-## NixOS stable
-
-`programs.t3code.nixpkgs` picks the libraries T3 Code is built on (Mesa,
-GTK, nss, glibc, …). It doesn't change which T3 Code you get: that's
-`channel`.
-
-| `nixpkgs` | Libraries | Channels | Binary cache |
-| --- | --- | --- | --- |
-| `"unstable"` (default) | the `nixos-unstable` this flake pins | latest and nightly | yes |
-| `"stable"` | the newest NixOS release, at the revision this flake pins and tests (`versions/nixpkgs-stable.json`) | latest only | no |
-
-```nix
-programs.t3code = {
-  enable = true;
-  nixpkgs = "stable";
+# NixOS (elsewhere, put extra-substituters / extra-trusted-public-keys in /etc/nix/nix.conf and restart nix-daemon):
+nix.settings = {
+  substituters = [ "https://t3code-nix.cachix.org" ];
+  trusted-public-keys = [ "t3code-nix.cachix.org-1:FwZvqgRcnUjCSEUmdosysof1pTedbm/TTmlk8IeDsJA=" ];
 };
 ```
 
-Without the module, the set is `t3code-nix.legacyPackages.<system>.stable`
-(`.t3code`, `.t3`, `.agent-browser`, …); without flakes, with
-`t3code-nix` imported as [above](#without-flakes), it's
-`t3code-nix.stable.t3code`.
+**Don't add `inputs.t3code-nix.inputs.nixpkgs.follows = "nixpkgs"`.** The
+cache only matches this flake's pinned nixpkgs; following yours misses the
+cache and rebuilds locally.
 
-**When to use it.** The default packages work on a NixOS stable system too.
-Choose `"stable"` if:
+## Unfree packages
 
-- the desktop app has graphics problems. With `"stable"`, its Mesa and GBM
-  come from the same release as your system's GPU driver
-  (`/run/opengl-driver`); unstable's can drift far enough from it to fail.
-  (Not tested on every GPU.)
-- you'd rather have libraries that change less often, or nothing from
-  unstable at all.
+Seven bundled packages are unfree: `claude-code`, `cursor-agent`, `grok`,
+`antigravity`, `kiro-cli`, `muse`, and `chrome-headless-shell` (plus
+opt-in `google-chrome` if selected for `agent-browser`).
 
-It follows this flake's pin, not your system: unless your system is at the
-same revision, you still get a second copy of the libraries.
+The flake's own packages and modules allow only these unfree packages—you
+don't need to set `allowUnfree` globally. Through the overlay, your own
+nixpkgs `allowUnfree` config applies. For a 100% free install, use
+`t3code-free` or `t3-free` (latest channel only).
 
-**What's different.**
+## NixOS stable
 
-- **Not cached.** The binary cache holds only the default packages, so
-  this set is patched and put together on your machine. Its libraries
-  still come from cache.nixos.org. The only thing compiled is wrap-buddy, a
-  small tool OpenCode is patched with (seconds).
-- **It can lag.** When a new release fails a check on NixOS stable (on
-  either system), the stable set stays on the last versions that passed.
-  It catches up the next time everything passes there: after a fix in
-  nixpkgs, or with a later T3 Code release. The
-  [status page](https://boltflake.github.io/t3code-nix/) says when the set is
-  behind, a `stable-behind` issue says why, and each release's notes say
-  whether NixOS stable has it.
-- **agent-browser** takes its browser (ungoogled-chromium by default) from
-  this flake's NixOS stable browser pin instead of the unstable one (see
-  [Agent tools](#agent-tools)).
-- **A `package` you set yourself** (or `agentTools.agent-browser.package`)
-  still wins. `nixpkgs` then still picks the CLI, the server and the
-  doctor, and the providers follow the app.
+`programs.t3code.nixpkgs = "stable"` builds against this flake's pinned
+NixOS stable libraries (`versions/nixpkgs-stable.json`) using the last
+passing stable snapshot (`versions/stable/`). It keeps the `latest`
+`channel` (`"stable"` cannot be combined with `"nightly"`), though the
+snapshot's app and provider pins can lag behind `main` after a failed check
+on NixOS stable (shown on the status page).
 
-**What it isn't.**
+| `nixpkgs` | Libraries | Channels | Binary cache |
+| --- | --- | --- | --- |
+| `"unstable"` (default) | pinned `nixos-unstable` | latest and nightly | yes |
+| `"stable"` | pinned NixOS stable | latest only | no (patched locally; libraries from `cache.nixos.org`, and OpenCode compiles `wrap-buddy`) |
 
-- A rollback: to stay on an older T3 Code, pin a tag (see
-  [Channels, pinning and rolling back](#channels-pinning-and-rolling-back)).
-- Your own nixpkgs: for that, see the overlay (and
-  [why not `follows`](#binary-cache)).
+Use `"stable"` if you hit GPU/Mesa mismatches on a NixOS stable host or
+want slower-moving libraries. Without the module, use
+`t3code-nix.legacyPackages.<system>.stable.t3code` (or
+`t3code-nix.stable.t3code` without flakes).
 
-## When something isn't working: `t3code-nix doctor`
+<a id="when-something-isnt-working-t3code-nix-doctor"></a>
+## Troubleshooting: `t3code-nix doctor`
 
-`programs.t3code.enable` (or `server.enable`) in the NixOS module, or
-`programs.t3code-nix.enable` in the Home Manager module, installs `t3code-nix doctor`, which checks the usual reasons T3 Code or a provider misbehaves
-on NixOS, usually in a few seconds (asking claude about its machine
-policy can take up to 30). Without the module, run
-`nix run github:boltflake/t3code-nix#doctor`. That one doesn't know your
-configuration: it checks the default packages, and can't tell whether you
-meant to run the server.
-
-```
-$ t3code-nix doctor
-t3code-nix doctor (T3 Code 0.1.9, latest channel)
-Electron 44.10.2 from nixpkgs (bundled: 44.10.1; auto: nixpkgs 44.10.2 >= bundled 44.10.1)
-
-Providers (looked up on this terminal's PATH; T3 Code takes yours from your login
-shell, which is usually the same, and falls back to the ones it bundles):
-  OK       antigravity 1.5.6 (bundled)
-  WARN     claude-code: T3 Code uses your claude, installed outside Nix (/home/me/.local/bin/claude; version not checked), not the bundled 2.1.322
-           → if it's an old self-installed copy (a provider's own updater puts them in your home, for example in ~/.local/bin, ~/.grok/bin or ~/.opencode/bin), delete it so the bundled one is used
-  OK       codex 0.167.2 (bundled)
-  OK       cursor-agent: built into T3 Code (its SDK); nothing to find on PATH
-  …
-  (A binary path set in T3 Code's own provider settings comes before all of this.)
-
-This system:
-  OK       binary cache: https://t3code-nix.cachix.org is set up
-  PROBLEM  upstream's service is installed (/home/me/.config/systemd/user/t3code.service), and without nix-ld its downloaded T3 Code can't start
-           → `t3 service uninstall`, or `systemctl --user disable --now t3code.service` and delete …
-  …
-```
-
-Each line is `OK`, `WARN` or `PROBLEM`; `WARN` and `PROBLEM` lines say
-what to do under them (`→`). It exits with 1 if there's a problem.
-
-It only reads: it writes nothing of yours and needs no sudo. It runs no
-provider except claude's own `doctor`, in a throwaway home, to ask whether
-a machine policy keeps claude's updates off (claude may contact its servers
-and run `npm config` there). Versions come from store paths, and a provider
-installed outside Nix is reported as "version not checked".
+Installed automatically with the module (or run
+`nix run github:boltflake/t3code-nix#doctor`), `t3code-nix doctor` inspects
+your Electron version, `PATH` shadowing from non-Nix provider installs,
+binary cache, Claude Code policy, and systemd units—read-only, no `sudo`,
+exits `1` on `PROBLEM` and prints `→` fix hints.
 
 ### Reporting problems
 
-A security problem goes in a private report, never an issue: see
-[SECURITY.md](SECURITY.md). For anything else:
-
-1. Run `t3code-nix doctor` first, and do what its `WARN` and `PROBLEM`
-   lines say.
-2. If that doesn't fix it, [open an issue](https://github.com/boltflake/t3code-nix/issues)
-   with the doctor's output, the t3code-nix commit you're on, what you
-   did, and what happened. With flakes, `nix flake metadata /etc/nixos`
-   (or your flake's folder) lists each input with its commit; without
-   them, give the tarball URL or commit you import. The output shows paths in your
-   home folder; edit out anything you'd rather not share.
-
-A problem in T3 Code itself, one that also happens without Nix, belongs
+Report security issues privately per [SECURITY.md](SECURITY.md). For
+packaging bugs, run `t3code-nix doctor` first; if the issue persists,
+[open an issue](https://github.com/boltflake/t3code-nix/issues) with the
+doctor output (redacting any private paths) and your `t3code-nix` commit
+(`nix flake metadata /etc/nixos`). Bugs in T3 Code itself belong
 [upstream](https://github.com/pingdotgg/t3code/issues).
 
 ## Channels, pinning and rolling back
 
-**Channels.** The latest channel (`"latest"`, upstream's name for its
-non-nightly releases) is the default. For nightly, set
-`programs.t3code.channel = "nightly"`, or use the `-nightly` packages.
-Nightly gets T3 Code's nightly builds only, never a latest-channel
-release, even one newer than the newest nightly.
-These are T3 Code's own release channels; the libraries underneath are a
-separate choice (see [NixOS stable](#nixos-stable)).
+- **Channels:** `"latest"` (default) or `"nightly"`
+  (`programs.t3code.channel = "nightly"`, or `-nightly` packages). If
+  installing both apps together, give one a separate `T3CODE_HOME` so
+  nightly doesn't migrate latest's database.
+- <a id="following-new-releases"></a>**Pinning:** every latest T3 Code release gets a `t3code-v<version>` tag
+  and GitHub Release (subscribe via
+  [releases.atom](https://github.com/boltflake/t3code-nix/releases.atom)):
 
-Both apps can be installed together (`programs.t3code` installs one; add
-the other package yourself). They share `~/.t3`, so nightly can migrate the
-database ahead of latest; start one with its own `T3CODE_HOME` to keep them
-apart.
-
-**Pinning.** `main` moves with every release. To stay on one set of
-versions, point the input at a tag or a commit instead:
-
-```nix
-inputs.t3code-nix.url = "github:boltflake/t3code-nix/t3code-v<version>"; # a latest-channel release
-# or any commit (for example, to pin a nightly published between release tags):
-# inputs.t3code-nix.url = "github:boltflake/t3code-nix/<commit>";
-```
-
-Each T3 Code version on the latest channel gets a `t3code-v<version>` tag, on the commit
-that first published it, with every package as it was there. Its
-[GitHub Release](#following-new-releases) lists them.
-
-**Rolling back.**
-
-- **The whole system:** boot an older generation from the boot menu, or
-  run `sudo nixos-rebuild switch --rollback`.
-- **Only t3code-nix:** in your flake's folder, lock it to an older tag or
-  commit, then rebuild:
-
-  ```sh
-  cd /etc/nixos
-  sudo nix flake lock --override-input t3code-nix 'github:boltflake/t3code-nix/t3code-v<version>'
-  # or a commit: 'github:boltflake/t3code-nix/<commit>'
-  sudo nixos-rebuild switch    # or as you usually rebuild, e.g. --flake /etc/nixos#nixos
+  ```nix
+  inputs.t3code-nix.url = "github:boltflake/t3code-nix/t3code-v<version>"; # or /<commit>
   ```
 
-  The lock file keeps that until your next `nix flake update`. To stay
-  there, pin the input as above.
-- **Without flakes:** import an older tag's or commit's tarball
-  (`…/archive/t3code-v<version>.tar.gz` or `…/archive/<commit>.tar.gz`)
-  instead of `main`'s, then rebuild.
-- **The server:** restart it after rolling back (see
-  [Running the server](#running-the-server)), and if it then fails, put
-  back its [database copy](#database-copies).
-
-**An older set may not download any more.** Every package is the vendor's
-own file, and a pin stays fetchable only as long as the vendor keeps that
-file. The binary cache can stand in for the free packages while it still
-holds them. Booting an older generation needs none of this: its packages
-are still in your store.
-
-## Following new releases
-
-Each T3 Code version on the latest channel gets a GitHub Release here, named
-`T3 Code <version>`, on its `t3code-v*` tag.
-
-- It lists every package at that commit, and what changed since the
-  previous release, with links to the release notes where upstream has
-  them.
-- It shows how to pin exactly that set.
-- A release's tag pins the set as it was first published. Later provider
-  updates, and nightlies, land on `main` without a release.
-- GitHub's Latest marker is on the release for the version `main` ships
-  now. If upstream pulls a release, `main` goes back to the version before
-  it, and the marker moves with it.
-
-To hear about them, use Watch → Custom → Releases on the repository page,
-or subscribe to the feed at
-<https://github.com/boltflake/t3code-nix/releases.atom>.
-
-**nixpkgs.** The nixpkgs this flake pins (for the libraries the apps load
-and the helpers around them) moves to the newest `nixos-unstable` with
-each new T3 Code on the latest channel, and at least once a week. A move
-waits until everything it needs from nixpkgs is on cache.nixos.org, so you
-never build any of it yourself, and it's tested like any release.
-
-### Update notices
-
-The desktop app's update icon (the round arrow at the bottom of its
-sidebar) shows only when there is an update:
-
-- **t3code-nix has a newer T3 Code, or newer versions of the providers
-  this app bundles**: for the package you run (the latest channel, nightly,
-  or the [NixOS-stable](#nixos-stable) set's own versions). Its tooltip
-  says what's new and what to do, for example "T3 Code 0.1.14 and 2
-  provider updates are now available. Update t3code-nix and rebuild your
-  system to install the updates." (or "T3 Code 0.1.14 is now available. …",
-  "1 provider update is now available. …"). Clicking it lists each update
-  with the version you have:
-
-  > T3 Code 0.1.14 (you have 0.1.13)<br>
-  > Claude Code 2.1.340 (you have 2.1.332)<br>
-  > Codex 0.173.0 (you have 0.172.0)<br>
-  > <br>
-  > Update t3code-nix and rebuild your system to install the updates.
-
-  The app's menu, Check for Updates…, checks and says the same, where the
-  app shows a menu bar (not on Linux). Nothing is downloaded: Nix installs
-  T3 Code and its providers, and upstream's own updater stays off. After
-  the rebuild the icon stays until you restart the app.
-- **An update upstream offers itself** (another machine's T3 server that
-  can update itself, or a provider you installed outside Nix), or an update
-  running: as upstream has it, with its own wording ("Update 2 providers")
-  and its own dialog when you click. With a t3code-nix update too, its
-  sentence follows upstream's in the tooltip.
-
-Otherwise there's no icon (it stays while upstream's update dialog is open).
-
-Only the providers this app bundles from t3code-nix count (all of them by
-default; with `providers = [ … ]` or `excludeProviders`, the ones you
-name). T3 Code itself offers no update for a provider in the Nix store, so
-bundled providers are only ever updated by a rebuild, and this notice is
-how you hear of them. "You have" is the bundled version: a provider you
-installed yourself that comes first on your login shell's `PATH` is what
-T3 Code runs, and isn't followed here.
-
-A provider counts as newer when its version on `main` is higher, or the
-same version as another vendor build (cursor-agent's
-`2026.11.22-e9042b2`, muse's `1.4.25-R9361.1`), since those suffixes can't
-be ordered. So right after such a bump, an app rebuilt from a `main`
-newer than the site can be offered the site's older build until the site
-catches up (within the hour) and its next check (within 4 hours).
-
-The app learns of new versions from one small file t3code-nix publishes
-with its [status page](https://boltflake.github.io/t3code-nix/)
-(`updates/t3code.json`, `updates/t3code-nightly.json`,
-`updates/stable/t3code.json`: T3 Code's version and the set's provider
-pins), once `main` has them and the site has been rebuilt, usually within
-an hour. It fetches that file 15 seconds after it starts, every 4 hours,
-and when you click the icon for it (alone; with an update upstream offers
-the click is upstream's) or use the menu item, through your system's proxy
-settings, with a fixed User-Agent (`t3code-nix update check`) and no
-cookies, ID or version: GitHub Pages sees your IP address and which file.
-The list of bundled providers stays on your machine. To turn the check off:
-
-```nix
-programs.t3code.updateCheck.enable = false;   # programs.t3code-nix in Home Manager
-```
-
-or, without the module, `t3code.override { updateCheck = false; }` (also
-`t3code-nightly`, `t3code-free`, the overlay's `pkgs.t3code`). Then the
-version file isn't fetched, and the icon shows only for updates upstream
-offers itself.
-
-- **Another file:** the app reads its URL from `T3CODE_NIX_UPDATE_URL`
-  (HTTPS; plain HTTP only to `127.0.0.1`, for tests), and its bundled
-  providers from the JSON file `T3CODE_NIX_PROVIDERS` names, which the
-  package sets as defaults: a value already in the app's environment wins,
-  and a blank URL turns the check off. The opt-out sets both blank over any
-  value the app inherits. The app removes them from the environment of
-  everything it starts.
-- **A managed policy** (`/etc/t3code/policy.json`) that limits updates, or
-  that T3 Code can't use, turns the check off: the organisation's rule
-  stands.
-- **A release this can't follow:** the icon and the notice are changes to
-  upstream's built app (its web UI and its main process), made while the
-  package builds. When a release changes that code too much, it still
-  ships, without them: the app is as
-  upstream has it under Nix (the icon always there, "Updates unavailable:
-  Nix manages this install…") until a later build fits again.
-- The new wording is in English only.
-
-## Details
-
-### How T3 Code finds its providers
-
-`t3code` and `t3` come with all ten providers T3 Code supports. Two things
-about how T3 Code uses them:
-
-- **Your own installs come first.** When T3 Code starts, it reads `PATH`
-  from your login shell and searches it *before* the providers this flake
-  bundles. So if you've installed, say, codex yourself, T3 Code uses your
-  codex, and the bundled ones are only used for providers you don't have.
-  Cursor is the exception: T3 Code runs it through its own SDK and looks
-  up no command, so the bundled `cursor-agent` (and any of your own) is
-  for the terminal only.
-- **T3 Code enables only Codex and Claude by default.** The other eight
-  (Cursor, Grok, fx, OpenCode, Antigravity, Kiro, Muse, pi) are installed,
-  but you switch each one on once in T3 Code's settings.
-
-The module also puts them on your `PATH` (`providersOnPath`), at low
-priority, so your own package of the same command wins.
-
-**`~/.t3/bin/t3`**, which the desktop app writes, doesn't bundle the
-providers and breaks after garbage collection; use this flake's `t3` instead.
-
-### Provider updates
-
-Bundled providers are updated like T3 Code: update t3code-nix and rebuild
-your system. The desktop app's update icon tells you when t3code-nix has
-newer ones ([Update notices](#update-notices)); the
-[status page](https://boltflake.github.io/t3code-nix/) shows what it has.
-T3 Code itself offers no update for a provider in the Nix store.
-
-Providers mostly can't update themselves here, with the two exceptions
-below. Their own update and self-install commands (`claude update`,
-`codex update`, `pi update --self` and so on) print a short message and do
-nothing, because they'd install a second copy outside Nix that can shadow
-this one and may not run on NixOS.
-
-**claude's settings files.** The wrapper turns claude's self-update off,
-but a settings file can turn it back on: a repository's
-`.claude/settings.json` (or your own `~/.claude/settings.json`) can set
-the update switches in its `env` block, and claude would then update
-itself into `~/.local`. Only a claude machine policy ranks above every
-settings file. The NixOS module writes one (`claudeCodePolicy`, on by
-default) whenever T3 Code, its server or its CLI bundles claude. Without
-the module, or for this flake's `claude-code` installed on its own, write
-the same file yourself. Make it a copy (`mode`), not a link into the
-store, since claude's own doctor flags a policy reached through a link:
-
-```nix
-environment.etc."claude-code/managed-settings.d/10-t3code-nix.json" = {
-  mode = "0444";
-  text = builtins.toJSON {
-    env = {
-      DISABLE_UPDATES = "1";
-      DISABLE_AUTOUPDATER = "1";
-      DISABLE_INSTALLATION_CHECKS = "1";
-    };
-  };
-};
-```
-
-`t3code-nix doctor` asks the bundled claude whether a machine policy keeps
-its updates off: it warns when none does, reports a problem when claude
-can't read a policy file, and warns when T3 Code would use a claude
-installed outside Nix.
-
-**Codex's daemon updater.** In codex's TUI, the `/daemon` menu's "Install
-latest public stable" and "Use this CLI build" run codex's daemon updater
-directly, where no wrapper can refuse them
-([openai/codex#41188](https://github.com/openai/codex/issues/41188)). They
-install only into a daemon package that's already there, in
-`~/.codex/packages/app-server-daemon` (or the same folder under
-`$CODEX_HOME`). A codex with the daemon's auto-start on leaves one behind,
-and so does a `~/.codex` copied from another machine. `t3code-nix doctor`
-warns about that folder and about the background server and update loop
-it runs (even once the folder is deleted), and says how to stop each
-before you delete it.
-
-### The overlay
-
-`t3code-nix.overlays.default` puts every package under `pkgs.t3code-nix`.
-The app and the providers are also added at the top level, but never over
-a different program nixpkgs has under the same name. With this flake's
-pinned nixpkgs, that gives:
-
-| Packages | At the top level of `pkgs`? |
-| --- | --- |
-| `t3code`, `t3code-nightly`, `t3code-free`, `t3code-unwrapped` (+ `-nightly`) | yes (`t3code` replaces nixpkgs' own, the same program, and comes with its CLI: see below) |
-| `codex`, `claude-code`, `kiro-cli`, `agent-browser` | yes, replacing nixpkgs' own (the same programs); the overlay's `agent-browser` uses your nixpkgs' browsers (`ungoogled-chromium` by default) |
-| `cursor-agent`, `grok`, `pi`, `boat` | yes (nixpkgs has nothing by those names) |
-| `opencode` | no: nixpkgs' `opencode-desktop` builds from nixpkgs' own `opencode`, so that stays (the apps bundle this flake's either way) |
-| `fx`, `muse`, `antigravity` | no: nixpkgs' are different programs (a JSON viewer, a MIDI sequencer, and a deprecated alias of the Antigravity IDE, `antigravity-ide`) |
-| `t3`, `t3-nightly`, `t3-free`, `t3-unwrapped` (+ `-nightly`) | no: the CLI's packages aren't offered at the top level (and nixpkgs' `t3` is a `tee`) |
-| `doctor`, `init`, `chrome-headless-shell` (+ `-nightly`) | no, only under `pkgs.t3code-nix` |
-
-Anything that isn't at the top level is still there as
-`pkgs.t3code-nix.<name>`, for example `pkgs.t3code-nix.t3`. If your
-nixpkgs gains a different program under one of these names, it keeps it.
-
-**The top-level `pkgs.t3code`** has the programs nixpkgs' package has
-(`bin/t3`, `bin/t3code-desktop`), so a module that runs them works with it:
-Home Manager's own `programs.t3code`, whose `server.enable` runs
-`${package}/bin/t3 serve`, for one. Its arguments are this flake's, though
-(below).
-
-- It's the app with its CLI inside, `pkgs.t3code-nix.t3code.override {
-  withCli = true; }`: `bin/t3code`, `bin/t3code-desktop` (nixpkgs' name for
-  the app) and `bin/t3`, the CLI with the same providers, wrapped as the
-  `t3` package is. It's bigger for it (about 5.4 GB on disk with every
-  provider, against 4.9 GB for the app alone).
-- The `t3` inside is the CLI's own release, which this flake updates
-  separately from the app, so for a while after a release it can be a
-  different version.
-- It takes this flake's arguments, not nixpkgs': `providers = [ "claude"
-  "codex" ]` rather than `enableClaude = true`, which fails with a message
-  saying so. nixpkgs' `enableGit`, `enableGitHub` and the like put `git` and
-  `gh` on T3 Code's `PATH`; this one doesn't (they come from your system).
-  For nixpkgs' arguments, use nixpkgs' own `t3code`, from a nixpkgs without
-  this overlay.
-- Installing it next to another `t3` gives two: nixpkgs' (a `tee`), or this
-  flake's `pkgs.t3code-nix.t3`. With nixpkgs' `t3`, or ours with other
-  providers or another channel, at the same priority (the default) a Home
-  Manager build fails on the collision and on NixOS one of them wins
-  silently; `nix profile` refuses even an identical one. Install only one,
-  give one a higher priority (`lib.hiPrio`, or `--priority` for `nix
-  profile`), or install the app without its CLI:
-  `pkgs.t3code.override { withCli = false; }`.
-- `withCli = true` works on `t3code-nightly` and `t3code-free` too (the
-  nightly has no `t3code-desktop`). Home Manager's own server needs it if you
-  point its `programs.t3code.package` at one of them.
-- With the NixOS module and `package = pkgs.t3code`, the app's `t3` is
-  installed with the app. With `cli.enable` or the server, the module's own
-  `t3` is installed too, at high priority, so it wins over the app's, and
-  the server always runs the module's.
-
-The overlay builds on your own nixpkgs. Your nixpkgs config
-(`allowUnfree`) decides which unfree packages you can build, and the
-binary cache has those builds only if your nixpkgs is at the revision this
-flake pins.
-
-### The desktop app's Electron
-
-The desktop app is upstream's own app (`app.asar` and the rest of
-`resources/`, unchanged apart from pointing its native libraries at
-nixpkgs; one sentence: with updates off, it says "Nix manages this
-install. Please rebuild your system to update T3 Code." where upstream
-names the switch; and the [update notices](#update-notices)), running
-packaged as on any Debian machine. Only the
-Electron it runs on can change:
-
-| `electron` | What you get |
-| --- | --- |
-| `"auto"` (default) | nixpkgs' `electron_N-bin` when it can stand in for upstream's: the same major version and the same release or newer. Otherwise upstream's bundled Electron |
-| `"bundled"` | upstream's bundled Electron, always |
-| `"nixpkgs"` | nixpkgs' `electron_N-bin`, under the same conditions as `"auto"`, but never upstream's. Where `"auto"` would fall back for one of those reasons, evaluation stops with an error that says why and what to use instead. If nixpkgs' Electron failed t3code-nix's tests for this release, it's still used, with a warning |
-| a package | the Electron you pass. It must be the bundled major version, though an older patch release is fine. Take nixpkgs' `electron_N-bin`, where N is that major, from the same nixpkgs the app is built on (`t3code-nix.inputs.nixpkgs.legacyPackages.<system>`, or the overlay's `pkgs`): mixing two nixpkgs revisions in one app can break it |
-
-The [status page](https://boltflake.github.io/t3code-nix/) shows which
-Electron the current releases run; `t3code-nix doctor` shows yours.
-
-```nix
-# With the module: upstream's Electron, or a specific one
-programs.t3code.electron = "bundled";
-# or (use the bundled major the status page shows):
-# programs.t3code.electron =
-#   t3code-nix.inputs.nixpkgs.legacyPackages.${pkgs.stdenv.hostPlatform.system}.electron_44-bin;
-
-# Without the module, on the package:
-t3code-nix.packages.${system}.t3code.override { electron = "bundled"; }
-```
-
-- **Why `"auto"` prefers nixpkgs':** Electron security fixes reach you
-  with this flake's nixpkgs (see [its schedule](#following-new-releases)),
-  instead of waiting for the next T3 Code release. Upstream tested its
-  release on its own Electron patch, so the app may run a newer patch of
-  the same major than upstream did. If you report a bug upstream, include
-  your Electron version, or check it with `"bundled"` first.
-  `t3code-nix doctor` shows which Electron you have and why.
-- **When nixpkgs' Electron fails t3code-nix's tests** and upstream's
-  passes, that release ships on upstream's Electron instead, until a new
-  T3 Code release or a nixpkgs update gives nixpkgs' another try; an issue
-  says so, and the status page and the release notes show it. `"nixpkgs"`
-  still builds on it if you ask, with a warning.
-- **The `t3` CLI** is unaffected: its Node is built into the program.
-
-### The preview browser
-
-T3 Code takes HTML preview screenshots and recordings with a headless
-Chrome (Chrome for Testing's `chrome-headless-shell`). It downloads that
-into `~/.t3/tools/` on first use, and the download can't run on NixOS
-without nix-ld.
-
-So `t3code` and `t3` bring the same Chrome build their release pins,
-patched to run on NixOS. On each start they link it where T3 Code looks
-for it: `~/.t3/tools/chrome-headless-shell/<platform>/<version>` (or under
-`T3CODE_HOME`, or `t3 --base-dir`). T3 Code then never downloads it.
-
-- A copy of that same version it downloaded before is replaced by the
-  link; other versions are left alone.
-- On hosts that restrict user namespaces (Ubuntu 23.10 and later) nothing
-  is linked: there T3 Code's own download and `t3 browser setup` work as
-  they do upstream.
-- It adds about 290 MB to `t3code` (about 400 MB to `t3`, which otherwise
-  needs fewer system libraries).
-- Leave it out with `t3code.override { withPreviewBrowser = false; }`; a
-  link an earlier start made stays until you delete it.
-- It's unfree: the archive ships as Google Chrome, under Google's terms.
-  To be fully free, use `t3code-free` or `t3-free`, which leave it out
-  already. If you pick free providers with an override instead, also set
-  `withPreviewBrowser = false`.
-
-### Agent tools
-
-Besides T3 Code and its providers, the flake ships a few agent tools:
-command-line tools that the agents T3 Code runs use themselves. They're
-not included as part of `t3code` or `t3`.
-
-```nix
-# With the module:
-programs.t3code.agentTools.boat.enable = true;
-programs.t3code.agentTools.agent-browser.enable = true;
-
-# Or without it, as plain packages:
-environment.systemPackages = [
-  t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.boat
-  t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.agent-browser
-];
-```
-
-**boat** runs [<img src="docs/logos/boat.svg" height="14" alt=""> boat.dev](https://boat.dev) cloud sandboxes (`boat run`,
-`boat new`, `boat exec`). Its update check is off and `boat self-update`
-says it's installed by Nix. Sign-in is boat's own (`boat login`), kept in
-`~/.config/ascii/boat/config.json`, which this flake never touches. If
-boat's own installer put a copy in `~/.ascii/bin`, remove it and its shell
-startup lines so this one runs.
-
-**agent-browser** drives a headless browser for agents (`open`,
-`snapshot`, `click`, `fill`, `screenshot`), with its dashboard, MCP
-server and skills built in. It drives ungoogled-chromium by default;
-plain Chromium and Google Chrome are one option away:
-
-```nix
-programs.t3code.agentTools.agent-browser.browser = "google-chrome"; # or "chromium"
-t3code-nix.packages.${system}.agent-browser.override { browser = "google-chrome"; } # without the module
-```
-
-| Browser | What it's for |
-| --- | --- |
-| `ungoogled-chromium` (default) | everyday agent work, with nothing from Google on its own |
-| `chromium` | plain Chromium, without ungoogled's patches |
-| `google-chrome` | checking a site in Google's Chrome, for example with Widevine (DRM video), which the Chromiums refuse. Unfree; downloaded from Google |
-
-The browsers come from their own pinned nixpkgs, separate from the one
-your system uses, so they usually mean another nixpkgs download. It
-follows nixos-unstable by default (the `browser-unstable` pin), or the
-newest NixOS release (`browser-stable`) with the module's
-`browserChannel = "stable"` (or `.override { browserChannel = "stable"; }`).
-Each pin moves when a browser's version changes, and at least weekly. The
-status page shows each browser's version. The
-[NixOS stable](#nixos-stable) set uses `browser-stable` by default.
-
-- Any other browser: `agent-browser.override { browser = pkgs.brave; }`
-  (its `meta.mainProgram` runs; for a package without one, set
-  `AGENT_BROWSER_EXECUTABLE_PATH`), or your own
-  `AGENT_BROWSER_EXECUTABLE_PATH` (or `--executable-path`, or `--cdp`),
-  which wins over the package's.
-- `agent-browser upgrade` (a second copy from a package manager),
-  `install` and `doctor --fix` (each downloads Chrome for Testing, which
-  can't start on NixOS) say it's installed by Nix; `install` points to
-  `browser = "google-chrome"`. Plain `doctor` works.
-- **What leaves the machine:** when it starts a browser, agent-browser
-  reads Google's Chrome release feed (`chromereleases.googleblog.com`) and
-  warns if the browser is behind a release with security fixes, so a pin
-  that falls behind says so. `AGENT_BROWSER_NO_VERSION_CHECK=1` turns that
-  off. Beyond that, the browsers fetch what the agent opens; Chromium and
-  Chrome also contact Google services on their own, ungoogled-chromium
-  doesn't. Choosing Chrome also downloads it from Google.
-- **User namespaces:** Chromium's sandbox needs unprivileged user
-  namespaces. Where they're restricted (Ubuntu 23.10 and later), the
-  wrapper says so when you run it. Turn the restriction off with
-  `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`, and to keep
-  it, put the line `kernel.apparmor_restrict_unprivileged_userns = 0` in a
-  file in `/etc/sysctl.d/`; or allow `userns` for this Chromium's path
-  in an AppArmor profile. The wrapper never turns the sandbox off.
-
-### Dictation
-
-T3 Code's voice dictation works with nothing to set up. Its server runs
-the speech engine that comes with each release (transcribe-cpp, on the CPU
-or a Vulkan GPU). T3 Code downloads the speech models itself, from Hugging
-Face, when you choose one in its settings; they range from 35 MB to many
-GB. Each release is tested here: the engine's libraries resolve in the app
-and the CLI, its worker starts, and it transcribes a short spoken clip.
-
-Codex's own voice mode (`/voice` in codex's terminal UI) is a different
-thing, and it doesn't work out of the box on NixOS: it stops with "voice audio
-devices could not open". Its audio helper has its own copy of ALSA, which
-looks for its configuration in `/usr/share/alsa` and `/usr/lib/alsa-lib`.
-NixOS has neither, and codex starts the helper with a fixed environment,
-so a setting from outside can't point it elsewhere. This flake leaves the
-fix to codex
-([openai/codex#61732](https://github.com/openai/codex/issues/61732)); until
-then, codex's `/voice` is a known gap on NixOS.
-
-### ACP registry agents
-
-Besides its ten providers, T3 Code can install agents from the public
-[ACP registry](https://agentclientprotocol.com) while it runs. This flake
-doesn't package those agents, but it can give T3 Code what its installer
-needs. An agent from npm needs `npm` and `node` on T3 Code's `PATH`, and
-one from uv needs `uv`; without them T3 Code says the agent's runner is
-missing. Agents shipped as a downloaded program need no runner, but may
-need [`runtimeCompat`](#t3-code-over-ssh-runtimecompat) to start on NixOS.
-
-```nix
-# With the module:
-programs.t3code.acpRuntimes = [ "nodejs" ];
-
-# Or without it, on the package:
-t3code-nix.packages.${pkgs.stdenv.hostPlatform.system}.t3code.override { acpRuntimes = [ "nodejs" ]; }
-```
-
-| Value | Adds | Added to `t3`'s closure (x86_64) | For |
-| --- | --- | --- | --- |
-| `[ ]` (default) | nothing | 0 | agents shipped as a program (with `runtimeCompat` if they need it) |
-| `[ "nodejs" ]` | Node, with npm | about 142 MB | npm agents |
-| `[ "uv" ]` | uv and Python | about 200 MB | uv agents |
-| `[ "nodejs" "uv" ]` | all of it | about 342 MB | npm and uv agents |
-
-- They go at the end of T3 Code's `PATH`, after the providers. T3 Code
-  puts your login shell's `PATH` first, so your own Node or uv always wins;
-  these only fill a gap. The agents' own shell commands can see them too
-  when you have none of your own.
-- `uv` comes with a full Python, so uv uses it instead of downloading one
-  (a downloaded Python can't start on NixOS without nix-ld).
-- An npm agent whose install downloads a program of its own may still need
-  `runtimeCompat`.
-- With the module, `acpRuntimes` applies to the app and to the CLI and
-  server it installs.
-
-### T3 Code over SSH: `runtimeCompat`
-
-When the desktop app on another machine connects to this one over SSH, it
-first looks for `t3` on the `PATH` of a login shell here. If the first `t3`
-there prints the app's own version (`t3 --version`), it runs that one, and
-nothing is downloaded. This flake's `t3` is in the system profile with
-`server.enable`, with `enable` and `cli.enable`, or with an app that has
-its own `t3` (the overlay's `pkgs.t3code`), and in your Home Manager
-profile with the same options under `programs.t3code-nix`; a NixOS login
-shell has both on its `PATH`, unless your shell's own setup changes it or
-puts another `t3` first. So when both machines run the same t3code-nix
-(same channel, same version) and this one has its `t3` in one of those
-ways (`enable` alone doesn't install it), nothing more is needed.
-
-Otherwise (another version, or no `t3` here), it runs T3 Code's own
-server from `~/.t3/runtime`, downloading it the first time for each
-version, and that can't start on NixOS without `runtimeCompat` (or a
-nix-ld setup of your own with its libraries). `runtimeCompat` is for
-those servers from T3 Code's own download: that one, and upstream's own
-service if you [use it on purpose](#upstreams-own-service). For a server
-on this machine, use [`server`](#running-the-server) instead.
-
-```nix
-programs.t3code.runtimeCompat = true;
-```
-
-It turns on `programs.nix-ld`, with the libraries that server needs. It
-works on its own, without `enable` or `server.enable`. It's
-off by default because nix-ld changes how every unpatched program on the
-system starts. It's also best effort: this flake doesn't pin what T3 Code
-downloads.
-
-### Supported systems
-
-`x86_64-linux` and `aarch64-linux`: NixOS, and other Linux distros with Nix
-(the packages, the overlay and [the Home Manager
-module](#the-home-manager-module), given GPU drivers for the desktop app).
-
-## Maintainer notes
-
-Setting up the watcher and cache, the issues the update runs open, and the rules for changing providers are in [MAINTAINING.md](MAINTAINING.md).
+- **Rolling back:** boot a previous NixOS generation, run
+  `sudo nixos-rebuild switch --rollback`, or pin just `t3code-nix` in your
+  flake's folder until your next update:
+
+  ```sh
+  cd /etc/nixos  # or your flake's folder
+  sudo nix flake lock --override-input t3code-nix 'github:boltflake/t3code-nix/t3code-v<version>'
+  sudo nixos-rebuild switch --flake .  # or as you usually rebuild, e.g. --flake .#nixos
+  ```
+
+  Restart `t3code-server` after rolling back (and restore a
+  [database copy](docs/server.md#database-copies) if a migration prevents
+  startup). Note that older pins stay fetchable only while vendors keep
+  their release files online.
+
+<a id="details"></a>
+## Reference and guides
+
+Deep-dive documentation lives in `docs/`:
+
+- **[Home Manager guide](docs/home-manager.md)** — machine-wide options, other Linux distros, `programs.t3code` coexistence, Home Manager server lifecycle
+- **[Server guide](docs/server.md)** — all `server.*` options, T3 Connect, SQLite database backups, multi-home setups, upstream's own service
+- **[Reference & details](docs/details.md)** —
+  <a id="the-apps-network-access"></a>[The app's Network access](docs/details.md#the-apps-network-access) ·
+  <a id="usage-data"></a>[Usage data](docs/details.md#usage-data) ·
+  <a id="update-notices"></a>[Update notices](docs/details.md#update-notices) ·
+  <a id="how-t3-code-finds-its-providers"></a>[How T3 Code finds its providers](docs/details.md#how-t3-code-finds-its-providers) ·
+  <a id="provider-updates"></a>[Provider updates](docs/details.md#provider-updates) ·
+  <a id="the-overlay"></a>[The overlay](docs/details.md#the-overlay) ·
+  <a id="the-desktop-apps-electron"></a>[The desktop app's Electron](docs/details.md#the-desktop-apps-electron) ·
+  <a id="the-preview-browser"></a>[The preview browser](docs/details.md#the-preview-browser) ·
+  <a id="agent-tools"></a>[Agent tools](docs/details.md#agent-tools) ·
+  <a id="dictation"></a>[Dictation](docs/details.md#dictation) ·
+  <a id="acp-registry-agents"></a>[ACP registry agents](docs/details.md#acp-registry-agents) ·
+  <a id="t3-code-over-ssh-runtimecompat"></a>[T3 Code over SSH: `runtimeCompat`](docs/details.md#t3-code-over-ssh-runtimecompat)
+- **[Acceptance matrix](docs/acceptance-matrix.md)** — what each package is built from and how it is tested
+- <a id="maintainer-notes"></a>**[Maintainer notes](MAINTAINING.md)** — watcher, cache, automated issues, and adding providers
 
 ## License
 
-This repository is licensed under the [MIT license](LICENSE). The packaged
-programs are not part of this repository. Each packaged program's
-`meta.license` gives its vendor's license: `unfree` for the seven
-proprietary ones, which are under their vendors' terms.
-
-Thanks to [sadjow/codex-cli-nix](https://github.com/sadjow/codex-cli-nix),
-[numtide/llm-agents.nix](https://github.com/numtide/llm-agents.nix) and
-[LikelyLucid/t3code-nix](https://github.com/LikelyLucid/t3code-nix) for
-showing the way.
-
-T3 Code, the providers and boat are their owners' products, and their
-names and logos belong to them; they appear here only to say what this
-flake packages. Packaging problems belong in this repository's issues, not
-upstream's.
+MIT ([LICENSE](LICENSE)) for this repository; packaged programs retain
+their upstream licenses (`unfree` for the seven proprietary ones). Thanks to
+[sadjow/codex-cli-nix](https://github.com/sadjow/codex-cli-nix),
+[numtide/llm-agents.nix](https://github.com/numtide/llm-agents.nix), and
+[LikelyLucid/t3code-nix](https://github.com/LikelyLucid/t3code-nix).

@@ -44,16 +44,19 @@
 
               # Optional: uncomment what you need. All the options are
               # under "The NixOS module" in t3code-nix's README.
-              # providers = [ "codex" "claude" ];       # bundle only these (default: all ten)
-              # excludeProviders = [ "grok" ];          # or leave some out
-              # channel = "nightly";                    # T3 Code nightly (built on your machine)
-              # nixpkgs = "stable";                     # NixOS stable's libraries, not with nightly (built locally)
-              # cli.enable = true;                      # the headless `t3` CLI too
-              # server.enable = true;                   # keep T3 Code running in the background for your phone, laptop or browser
-              # server.lan = true;                      # reachable on your local network and tailnet
-              # server.openFirewall = true;             # open its port (3773) in the firewall
-              # agentTools.agent-browser.enable = true; # lets agents open, click and screenshot web pages
-              # agentTools.boat.enable = true;          # boat.dev's sandbox CLI for agents
+              # providers = [ "antigravity" "claude" "codex" ]; # bundle only these (default: all ten)
+              # excludeProviders = [ "grok" ];                  # or leave some out
+              # channel = "nightly";                            # T3 Code nightly (built on your machine)
+              # nixpkgs = "stable";                             # NixOS stable's libraries, not with nightly (built locally)
+              # cli.enable = true;                              # the headless `t3` CLI too
+              # openFirewall = true;                            # pins the desktop app to `port` (default 3773) and opens that TCP port in the firewall for Network access
+              # port = 3780;                                    # desktop app port with `openFirewall` (must differ from `server.port` when running both)
+              # server.enable = true;                           # keep T3 Code running in the background for your phone, laptop or browser
+              # server.home = "%h/.t3-server";                  # its own T3 home, beside the desktop app's ~/.t3 (see docs/server.md)
+              # server.lan = true;                              # reachable on your local network and tailnet
+              # server.openFirewall = true;                     # open `server.port` (default 3773) in the firewall
+              # agentTools.agent-browser.enable = true;         # lets agents open, click and screenshot web pages
+              # agentTools.boat.enable = true;                  # boat.dev's sandbox CLI for agents
             };
           }
         ];
