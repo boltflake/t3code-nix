@@ -1,20 +1,20 @@
 {
   "name": "kiro-cli",
-  "version": "3.6.2",
+  "version": "3.7.0",
   "assets": {
     "x86_64-linux": {
-      "url": "https://desktop-release.q.us-east-1.amazonaws.com/3.6.2/kirocli-x86_64-linux.tar.gz",
-      "hash": "sha256-/6W1NCOjmSSbvb1p3ABob2C7z0Y39ZiVeWuB1AGhQ18=",
-      "checksumSource": "https://desktop-release.q.us-east-1.amazonaws.com/3.6.2/manifest.json"
+      "url": "https://desktop-release.q.us-east-1.amazonaws.com/3.7.0/kirocli-x86_64-linux.tar.gz",
+      "hash": "sha256-i6X61NLUSvRzHqTB90RHKIx7biciSQV8+VB/HMCIZUo=",
+      "checksumSource": "https://desktop-release.q.us-east-1.amazonaws.com/3.7.0/manifest.json"
     },
     "aarch64-linux": {
-      "url": "https://desktop-release.q.us-east-1.amazonaws.com/3.6.2/kirocli-aarch64-linux.tar.gz",
-      "hash": "sha256-qVfGqSsdWISeZ6fknAf5xPA0TB8HzisNJxydk0FfXwE=",
-      "checksumSource": "https://desktop-release.q.us-east-1.amazonaws.com/3.6.2/manifest.json"
+      "url": "https://desktop-release.q.us-east-1.amazonaws.com/3.7.0/kirocli-aarch64-linux.tar.gz",
+      "hash": "sha256-jQ4UyIpLYcVAmoH6+BI4VabUD/95J+3lXJsfqUk/92E=",
+      "checksumSource": "https://desktop-release.q.us-east-1.amazonaws.com/3.7.0/manifest.json"
     }
   },
   "released": {
-    "at": "2026-11-26T00:12:17.453Z",
-    "kind": "seen"
+    "at": "2026-11-28T01:27:04.000Z",
+    "kind": "published"
   }
 }
